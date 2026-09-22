@@ -4,13 +4,23 @@ import * as THREE from 'three';
 import * as TX from './textures.js';
 
 const PVERT = /* glsl */`
-  attribute vec3 iPos; attribute vec4 iColor; attribute vec2 iSizeRot;
+  attribute vec3 iPos; attribute vec4 iColor; attribute vec2 iSizeRot; attribute vec4 iVel;
   varying vec4 vColor; varying vec2 vUv;
   void main() {
     vUv = uv; vColor = iColor;
     vec4 mv = modelViewMatrix * vec4(iPos, 1.0);
-    float c = cos(iSizeRot.y), s = sin(iSizeRot.y);
-    vec2 p = vec2(position.x * c - position.y * s, position.x * s + position.y * c) * iSizeRot.x;
+    vec2 p;
+    if (iVel.w > 0.0) {
+      // streak: stretch the quad along the particle's on-screen velocity
+      vec2 d = (modelViewMatrix * vec4(iVel.xyz, 0.0)).xy;
+      float l = length(d);
+      vec2 ax = l > 1e-4 ? d / l : vec2(1.0, 0.0);
+      vec2 ay = vec2(-ax.y, ax.x);
+      p = (ax * position.x * (1.0 + l * iVel.w) + ay * position.y) * iSizeRot.x;
+    } else {
+      float c = cos(iSizeRot.y), s = sin(iSizeRot.y);
+      p = vec2(position.x * c - position.y * s, position.x * s + position.y * c) * iSizeRot.x;
+    }
     mv.xy += p;
     gl_Position = projectionMatrix * mv;
   }`;
@@ -24,10 +34,11 @@ class ParticlePool {
     const geo = new THREE.InstancedBufferGeometry();
     const q = new THREE.PlaneGeometry(1, 1);
     geo.index = q.index; geo.attributes.position = q.attributes.position; geo.attributes.uv = q.attributes.uv;
-    this.pos = new Float32Array(max * 3); this.col = new Float32Array(max * 4); this.sr = new Float32Array(max * 2);
+    this.pos = new Float32Array(max * 3); this.col = new Float32Array(max * 4); this.sr = new Float32Array(max * 2); this.vel = new Float32Array(max * 4);
     geo.setAttribute('iPos', new THREE.InstancedBufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
     geo.setAttribute('iColor', new THREE.InstancedBufferAttribute(this.col, 4).setUsage(THREE.DynamicDrawUsage));
     geo.setAttribute('iSizeRot', new THREE.InstancedBufferAttribute(this.sr, 2).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('iVel', new THREE.InstancedBufferAttribute(this.vel, 4).setUsage(THREE.DynamicDrawUsage));
     geo.instanceCount = 0;
     const mat = new THREE.ShaderMaterial({
       uniforms: { map: { value: map } }, vertexShader: PVERT, fragmentShader: PFRAG,
@@ -40,7 +51,7 @@ class ParticlePool {
     scene.add(this.mesh);
     this.p = [];
   }
-  spawn(o) { if (this.p.length < this.max) this.p.push({ life: 1, age: 0, vx: 0, vy: 0, vz: 0, drag: 1.5, grow: 1, rot: Math.random() * 6, spin: (Math.random() - 0.5) * 2, g: 0, a0: 1, fadeIn: 0.05, ...o }); }
+  spawn(o) { if (this.p.length < this.max) this.p.push({ life: 1, age: 0, vx: 0, vy: 0, vz: 0, drag: 1.5, grow: 1, rot: Math.random() * 6, spin: (Math.random() - 0.5) * 2, g: 0, a0: 1, fadeIn: 0.05, streak: 0, floor: 0.02, ...o }); }
   update(dt) {
     const P = this.p;
     let w = 0;
@@ -51,7 +62,7 @@ class ParticlePool {
       const damp = Math.exp(-p.drag * dt);
       p.vx *= damp; p.vy = p.vy * damp - p.g * dt; p.vz *= damp;
       p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
-      if (p.y < 0.02 && p.g > 0) { p.y = 0.02; p.vy *= -0.3; }
+      if (p.y < p.floor && p.g > 0) { p.y = p.floor; p.vy *= -0.3; p.vx *= 0.5; p.vz *= 0.5; }
       p.rot += p.spin * dt;
       P[w++] = p;
     }
@@ -67,10 +78,11 @@ class ParticlePool {
       const cb = p.color2 ? c.b + (p.color2.b - c.b) * t : c.b;
       this.col[k * 4] = cr; this.col[k * 4 + 1] = cg; this.col[k * 4 + 2] = cb; this.col[k * 4 + 3] = p.a0 * fade;
       this.sr[k * 2] = p.size * (1 + (p.grow - 1) * t); this.sr[k * 2 + 1] = p.rot;
+      this.vel[k * 4] = p.vx; this.vel[k * 4 + 1] = p.vy; this.vel[k * 4 + 2] = p.vz; this.vel[k * 4 + 3] = p.streak;
     }
     const g = this.mesh.geometry;
     g.instanceCount = n;
-    g.attributes.iPos.needsUpdate = g.attributes.iColor.needsUpdate = g.attributes.iSizeRot.needsUpdate = true;
+    g.attributes.iPos.needsUpdate = g.attributes.iColor.needsUpdate = g.attributes.iSizeRot.needsUpdate = g.attributes.iVel.needsUpdate = true;
   }
   clear() { this.p.length = 0; this.mesh.geometry.instanceCount = 0; }
 }
@@ -84,6 +96,8 @@ export class FX {
     this.smoke = new ParticlePool(scene, 1400, TX.smokePuff(), false);
     this.glow = new ParticlePool(scene, 1000, TX.softDot(), true);
     this.dust = new ParticlePool(scene, 200, TX.softDot('rgba(255,245,220,0.9)'), true);
+    this.flame = new ParticlePool(scene, 700, TX.flame(), true);
+    this.bx = 15; this.bz = 10;
     // debris: instanced rounded chunks with per-instance colour
     this.debrisMax = 600;
     const dg = new THREE.BoxGeometry(1, 1, 1);
@@ -111,6 +125,8 @@ export class FX {
     // flash lights
     this.lights = [0, 1, 2].map(() => { const l = new THREE.PointLight(0xffa040, 0, 6, 1.6); l.position.y = 0.8; scene.add(l); return { l, t: 0, dur: 0, peak: 0 }; });
     this.lightK = 0;
+    // burning tanks get one of these, flickering
+    this.fireLights = [0, 1].map(() => { const l = new THREE.PointLight(0xff7a28, 0, 4.5, 1.8); scene.add(l); return l; });
     // ambient dust motes drifting in the window light
     this.moteT = 0;
   }
@@ -120,18 +136,21 @@ export class FX {
     s.l.position.set(x, 0.9, z); s.l.color.set(color); s.peak = peak; s.dur = dur; s.t = 0;
   }
 
-  muzzle(x, z, angle, rocket) {
+  muzzle(x, z, angle, rocket, y = 0.42, big = 1) {
     const dx = Math.cos(angle), dz = Math.sin(angle);
-    for (let k = 0; k < 7; k++) {
-      const sp = 0.6 + Math.random() * 1.8, sa = angle + (Math.random() - 0.5) * 0.7;
-      this.smoke.spawn({ x, y: 0.42, z, vx: Math.cos(sa) * sp, vy: 0.2 + Math.random() * 0.3, vz: Math.sin(sa) * sp, size: 0.18 + Math.random() * 0.12, grow: 2.6, life: 0.7 + Math.random() * 0.6, color: C(0xe8e2d8), a0: 0.55, drag: 4 });
+    for (let k = 0; k < 7 + big * 3; k++) {
+      const sp = (0.6 + Math.random() * 1.8) * big, sa = angle + (Math.random() - 0.5) * 0.7;
+      this.smoke.spawn({ x, y, z, vx: Math.cos(sa) * sp, vy: 0.2 + Math.random() * 0.3, vz: Math.sin(sa) * sp, size: (0.16 + Math.random() * 0.12) * big, grow: 2.6, life: 0.7 + Math.random() * 0.6, color: C(0xe8e2d8), a0: 0.55, drag: 4 });
     }
-    this.glow.spawn({ x: x + dx * 0.05, y: 0.42, z: z + dz * 0.05, size: rocket ? 0.9 : 0.7, grow: 0.3, life: 0.09, color: C(0xffd27a), a0: 1.6, fadeIn: 0.001 });
+    // side blast from the muzzle brake
+    for (const sd of [-1, 1]) this.smoke.spawn({ x, y, z, vx: -dz * sd * 1.6 * big, vy: 0.2, vz: dx * sd * 1.6 * big, size: 0.12 * big, grow: 2.8, life: 0.5, color: C(0xe8e2d8), a0: 0.45, drag: 4 });
+    this.glow.spawn({ x: x + dx * 0.05, y, z: z + dz * 0.05, size: (rocket ? 0.9 : 0.7) * big, grow: 0.3, life: 0.09, color: C(0xffd27a), a0: 1.6, fadeIn: 0.001 });
+    this.flame.spawn({ x: x + dx * 0.12 * big, y, z: z + dz * 0.12 * big, vx: dx * 1.5, vz: dz * 1.5, size: 0.3 * big, grow: 0.4, life: 0.06, color: C(0xffe2a0), a0: 1.8, fadeIn: 0.001, streak: 0.5, drag: 0 });
     for (let k = 0; k < 5; k++) {
       const sp = 3 + Math.random() * 3, sa = angle + (Math.random() - 0.5) * 0.4;
-      this.glow.spawn({ x, y: 0.42, z, vx: Math.cos(sa) * sp, vy: Math.random(), vz: Math.sin(sa) * sp, size: 0.08, life: 0.12 + Math.random() * 0.1, color: C(0xffc060), a0: 1.2, drag: 6, fadeIn: 0.001 });
+      this.glow.spawn({ x, y, z, vx: Math.cos(sa) * sp, vy: Math.random(), vz: Math.sin(sa) * sp, size: 0.05, life: 0.12 + Math.random() * 0.1, color: C(0xffc060), a0: 1.2, drag: 6, fadeIn: 0.001, streak: 0.3 });
     }
-    this.light(x, z, 5, 0.12, 0xffb050);
+    this.light(x, z, 5 * big, 0.12, 0xffb050);
   }
 
   trail(x, z, rocket) {
@@ -143,20 +162,113 @@ export class FX {
     }
   }
 
-  spark(x, z, n = 10, color = 0xffd070) {
+  spark(x, z, n = 10, color = 0xffd070, y = 0.4) {
     for (let k = 0; k < n; k++) {
       const a = Math.random() * Math.PI * 2, sp = 2 + Math.random() * 3.5;
-      this.glow.spawn({ x, y: 0.4, z, vx: Math.cos(a) * sp, vy: 1 + Math.random() * 2.5, vz: Math.sin(a) * sp, g: 9, size: 0.06, life: 0.25 + Math.random() * 0.25, color: C(color), a0: 1.4, drag: 2, fadeIn: 0.001 });
+      this.glow.spawn({ x, y, z, vx: Math.cos(a) * sp, vy: 1 + Math.random() * 2.5, vz: Math.sin(a) * sp, g: 9, size: 0.035, life: 0.25 + Math.random() * 0.25, color: C(color), a0: 1.6, drag: 2, fadeIn: 0.001, streak: 0.35 });
     }
-    this.glow.spawn({ x, y: 0.4, z, size: 0.4, grow: 0.2, life: 0.08, color: C(0xfff0c0), a0: 1.2, fadeIn: 0.001 });
+    this.glow.spawn({ x, y, z, size: 0.4, grow: 0.2, life: 0.08, color: C(0xfff0c0), a0: 1.2, fadeIn: 0.001 });
   }
 
-  puff(x, z, n = 6, color = 0xd8d2c8) {
+  puff(x, z, n = 6, color = 0xd8d2c8, y = 0.3, a0 = 0.45, size = 0.2) {
     for (let k = 0; k < n; k++) {
       const a = Math.random() * Math.PI * 2, sp = Math.random() * 0.8;
-      this.smoke.spawn({ x: x + Math.cos(a) * 0.1, y: 0.3, z: z + Math.sin(a) * 0.1, vx: Math.cos(a) * sp, vy: 0.3 + Math.random() * 0.4, vz: Math.sin(a) * sp, size: 0.2, grow: 2.5, life: 0.8 + Math.random() * 0.5, color: C(color), a0: 0.45, drag: 2.5 });
+      this.smoke.spawn({ x: x + Math.cos(a) * 0.1, y, z: z + Math.sin(a) * 0.1, vx: Math.cos(a) * sp, vy: 0.3 + Math.random() * 0.4, vz: Math.sin(a) * sp, size, grow: 2.5, life: 0.8 + Math.random() * 0.5, color: C(color), a0, drag: 2.5 });
     }
   }
+
+  // ---- shell-on-tank results
+  // Ricochet: a bright glancing streak along the deflection (dx,dz is the shell's new heading).
+  ricochet(x, z, dx, dz, y = 0.4) {
+    for (let k = 0; k < 16; k++) {
+      const j = (Math.random() - 0.5) * 0.5, c = Math.cos(j), s = Math.sin(j);
+      const ddx = dx * c - dz * s, ddz = dx * s + dz * c, sp = 5 + Math.random() * 7;
+      this.glow.spawn({ x, y, z, vx: ddx * sp, vy: (Math.random() - 0.2) * 2, vz: ddz * sp, g: 5, size: 0.022, life: 0.16 + Math.random() * 0.18, color: C(k % 3 ? 0xfff2c8 : 0xffc060), a0: 3.2, drag: 2.5, fadeIn: 0.001, streak: 1.4 });
+    }
+    this.glow.spawn({ x, y, z, size: 0.7, grow: 0.3, life: 0.09, color: C(0xfff8e8), a0: 2.4, fadeIn: 0.001 });
+    // the glancing shell's white-hot scrape: one long streak along the new heading
+    this.glow.spawn({ x, y, z, vx: dx * 9, vy: 0.3, vz: dz * 9, size: 0.035, life: 0.12, color: C(0xffffff), a0: 3.5, drag: 4, fadeIn: 0.001, streak: 2.2 });
+    this.smoke.spawn({ x, y, z, vx: dx * 0.6, vy: 0.2, vz: dz * 0.6, size: 0.1, grow: 3, life: 0.6, color: C(0xcfc8bc), a0: 0.35, drag: 3 });
+    this.light(x, z, 4, 0.08, 0xfff0c0);
+  }
+  // Penetration: sparks punched through, a dark smoke puff, bits of paint and steel.
+  penetrate(x, z, dx, dz, colors, y = 0.35) {
+    for (let k = 0; k < 18; k++) {
+      const a = Math.random() * Math.PI * 2, sp = 1.5 + Math.random() * 3.5;
+      this.glow.spawn({ x, y, z, vx: Math.cos(a) * sp - dx * 1.5, vy: 1 + Math.random() * 2.5, vz: Math.sin(a) * sp - dz * 1.5, g: 9, size: 0.035, life: 0.2 + Math.random() * 0.3, color: C(k % 2 ? 0xffb050 : 0xffe0a0), a0: 2, drag: 2, fadeIn: 0.001, streak: 0.45 });
+    }
+    this.glow.spawn({ x, y, z, size: 1.0, grow: 0.3, life: 0.12, color: C(0xffc070), a0: 2.2, fadeIn: 0.001 });
+    this.flame.spawn({ x, y: y + 0.05, z, vy: 0.6, size: 0.35, grow: 0.6, life: 0.16, color: C(0xffb040), color2: C(0xc02008), a0: 1.4, fadeIn: 0.001, drag: 2 });
+    for (let k = 0; k < 9; k++) {
+      const a = Math.random() * Math.PI * 2, sp = Math.random() * 0.7;
+      this.smoke.spawn({ x: x + Math.cos(a) * 0.05, y: y + 0.05, z: z + Math.sin(a) * 0.05, vx: Math.cos(a) * sp - dx * 0.4, vy: 0.5 + Math.random() * 0.6, vz: Math.sin(a) * sp - dz * 0.4, size: 0.14, grow: 3.2, life: 1.1 + Math.random() * 0.7, color: C(0x221e1b), color2: C(0x6a645e), a0: 0.7, drag: 2.2, fadeIn: 0.03 });
+    }
+    this.debrisBurst(x, z, colors, 9, 0.55, { y, size: 0.05 });
+    this.light(x, z, 10, 0.16, 0xff9a40);
+  }
+  // No penetration: a dull clank, a small grey puff, a few dim sparks.
+  clank(x, z, y = 0.35) {
+    this.puff(x, z, 7, 0x9a958e, y, 0.6, 0.13);
+    for (let k = 0; k < 8; k++) {
+      const a = Math.random() * Math.PI * 2, sp = 1 + Math.random() * 1.5;
+      this.glow.spawn({ x, y, z, vx: Math.cos(a) * sp, vy: 0.5 + Math.random(), vz: Math.sin(a) * sp, g: 9, size: 0.025, life: 0.15 + Math.random() * 0.1, color: C(0xffb070), a0: 1.0, drag: 3, fadeIn: 0.001, streak: 0.3 });
+    }
+    this.glow.spawn({ x, y, z, size: 0.4, grow: 0.3, life: 0.07, color: C(0xffe0b0), a0: 1.2, fadeIn: 0.001 });
+  }
+  // A shell stopping against an obstacle: dust plus chips of whatever it hit, thrown back
+  // toward the shooter. surf: 1 wood, 2 paper, 3 metal, 4 plastic, 5 stone, 6 card, 0 frame.
+  impact(x, z, surf, dx = 0, dz = 0, tint = null) {
+    const y = 0.4;
+    const kit = {
+      0: { dust: 0x9a7a58, chips: [0x5a3620, 0x7a4a2a, 0x3a2414], flat: true },
+      1: { dust: 0xc8b090, chips: tint != null ? [tint, tint, 0xe2c79a, 0xd9b98a] : [0xe2c79a, 0xd9b98a, 0xc49a64], flat: true },
+      2: { dust: 0xe8e2d4, chips: [0xf4efe0, 0xefe6cf, tint ?? 0x8e2a25], flat: true, flutter: true },
+      3: { dust: 0x9a948c, chips: [], sparks: true },
+      4: { dust: 0xd8d2c8, chips: tint != null ? [tint, tint, tint] : [0xd6362c, 0x2a62c9, 0xf2c12e], flat: false },
+      5: { dust: 0xb0aaa0, chips: [0x9a968e, 0xb9b4a8, 0x7a766e], flat: false },
+      6: { dust: 0xc9b08a, chips: [0xc49a64, 0xb38850, 0xd6b478], flat: true },
+    }[surf] || { dust: 0xc8b8a0, chips: [0xc49a64], flat: true };
+    // dust bloom off the face
+    for (let k = 0; k < 9; k++) {
+      const a = Math.random() * Math.PI * 2, sp = Math.random() * 0.9;
+      this.smoke.spawn({ x: x - dx * 0.05, y: y + (Math.random() - 0.5) * 0.1, z: z - dz * 0.05, vx: Math.cos(a) * sp - dx * 0.9, vy: 0.2 + Math.random() * 0.5, vz: Math.sin(a) * sp - dz * 0.9, size: 0.14, grow: 3, life: 0.9 + Math.random() * 0.8, color: C(kit.dust), a0: 0.5, drag: 2.6 });
+    }
+    if (kit.chips.length) this.debrisBurst(x - dx * 0.08, z - dz * 0.08, kit.chips, kit.flutter ? 10 : 8, 0.45, { y, size: 0.045, flat: kit.flat, dirx: -dx, dirz: -dz });
+    if (kit.sparks || surf === 5) this.spark(x, z, kit.sparks ? 12 : 4, 0xffd080, y);
+    this.glow.spawn({ x, y, z, size: 0.3, grow: 0.3, life: 0.06, color: C(0xffe8c0), a0: 1.0, fadeIn: 0.001 });
+  }
+
+  // ---- continuous emitters (call every frame with dt)
+  // A burning tank: flame tongues, black smoke, embers.
+  burn(x, y, z, dt, power = 1) {
+    const n = Math.floor(dt * 70 * power + Math.random());
+    for (let k = 0; k < n; k++) {
+      const a = Math.random() * Math.PI * 2, r = Math.random() * 0.14;
+      this.flame.spawn({ x: x + Math.cos(a) * r, y: y + Math.random() * 0.04, z: z + Math.sin(a) * r, vx: (Math.random() - 0.5) * 0.25, vy: 0.8 + Math.random() * 0.9, vz: (Math.random() - 0.5) * 0.25, size: (0.18 + Math.random() * 0.16) * (0.6 + 0.4 * power), grow: 0.4, life: 0.32 + Math.random() * 0.34, color: C(0xffc860), color2: C(0xd8280a), a0: 1.5, drag: 1.2, fadeIn: 0.02, spin: 0, rot: (Math.random() - 0.5) * 0.4 });
+    }
+    if (Math.random() < dt * 30 * power) this.glow.spawn({ x, y: y + 0.08, z, size: 0.55, grow: 1.2, life: 0.18, color: C(0xff8a30), a0: 0.35, fadeIn: 0.05, drag: 0 });
+    if (Math.random() < dt * 16 * power) this.smoke.spawn({ x, y: y + 0.2, z, vx: (Math.random() - 0.5) * 0.2, vy: 0.9 + Math.random() * 0.5, vz: (Math.random() - 0.5) * 0.2, size: 0.16, grow: 4, life: 2 + Math.random(), color: C(0x151210), color2: C(0x4a4642), a0: 0.65, drag: 0.6, fadeIn: 0.1 });
+    if (Math.random() < dt * 6) this.glow.spawn({ x, y: y + 0.1, z, vx: (Math.random() - 0.5) * 0.8, vy: 1.5 + Math.random() * 1.5, vz: (Math.random() - 0.5) * 0.8, size: 0.025, life: 0.8 + Math.random() * 0.6, color: C(0xffa040), a0: 1.5, drag: 1, fadeIn: 0.001 });
+  }
+  // A damaged engine: grey-to-black smoke off the engine deck. level 0 (50% hp) … 1 (dying).
+  engineSmoke(x, y, z, dt, level) {
+    if (Math.random() > dt * (5 + level * 14)) return;
+    const c0 = C(0x3a3632).lerp(C(0x121010), level), c1 = C(0x8a857e).lerp(C(0x3a3632), level);
+    this.smoke.spawn({ x: x + (Math.random() - 0.5) * 0.08, y, z: z + (Math.random() - 0.5) * 0.08, vx: (Math.random() - 0.5) * 0.15, vy: 0.45 + Math.random() * 0.35, vz: (Math.random() - 0.5) * 0.15, size: 0.09 + level * 0.06, grow: 4.5, life: 1.6 + Math.random() * 1.2, color: c0, color2: c1, a0: 0.4 + level * 0.25, drag: 0.8, fadeIn: 0.1 });
+  }
+  // A wreck: a thin smoulder that thins out over time, now and then an ember.
+  smoulder(x, y, z, dt, age) {
+    const rate = age < 12 ? 7 : age < 40 ? 3 : 1.2;
+    if (Math.random() < dt * rate) this.smoke.spawn({ x: x + (Math.random() - 0.5) * 0.2, y, z: z + (Math.random() - 0.5) * 0.2, vx: (Math.random() - 0.5) * 0.1, vy: 0.35 + Math.random() * 0.3, vz: (Math.random() - 0.5) * 0.1, size: 0.08, grow: 5, life: 2.5 + Math.random() * 1.5, color: C(age < 12 ? 0x2a2622 : 0x4a4642), color2: C(0x9a958e), a0: age < 12 ? 0.5 : 0.3, drag: 0.5, fadeIn: 0.2 });
+    if (age < 20 && Math.random() < dt * 2) this.glow.spawn({ x: x + (Math.random() - 0.5) * 0.3, y: y - 0.05, z: z + (Math.random() - 0.5) * 0.3, vy: 0.5 + Math.random(), size: 0.022, life: 0.6 + Math.random() * 0.6, color: C(0xff8030), a0: 1.3, drag: 1, fadeIn: 0.001 });
+  }
+  setFireLight(k, x, y, z, on, t) {
+    const l = this.fireLights[k]; if (!l) return;
+    if (!on) { l.intensity = 0; return; }
+    l.position.set(x, y + 0.35, z);
+    l.intensity = 3.2 * (0.75 + 0.25 * Math.sin(t * 23 + k) * Math.sin(t * 7.3 + 2 * k));
+  }
+  setBounds(hx, hz) { this.bx = hx; this.bz = hz; }
 
   explosion(x, z, big = 1) {
     // flash core
@@ -183,17 +295,17 @@ export class FX {
     this.light(x, z, 28 * big, 0.5, 0xff8a30);
   }
 
-  debrisBurst(x, z, colors, n = 22, power = 1) {
+  debrisBurst(x, z, colors, n = 22, power = 1, { y = 0.3, size = 0.1, flat = false, dirx = 0, dirz = 0 } = {}) {
     for (let k = 0; k < n; k++) {
       if (this.debris.length >= this.debrisMax) this.debris.shift();
       const a = Math.random() * Math.PI * 2, sp = (1 + Math.random() * 3.2) * power;
-      const s = 0.04 + Math.random() * 0.1;
+      const s = 0.018 + Math.random() * size;
       this.debris.push({
-        x: x + Math.cos(a) * 0.1, y: 0.3, z: z + Math.sin(a) * 0.1,
-        vx: Math.cos(a) * sp, vy: (3 + Math.random() * 4) * power, vz: Math.sin(a) * sp,
+        x: x + Math.cos(a) * 0.1, y, z: z + Math.sin(a) * 0.1,
+        vx: Math.cos(a) * sp + dirx * 2.5 * power, vy: (3 + Math.random() * 4) * power, vz: Math.sin(a) * sp + dirz * 2.5 * power,
         rx: Math.random() * 6, ry: Math.random() * 6, rz: Math.random() * 6,
         wx: (Math.random() - 0.5) * 20, wy: (Math.random() - 0.5) * 20, wz: (Math.random() - 0.5) * 20,
-        sx: s * (0.6 + Math.random()), sy: s * (0.4 + Math.random() * 0.6), sz: s * (0.6 + Math.random()),
+        sx: s * (0.6 + Math.random()) * (flat ? 1.6 : 1), sy: s * (flat ? 0.18 : 0.4 + Math.random() * 0.6), sz: s * (0.6 + Math.random()) * (flat ? 0.5 : 1),
         color: new THREE.Color(colors[k % colors.length]), age: 0, rest: false, smoking: Math.random() < 0.25,
       });
     }
@@ -216,12 +328,12 @@ export class FX {
   }
 
   update(dt, solidTop) {
-    this.smoke.update(dt); this.glow.update(dt);
+    this.smoke.update(dt); this.glow.update(dt); this.flame.update(dt);
     // motes
     this.moteT -= dt;
     if (this.moteT <= 0 && this.quality.motes) {
-      this.moteT = 0.09;
-      this.dust.spawn({ x: (Math.random() - 0.5) * 30, y: 0.5 + Math.random() * 5, z: (Math.random() - 0.5) * 20, vx: 0.05 + Math.random() * 0.1, vy: (Math.random() - 0.5) * 0.05, vz: (Math.random() - 0.5) * 0.08, size: 0.02 + Math.random() * 0.035, life: 6 + Math.random() * 6, color: C(0xffe8c0), a0: 0.35, drag: 0, fadeIn: 1.5 });
+      this.moteT = 0.09 * 700 / (this.bx * this.bz * 2 + 400);
+      this.dust.spawn({ x: (Math.random() - 0.5) * this.bx * 2, y: 0.5 + Math.random() * 5, z: (Math.random() - 0.5) * this.bz * 2, vx: 0.05 + Math.random() * 0.1, vy: (Math.random() - 0.5) * 0.05, vz: (Math.random() - 0.5) * 0.08, size: 0.02 + Math.random() * 0.035, life: 6 + Math.random() * 6, color: C(0xffe8c0), a0: 0.35, drag: 0, fadeIn: 1.5 });
     }
     this.dust.update(dt);
     // debris physics
@@ -277,7 +389,8 @@ export class FX {
     this.decals = [];
     this.debris = []; this.debrisMesh.count = 0;
     this.trackN = 0; this.trackHead = 0; this.tracks.count = 0;
-    this.smoke.clear(); this.glow.clear();
+    this.smoke.clear(); this.glow.clear(); this.flame.clear();
+    for (const l of this.fireLights) l.intensity = 0;
     for (const r of this.rings) this.scene.remove(r.m);
     this.rings = [];
   }

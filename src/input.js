@@ -33,7 +33,19 @@ export class Input {
     this._padPrev = {};
   }
 
-  requestLock() { if (!this.locked && this.canvas.requestPointerLock) { try { const p = this.canvas.requestPointerLock({ unadjustedMovement: true }); if (p && p.catch) p.catch(() => { try { this.canvas.requestPointerLock(); } catch {} }); } catch { try { this.canvas.requestPointerLock(); } catch {} } } }
+  // Chrome rejects a lock request without a recent user gesture, or several in a short window;
+  // every promise is caught so a refused lock is never an uncaught error.
+  requestLock() {
+    if (this.locked || !this.canvas.requestPointerLock) return;
+    const now = performance.now();
+    if (now - (this._lockT || 0) < 400) return;
+    this._lockT = now;
+    const quiet = (p) => { if (p && p.catch) p.catch(() => {}); };
+    try {
+      const p = this.canvas.requestPointerLock({ unadjustedMovement: true });
+      if (p && p.catch) p.catch((e) => { if (e && e.name === 'NotSupportedError') { try { quiet(this.canvas.requestPointerLock()); } catch {} } });
+    } catch { try { quiet(this.canvas.requestPointerLock()); } catch {} }
+  }
   releaseLock() { if (this.locked) document.exitPointerLock(); }
 
   poll() {

@@ -271,7 +271,9 @@ function fbm(n, x, y, oct = 5) { let a = 0.5, f = 1, t = 0, w = 0; for (let o = 
 
 // Diorama terrain: packed sandy earth with patches of static-grass flock and pebbles.
 // Returns {map, rough, grassMask(x,z) in board cells} so 3D tufts can follow the painted grass.
-export function diorama(cols, rows, px = 110) {
+export function diorama(cols, rows, px = 0) {
+  // Any board size: ~64 px per cell, the whole sheet capped at 4096 px on its long side.
+  if (!px) px = Math.max(32, Math.min(64, Math.floor(4096 / Math.max(cols, rows))));
   const W = cols * px, H = rows * px;
   const [c, g] = mk(W, H);
   const img = g.createImageData(W, H), d = img.data;
@@ -279,40 +281,49 @@ export function diorama(cols, rows, px = 110) {
   const rimg = rg.createImageData(W, H), rd = rimg.data;
   const nA = makeNoise(256, 7), nB = makeNoise(256, 99), nC = makeNoise(256, 1234);
   const grass = new Float32Array(cols * 4 * rows * 4); // mask at quarter-cell resolution
+  // The low-frequency fields (earth tone, grass patches) are smooth: sample them on a coarse
+  // lattice and interpolate, so a 48x34 board paints in well under a second.
+  const S = 4, CW = Math.ceil(W / S) + 2, CH = Math.ceil(H / S) + 2;
+  const E = new Float32Array(CW * CH), GM = new Float32Array(CW * CH);
+  for (let y = 0; y < CH; y++) for (let x = 0; x < CW; x++) {
+    const u = x * S / px, v = y * S / px;
+    E[y * CW + x] = fbm(nA, u * 0.9, v * 0.9, 5);
+    GM[y * CW + x] = fbm(nB, u * 0.35 + 20, v * 0.35 + 5, 4);
+  }
+  const lerp2 = (A, x, y) => {
+    const fx = x / S, fy = y / S, xi = fx | 0, yi = fy | 0, tx = fx - xi, ty = fy - yi, k = yi * CW + xi;
+    return (A[k] * (1 - tx) + A[k + 1] * tx) * (1 - ty) + (A[k + CW] * (1 - tx) + A[k + CW + 1] * tx) * ty;
+  };
+  const fs = 0.35 * 110 / px; // keep the grit the same size in board units whatever px is
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
-      const u = x / px, v = y / px;
-      const e = fbm(nA, u * 0.9, v * 0.9, 5);
-      const gm = fbm(nB, u * 0.35 + 20, v * 0.35 + 5, 4);
-      const fine = nC(x * 0.35, y * 0.35);
-      // base earth: warm sand to darker loam
+      const e = lerp2(E, x, y), gm = lerp2(GM, x, y);
+      const fine = nC(x * fs, y * fs);
       let r = 178 + (e - 0.5) * 70 + (fine - 0.5) * 26;
       let gg = 150 + (e - 0.5) * 60 + (fine - 0.5) * 22;
       let b = 108 + (e - 0.5) * 50 + (fine - 0.5) * 18;
-      // grass flock where the patch noise is high; ragged edge from the fine noise
       const gv = (gm - 0.56) * 9 + (fine - 0.5) * 1.6;
       const gw = Math.max(0, Math.min(1, gv));
       if (gw > 0) {
-        const tone = nC(x * 0.9 + 50, y * 0.9) ;
+        const tone = nC(x * fs * 2.6 + 50, y * fs * 2.6);
         const gr = 88 + tone * 40 + (e - 0.5) * 30, gg2 = 112 + tone * 50 + (e - 0.5) * 30, gb = 48 + tone * 20;
         r = r * (1 - gw) + gr * gw; gg = gg * (1 - gw) + gg2 * gw; b = b * (1 - gw) + gb * gw;
       }
-      // tread-worn lighter lanes don't exist yet; add scattered dark grit
       if (fine > 0.93) { r *= 0.7; gg *= 0.7; b *= 0.7; }
       const k = (y * W + x) * 4;
       d[k] = r; d[k + 1] = gg; d[k + 2] = b; d[k + 3] = 255;
       const rough = 0.82 + gw * 0.12 - (fine > 0.93 ? 0.1 : 0);
       rd[k] = rd[k + 1] = rd[k + 2] = rough * 255; rd[k + 3] = 255;
       if ((x % (px / 4 | 0)) === 0 && (y % (px / 4 | 0)) === 0) {
-        const gi = Math.floor(u * 4), gj = Math.floor(v * 4);
+        const gi = Math.floor(x / px * 4), gj = Math.floor(y / px * 4);
         if (gi < cols * 4 && gj < rows * 4) grass[gj * cols * 4 + gi] = gw;
       }
     }
   }
   g.putImageData(img, 0, 0); rg.putImageData(rimg, 0, 0);
-  // pebbles with a baked contact shadow
+  const ps = px / 110;
   for (let k = 0; k < cols * rows * 3; k++) {
-    const x = rnd() * W, y = rnd() * H, r = 1.5 + rnd() * 4;
+    const x = rnd() * W, y = rnd() * H, r = (1.5 + rnd() * 4) * ps;
     g.fillStyle = 'rgba(40,28,15,0.35)'; g.beginPath(); g.ellipse(x + r * 0.4, y + r * 0.4, r * 1.1, r * 0.9, 0, 0, 7); g.fill();
     const t = 120 + rnd() * 90 | 0;
     g.fillStyle = `rgb(${t},${t - 8},${t - 20})`; g.beginPath(); g.ellipse(x, y, r, r * (0.6 + rnd() * 0.4), rnd() * 3, 0, 7); g.fill();
@@ -320,11 +331,11 @@ export function diorama(cols, rows, px = 110) {
   }
   const map = tex(c, { aniso: 16 }), rough = tex(rc, { srgb: false, aniso: 16 });
   const gcols = cols * 4;
-  return { map, rough, grassAt: (x, z) => grass[Math.floor(z * 4) * gcols + Math.floor(x * 4)] || 0 };
+  return { map, rough, px, grassAt: (x, z) => grass[Math.floor(z * 4) * gcols + Math.floor(x * 4)] || 0 };
 }
 
 // Tileable fine-grain normal map for close-up detail (sand grains / flock).
-export function grainNormal(size = 512) {
+export function grainNormal(size = 512, rep = [22, 16]) {
   const [c, g] = mk(size, size);
   const n = makeNoise(128, 4242), n2 = makeNoise(64, 77);
   const h = new Float32Array(size * size);
@@ -338,7 +349,7 @@ export function grainNormal(size = 512) {
     d[k] = (nx / l * 0.5 + 0.5) * 255; d[k + 1] = (ny / l * 0.5 + 0.5) * 255; d[k + 2] = (nz / l * 0.5 + 0.5) * 255; d[k + 3] = 255;
   }
   g.putImageData(img, 0, 0);
-  const t = tex(c, { srgb: false, repeat: [22, 16] });
+  const t = tex(c, { srgb: false, repeat: rep });
   return t;
 }
 
@@ -413,7 +424,7 @@ export function grassCard() {
   for (let k = 0; k < 38; k++) {
     const x = 64 + (rnd() - 0.5) * 60, h = 50 + rnd() * 70, lean = (rnd() - 0.5) * 30;
     const t = rnd();
-    g.strokeStyle = `rgb(${70 + t * 60 | 0},${100 + t * 70 | 0},${30 + t * 25 | 0})`;
+    g.strokeStyle = `rgb(${105 + t * 60 | 0},${140 + t * 60 | 0},${40 + t * 30 | 0})`;
     g.lineWidth = 2 + rnd() * 2.5;
     g.beginPath(); g.moveTo(x, 128); g.quadraticCurveTo(x + lean * 0.3, 128 - h * 0.6, x + lean, 128 - h); g.stroke();
   }
@@ -435,4 +446,140 @@ export function rug() {
   for (let r = 0; r < 5; r++) { g.strokeStyle = r % 2 ? 'rgba(200,170,120,0.28)' : 'rgba(30,40,70,0.35)'; g.lineWidth = 10; g.strokeRect(30 + r * 26, 30 + r * 26, S - 60 - r * 52, S - 60 - r * 52); }
   for (let k = 0; k < 30000; k++) { g.fillStyle = `rgba(${rnd() < 0.5 ? '0,0,0' : '255,230,200'},${rnd() * 0.08})`; g.fillRect(rnd() * S, rnd() * S, 2, 3); }
   return tex(c);
+}
+
+// ================================================================== Phase B: toy obstacles
+// Near-white wood grain, multiplied by vertex paint colour: painted wooden toys show a
+// little grain through the lacquer.
+export function woodGrain() {
+  const S = 512;
+  const [c, g] = mk(S, S);
+  const n = makeNoise(64, 4711);
+  const img = g.createImageData(S, S), d = img.data;
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const w = fbm(n, x / 90, y / 7 + fbm(n, x / 60 + 9, y / 60, 2) * 3, 3);
+    const ring = Math.abs(Math.sin(w * 22));
+    const v = 238 - ring * 22 - (w - 0.5) * 30;
+    const k = (y * S + x) * 4; d[k] = v; d[k + 1] = v * 0.985; d[k + 2] = v * 0.96; d[k + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  for (let k = 0; k < 500; k++) { g.fillStyle = `rgba(0,0,0,${rnd() * 0.05})`; g.fillRect(rnd() * S, rnd() * S, 1 + rnd() * 3, 1 + rnd() * 2); }
+  const t = tex(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; return t;
+}
+
+// Painted roof shingles (grey-white; tinted by vertex colour). One tile = 1 x 1 board unit.
+export function shingles() {
+  const S = 512;
+  const [c, g] = mk(S, S);
+  g.fillStyle = '#e9e6e0'; g.fillRect(0, 0, S, S);
+  const rowsN = 8, rh = S / rowsN, cw = S / 6;
+  for (let r = 0; r < rowsN; r++) {
+    const off = (r % 2) * cw / 2;
+    for (let k = -1; k < 7; k++) {
+      const x = k * cw + off, y = r * rh;
+      const t = 205 + rnd() * 45 | 0;
+      g.fillStyle = `rgb(${t},${t},${t - 4})`; g.fillRect(x + 2, y + 2, cw - 4, rh - 3);
+      const gr = g.createLinearGradient(0, y, 0, y + rh);
+      gr.addColorStop(0, 'rgba(0,0,0,0.0)'); gr.addColorStop(0.8, 'rgba(0,0,0,0.06)'); gr.addColorStop(1, 'rgba(0,0,0,0.38)');
+      g.fillStyle = gr; g.fillRect(x + 2, y + 2, cw - 4, rh - 2);
+    }
+    g.fillStyle = 'rgba(40,30,25,0.55)'; g.fillRect(0, r * rh + rh - 2, S, 3);
+  }
+  const t = tex(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; return t;
+}
+
+// Tin-can paper labels: 4 designs stacked as rows of one atlas (each row wraps a can).
+export const CAN_LABELS = 4;
+export function canLabels() {
+  const W = 1024, RH = 256;
+  const [c, g] = mk(W, RH * CAN_LABELS);
+  const designs = [
+    { bg: '#c7302a', band: '#f4ecd8', ink: '#c7302a', word: 'TOMATO', sub: 'CONDENSED SOUP', fruit: '#d8392c', leaf: '#3f8a3a' },
+    { bg: '#23508f', band: '#f2b632', ink: '#23508f', word: 'BEANS', sub: 'IN TOMATO SAUCE', fruit: '#e07a2c', leaf: '#e07a2c' },
+    { bg: '#f1c232', band: '#fff8e8', ink: '#b8561c', word: 'PEACHES', sub: 'SLICED IN SYRUP', fruit: '#f09a4a', leaf: '#4f8a36' },
+    { bg: '#2f7a41', band: '#f6f0dc', ink: '#2f7a41', word: 'GARDEN PEAS', sub: 'FARM FRESH', fruit: '#7cc04a', leaf: '#2f7a41' },
+  ];
+  designs.forEach((D, r) => {
+    const y0 = r * RH;
+    g.fillStyle = D.bg; g.fillRect(0, y0, W, RH);
+    g.fillStyle = D.band; g.fillRect(0, y0 + RH * 0.3, W, RH * 0.42);
+    g.fillStyle = 'rgba(255,255,255,0.25)'; g.fillRect(0, y0 + 10, W, 6); g.fillRect(0, y0 + RH - 16, W, 6);
+    for (const cx of [W * 0.25, W * 0.75]) {
+      // a big painted fruit, a word, a smaller line
+      g.fillStyle = D.fruit; g.beginPath(); g.arc(cx - 150, y0 + RH * 0.51, 46, 0, 7); g.fill();
+      g.fillStyle = 'rgba(255,255,255,0.35)'; g.beginPath(); g.arc(cx - 164, y0 + RH * 0.45, 14, 0, 7); g.fill();
+      g.fillStyle = D.leaf; g.beginPath(); g.ellipse(cx - 140, y0 + RH * 0.34, 18, 8, -0.5, 0, 7); g.fill();
+      g.fillStyle = D.ink; g.font = `900 ${D.word.length > 7 ? 46 : 60}px "Arial Black", Arial, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(D.word, cx + 40, y0 + RH * 0.47);
+      g.font = '700 22px Arial, sans-serif'; g.fillText(D.sub, cx + 40, y0 + RH * 0.64);
+      g.fillStyle = D.band; g.font = 'italic 700 30px Georgia, serif'; g.fillText('Homestyle', cx, y0 + RH * 0.17);
+    }
+    // print grain + scuffs
+    for (let k = 0; k < 1400; k++) { g.fillStyle = `rgba(${rnd() < 0.5 ? '0,0,0' : '255,255,255'},${rnd() * 0.06})`; g.fillRect(rnd() * W, y0 + rnd() * RH, 2 + rnd() * 4, 1 + rnd() * 2); }
+  });
+  return tex(c, { aniso: 8 });
+}
+
+// Toy-fort stone: moulded grey plastic courses. Returns {map, normal}; 1 tile = 1 board unit.
+export function fortStone() {
+  const S = 512;
+  const [c, g] = mk(S, S);
+  const h = new Float32Array(S * S).fill(0.2);
+  g.fillStyle = '#6f6c66'; g.fillRect(0, 0, S, S);
+  const courses = 6, ch = S / courses;
+  for (let r = 0; r < courses; r++) {
+    let x = -(r % 2) * 40 - rnd() * 30;
+    while (x < S) {
+      const w = 60 + rnd() * 70;
+      const t = 150 + rnd() * 40 | 0, y = r * ch;
+      g.fillStyle = `rgb(${t},${t - 2},${t - 8})`;
+      g.beginPath(); g.roundRect(x + 4, y + 4, w - 8, ch - 8, 10); g.fill();
+      for (let yy = Math.max(0, y + 5 | 0); yy < Math.min(S, y + ch - 5); yy++) for (let xx = Math.max(0, x + 5 | 0); xx < Math.min(S, x + w - 5); xx++) {
+        const ex = Math.min(xx - x - 5, x + w - 5 - xx), ey = Math.min(yy - y - 5, y + ch - 5 - yy);
+        h[yy * S + xx] = 0.2 + Math.min(1, Math.min(ex, ey) / 8) * 0.8;
+      }
+      x += w;
+    }
+  }
+  for (let k = 0; k < 3000; k++) { g.fillStyle = `rgba(${rnd() < 0.5 ? '0,0,0' : '255,255,255'},${rnd() * 0.08})`; g.fillRect(rnd() * S, rnd() * S, 2, 2); }
+  const [nc, ng] = mk(S, S);
+  const img = ng.createImageData(S, S), d = img.data;
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const hx = h[y * S + (x + 1) % S] - h[y * S + (x - 1 + S) % S], hy = h[((y + 1) % S) * S + x] - h[((y - 1 + S) % S) * S + x];
+    const nx = -hx * 2.5, ny = hy * 2.5, l = Math.hypot(nx, ny, 1), k = (y * S + x) * 4;
+    d[k] = (nx / l * 0.5 + 0.5) * 255; d[k + 1] = (ny / l * 0.5 + 0.5) * 255; d[k + 2] = (1 / l * 0.5 + 0.5) * 255; d[k + 3] = 255;
+  }
+  ng.putImageData(img, 0, 0);
+  const map = tex(c), normal = tex(nc, { srgb: false });
+  map.wrapS = map.wrapT = normal.wrapS = normal.wrapT = THREE.RepeatWrapping;
+  return { map, normal };
+}
+
+// Book page edges: fine cream lines.
+export function pageEdges() {
+  const S = 256;
+  const [c, g] = mk(S, S);
+  g.fillStyle = '#efe6cf'; g.fillRect(0, 0, S, S);
+  for (let y = 0; y < S; y += 2) { g.fillStyle = `rgba(120,100,70,${0.05 + rnd() * 0.12})`; g.fillRect(0, y, S, 1); }
+  const t = tex(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; return t;
+}
+
+// Cloth-bound book cover grain (near white; tinted by vertex colour).
+export function clothGrain() {
+  const S = 256;
+  const [c, g] = mk(S, S);
+  g.fillStyle = '#ececec'; g.fillRect(0, 0, S, S);
+  for (let k = 0; k < 6000; k++) { g.fillStyle = `rgba(${rnd() < 0.5 ? '0,0,0' : '255,255,255'},${rnd() * 0.08})`; g.fillRect(rnd() * S, rnd() * S, rnd() < 0.5 ? 3 : 1, rnd() < 0.5 ? 1 : 3); }
+  const t = tex(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; return t;
+}
+
+// Soft flame tongue for fire particles (white; tinted per particle).
+export function flame() {
+  const S = 128;
+  const [c, g] = mk(S, S);
+  const gr = g.createRadialGradient(S / 2, S * 0.62, 2, S / 2, S * 0.55, S * 0.46);
+  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.35, 'rgba(255,255,255,0.7)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = gr;
+  g.beginPath(); g.moveTo(S / 2, 4); g.bezierCurveTo(S * 0.92, S * 0.45, S * 0.9, S * 0.95, S / 2, S * 0.97); g.bezierCurveTo(S * 0.1, S * 0.95, S * 0.08, S * 0.45, S / 2, 4); g.fill();
+  return tex(c, { srgb: false });
 }

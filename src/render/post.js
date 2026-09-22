@@ -123,7 +123,7 @@ export class Post {
       vertexShader: VERT, fragmentShader: FINAL_FRAG, depthTest: false, depthWrite: false,
     });
     this.quad = new FullScreenQuad(this.dofMat);
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.28, 0.5, 0.96);
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.34, 0.5, 1.45); // only real highlights bloom (flashes, fire, the window)
   }
 
   setSize(w, h) {
