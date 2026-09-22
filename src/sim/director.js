@@ -35,19 +35,22 @@ export function recordResult(dir, threat, result, quality = 0.5) {
 // Campaign: scale an enemy type's brain and reload by the rating.
 export function tuneEnemy(typeKey, s) {
   const base = TYPES[typeKey];
-  const ai = { ...base.ai };
-  ai.aimErr = base.ai.aimErr * lerp(1.6, 0.6, s);
-  ai.think = base.ai.think * lerp(1.5, 0.75, s);
-  ai.samples = Math.round((base.ai.samples || 0) * lerp(0.5, 1.2, s));
-  ai.fireTol = base.ai.fireTol * lerp(1.35, 0.8, s);
-  ai.dodgeLook = (base.ai.dodgeLook || 0.4) * lerp(0.6, 1.25, s);
+  const b = base.ai || {};
+  const ai = { ...b };
+  ai.aimErr = (b.aimErr ?? 0.05) * lerp(1.6, 0.6, s);
+  ai.think = (b.think ?? 0.3) * lerp(1.5, 0.75, s);
+  ai.fireTol = (b.fireTol ?? 0.06) * lerp(1.35, 0.8, s);
+  ai.dodgeLook = (b.dodgeLook || 0.4) * lerp(0.6, 1.25, s);
+  ai.patience = Math.min(1, (b.patience ?? 0.45) * lerp(0.6, 1.5, s));
   // Low ratings switch dodging off for the mid-tier; the elites always dodge.
   const elite = typeKey === 'hunter' || typeKey === 'boss';
-  ai.dodge = base.ai.dodge ? (elite || s >= 0.25) : (s >= 0.8 && base.speed > 0);
+  ai.dodge = b.dodge ? (elite || s >= 0.25) : (s >= 0.8 && base.speed > 0);
   ai.dodgeEvery = s >= 0.7 && elite ? 'tick' : 'think';
-  ai.lead = base.ai.lead || s >= 0.6;
-  const type = { ...base, reload: base.reload * lerp(1.25, 0.9, s), ai };
-  return type;
+  ai.lead = !!b.lead || s >= 0.6;
+  ai.tactics = b.tactics ?? (s >= 0.45 && (b.style === 'hunt' || b.style === 'trick' || b.style === 'sniper'));
+  // Hull and gun scale too, neutral at 0.5: weaker toys for a struggling player, tougher for a strong one.
+  const k = s < 0.5 ? lerp(0.72, 1, s / 0.5) : lerp(1, 1.1, (s - 0.5) / 0.5);
+  return { ...base, reload: base.reload * lerp(1.25, 0.9, s), hp: Math.round(base.hp * k), dmg: Math.round(base.dmg * k), ai };
 }
 
 // Versus "Adaptive" bot: blend Cadet → Veteran → Ace by rating.
@@ -57,7 +60,7 @@ export function blendSkill(s) {
   for (const k of Object.keys(a)) {
     if (k === 'label') continue;
     const va = a[k], vb = b[k];
-    if (typeof va === 'number') out[k] = k === 'bank' || k === 'samples' ? Math.round(lerp(va, vb, t)) : lerp(va, vb, t);
+    if (typeof va === 'number') out[k] = lerp(va, vb, t);
     else out[k] = t < 0.5 ? va : vb;
   }
   return out;
