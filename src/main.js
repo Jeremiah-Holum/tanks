@@ -9,7 +9,7 @@ import { CAMPAIGN, VERSUS, roster } from './sim/levels.js';
 import { newDirector, recordResult, missionThreat, effectiveRating, SKILL_THREAT } from './sim/director.js';
 import { Input } from './input.js';
 import { Audio } from './audio.js';
-import { UI, TEAM_COLORS, versusLayout } from './ui.js';
+import { UI, TEAM_COLORS, VS_COLORS, versusLayout } from './ui.js';
 
 const params = new URLSearchParams(location.search);
 const SAVE_KEY = 'toytanks.v1';
@@ -121,7 +121,7 @@ function campaignGarage(m, { fresh = false } = {}) {
   ui.hud(false); ui.clear('banner');
   view.hideAim();
   ui.garage({
-    cls: save.cls, brief: campaignBrief(m),
+    cls: save.cls, brief: campaignBrief(m), paint: { color: TYPES.player.color, trim: TYPES.player.trim, emblem: 'star' },
     onPick: (c) => { save.cls = c; persist(); },
     onStart: (c) => {
       save.cls = c; persist(); audio.play('uiBig');
@@ -282,7 +282,28 @@ function versusSetup() {
   input.releaseLock(); ui.hud(false); ui.clear('banner'); view.hideAim();
   const cfg = normVs(save.vs);
   G.setupCfg = cfg;
-  ui.versusSetup(cfg, { onStart: (c) => { save.vs = c; save.cls = c.cls; persist(); audio.play('uiBig'); startVersus(c); }, onBack: toTitle });
+  ui.versusSetup(cfg, { onStart: (c) => { save.vs = c; persist(); versusGarage(c); }, onBack: toTitle });
+}
+
+// The garage between versus setup and the match: pick your class against the line-up you chose.
+function versusGarage(cfg) {
+  G.scene = 'garage';
+  const L = versusLayout(cfg);
+  const clsName = (b) => b.cls && CLASSES[b.cls] ? ' ' + CLASSES[b.cls].label : '';
+  const foes = L.filter((s) => !s.human && s.team !== 0).map((s) => [s.color, `${s.label} · ${skillLabel(s.ref.skill)}${clsName(s.ref)}`]);
+  const allies = L.filter((s) => !s.human && s.team === 0);
+  const fmt = cfg.format === 'team' ? `Team battle ${1 + cfg.allies} v ${cfg.enemies}` : cfg.format === 'ffa' ? `Free for all · ${cfg.ffa} tanks` : 'One on one';
+  const lines = [
+    `${fmt}, first to ${cfg.rounds} ${cfg.rounds === 1 ? 'round' : 'rounds'}.` + (cfg.format === 'team' ? (allies.length ? ` Rolling with you: ${allies.map((s) => s.label).join(', ')}.` : ' You go in alone.') : ''),
+    `Battlefield: ${cfg.map >= 0 ? VERSUS[cfg.map].name : 'random'}.`,
+  ];
+  ui.garage({
+    cls: cfg.cls || save.cls, paint: { color: VS_COLORS[0], trim: TYPES.player.trim, emblem: 'star' },
+    brief: { kicker: `Versus · ${fmt}`, title: 'Choose your tank', lines, foes },
+    onPick: (c) => { cfg.cls = c; save.cls = c; persist(); },
+    onStart: (c) => { cfg.cls = c; save.cls = c; save.vs = cfg; persist(); audio.play('uiBig'); startVersus(cfg); },
+    onBack: versusSetup, backLabel: 'Change setup',
+  });
 }
 
 function startVersus(cfg0) {

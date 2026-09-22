@@ -364,14 +364,15 @@ export function paintWear() {
   for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
     const v = fbm(n, x / 24, y / 24, 4);
     const k = (y * S + x) * 4;
-    const grime = 1 - Math.max(0, v - 0.55) * 0.9;
+    // factory paint: only a faint handling grime in the recesses, not blotches
+    const grime = 1 - Math.max(0, v - 0.6) * 0.4;
     d[k] = d[k + 1] = d[k + 2] = 240 * grime + 15; d[k + 3] = 255;
-    md[k] = 255; md[k + 1] = (0.42 + (v - 0.5) * 0.25) * 255; md[k + 2] = 0.12 * 255; md[k + 3] = 255;
+    md[k] = 255; md[k + 1] = (0.36 + (v - 0.5) * 0.12) * 255; md[k + 2] = 0.08 * 255; md[k + 3] = 255;
   }
   g.putImageData(img, 0, 0); mg.putImageData(mimg, 0, 0);
   // chips: bare zinc showing through
-  for (let k = 0; k < 260; k++) {
-    const x = rnd() * S, y = rnd() * S, r = 0.5 + Math.pow(rnd(), 4) * 3.2;
+  for (let k = 0; k < 160; k++) {
+    const x = rnd() * S, y = rnd() * S, r = 0.5 + Math.pow(rnd(), 4) * 2.2;
     g.fillStyle = 'rgb(236,238,240)';
     mg.fillStyle = 'rgb(255,90,240)';
     g.beginPath(); mg.beginPath();
@@ -419,14 +420,38 @@ export function blockTextureHQ(variant) {
 }
 
 // Grass tuft card (alpha) for 3D flock.
+// Railway-modeller's foam hedge: clumped foliage flock in several greens (colour + bump).
+export function hedgeFlock() {
+  const S = 256;
+  const [c, g] = mk(S, S);
+  g.fillStyle = '#2f4a22'; g.fillRect(0, 0, S, S);
+  for (let k = 0; k < 5200; k++) {
+    const x = rnd() * S, y = rnd() * S, r = 1.2 + rnd() * 3.4, t = rnd();
+    const l = 0.55 + t * 0.6;
+    g.fillStyle = `rgb(${(58 + rnd() * 30) * l | 0},${(98 + rnd() * 40) * l | 0},${(34 + rnd() * 18) * l | 0})`;
+    g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
+    // wrap the clumps so the flock tiles
+    if (x < r || x > S - r || y < r || y > S - r) { g.beginPath(); g.arc((x + S / 2) % S, (y + S / 2) % S, r, 0, 7); g.fill(); }
+  }
+  return tex(c, { repeat: [1, 1] });
+}
+
+// Static-grass flock tuft: tapered blades, dark at the root, sunlit at the tips.
 export function grassCard() {
-  const [c, g] = mk(128, 128);
-  for (let k = 0; k < 38; k++) {
-    const x = 64 + (rnd() - 0.5) * 60, h = 50 + rnd() * 70, lean = (rnd() - 0.5) * 30;
-    const t = rnd();
-    g.strokeStyle = `rgb(${105 + t * 60 | 0},${140 + t * 60 | 0},${40 + t * 30 | 0})`;
-    g.lineWidth = 2 + rnd() * 2.5;
-    g.beginPath(); g.moveTo(x, 128); g.quadraticCurveTo(x + lean * 0.3, 128 - h * 0.6, x + lean, 128 - h); g.stroke();
+  const S = 256;
+  const [c, g] = mk(S, S);
+  for (let k = 0; k < 70; k++) {
+    const x = S / 2 + (rnd() - 0.5) * S * 0.8, h = S * (0.35 + rnd() * 0.6), lean = (rnd() - 0.5) * S * 0.35;
+    const w = 2.2 + rnd() * 2.8, t = rnd();
+    const gr = g.createLinearGradient(0, S, 0, S - h);
+    gr.addColorStop(0, `rgb(${80 + t * 20 | 0},${100 + t * 24 | 0},${36 + t * 10 | 0})`);
+    gr.addColorStop(1, `rgb(${140 + t * 40 | 0},${168 + t * 32 | 0},${66 + t * 26 | 0})`);
+    g.fillStyle = gr;
+    g.beginPath();
+    g.moveTo(x - w, S);
+    g.quadraticCurveTo(x - w * 0.6 + lean * 0.3, S - h * 0.55, x + lean, S - h);
+    g.quadraticCurveTo(x + w * 0.6 + lean * 0.3, S - h * 0.55, x + w, S);
+    g.fill();
   }
   return tex(c);
 }

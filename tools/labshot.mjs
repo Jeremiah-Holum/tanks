@@ -21,5 +21,14 @@ const res = await page.evaluate(async (js) => {
 }, js).catch((e) => 'eval error: ' + e.message);
 console.log('ms', Date.now() - t0, JSON.stringify(res));
 await page.screenshot({ path: out, timeout: 120000 });
+// Several shots from one page load: the js may set lab.queue = [fn, ...]; each runs, renders
+// two frames and is saved as <out>-<k>.png.
+const nq = await page.evaluate(() => (window.__lab && window.__lab.queue ? window.__lab.queue.length : 0)).catch(() => 0);
+for (let k = 0; k < nq; k++) {
+  const r = await page.evaluate(async (k) => { const lab = window.__lab; const v = await lab.queue[k](lab); const st = lab.frame(2); return { ret: v, stats: st }; }, k).catch((e) => 'eval error: ' + e.message);
+  const o = out.replace(/\.png$/, '') + '-' + k + '.png';
+  await page.screenshot({ path: o, timeout: 120000 });
+  console.log(o, JSON.stringify(r));
+}
 console.log(logs.slice(0, 20).join('\n') || 'no console errors');
 await browser.close();

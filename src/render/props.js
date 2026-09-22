@@ -59,7 +59,19 @@ function worldUV(g, scale) {
 }
 
 class Baker {
-  constructor() { this.parts = {}; }
+  constructor() { this.parts = {}; this.shadow = []; }
+  // Shadow proxy parts: the sun's shadow map draws these cheap shapes instead of the detailed
+  // props (a house's 2,000 triangles cast the same shadow as its walls, gables and roof slabs).
+  sgeo(geo, { x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1 } = {}) {
+    const g = geo.index ? geo.toNonIndexed() : geo.clone();
+    for (const k of Object.keys(g.attributes)) if (k !== 'position') g.deleteAttribute(k);
+    g.clearGroups();
+    _m.compose(_p.set(x, y, z), _q.setFromEuler(_e.set(rx, ry, rz, 'YXZ')), _s.set(sx, sy, sz));
+    g.applyMatrix4(_m);
+    if (this.frame) g.applyMatrix4(this.frame);
+    this.shadow.push(g);
+  }
+  sbox(o) { this.sgeo(G.box(), o); }
   // Add `geo` to material bucket `mat`, placed by `mtx` (local) × this.frame (the prop's frame).
   add(mat, geo, { x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1, color = 0xffffff, wuv = 0 } = {}) {
     const g = norm(geo);
@@ -79,11 +91,15 @@ class Baker {
       const geo = mergeGeometries(list, false);
       for (const g of list) g.dispose();
       const mesh = new THREE.Mesh(geo, mats[k]);
-      mesh.castShadow = k !== 'ao'; mesh.receiveShadow = k !== 'ao';
-      if (k === 'ao') { mesh.renderOrder = 1; mesh.castShadow = false; }
+      mesh.castShadow = false; mesh.receiveShadow = k !== 'ao';
+      if (k === 'ao') mesh.renderOrder = 1;
       mesh.userData.own = true;
       group.add(mesh);
       tris += geo.attributes.position.count / 3;
+    }
+    if (this.shadow.length) {
+      const sg = mergeGeometries(this.shadow, false); for (const g of this.shadow) g.dispose();
+      const px = M.shadowProxy(sg); px.userData.own = true; group.add(px);
     }
     return tris;
   }
@@ -96,7 +112,8 @@ const G = {
   cyl: (seg = 20) => once('cyl' + seg, () => new THREE.CylinderGeometry(1, 1, 1, seg)),
 };
 // A rounded box of a given size (rounding stays the same absolute size).
-const rbox = (w, h, d, r = 0.03, seg = 2) => new RoundedBoxGeometry(w, h, d, seg, Math.min(r, w / 2 - 1e-3, h / 2 - 1e-3, d / 2 - 1e-3));
+// Small parts get one bevel segment (a chamfer reads the same at this size); big ones two.
+const rbox = (w, h, d, r = 0.03, seg = Math.max(w, h, d) < 0.4 ? 1 : 2) => new RoundedBoxGeometry(w, h, d, seg, Math.min(r, w / 2 - 1e-3, h / 2 - 1e-3, d / 2 - 1e-3));
 
 // Seeded random per prop.
 function rng(seed) { let h = (seed * 2654435761) >>> 0 || 1; return () => { h ^= h << 13; h >>>= 0; h ^= h >>> 17; h ^= h << 5; h >>>= 0; return h / 4294967296; }; }
@@ -144,11 +161,13 @@ function house(B, W, D, r, barn) {
   // plinth + walls
   B.add('wood', rbox(span + 0.06, 0.08, len + 0.06, 0.02), { y: 0.04, color: barn ? 0x6b5a4a : 0x8a7e70 });
   B.add('wood', rbox(span, wallH, len, 0.035), { y: 0.08 + wallH / 2 - 0.04, color: wallC });
+  B.sbox({ y: 0.04 + wallH / 2, sx: span - 0.02, sy: wallH + 0.08, sz: len - 0.02 });
   const top = 0.04 + wallH;
   // gables (triangular prisms) — extruded along z, then centred
   const gs = new THREE.Shape(); gs.moveTo(-hs, 0); gs.lineTo(hs, 0); gs.lineTo(0, rise); gs.lineTo(-hs, 0);
   const gg = new THREE.ExtrudeGeometry(gs, { depth: len, bevelEnabled: false }); gg.translate(0, 0, -hl);
   B.add('wood', gg, { y: top - 0.001, color: wallC });
+  B.sgeo(gg, { y: top - 0.001 });
   gg.dispose();
   // roof slabs
   const oh = 0.11, a = Math.atan2(rise, hs), th = 0.07;
@@ -156,6 +175,7 @@ function house(B, W, D, r, barn) {
   for (const sd of [-1, 1]) {
     const cx = sd * (hs + oh) / 2, cy = top + rise - (hs + oh) / 2 * Math.tan(a);
     B.add('roof', rbox(slabW, th, len + oh * 2, 0.02), { x: cx + sd * Math.sin(a) * th / 2, y: cy + Math.cos(a) * th / 2, rz: -sd * a, color: roofC, wuv: 0 });
+    B.sbox({ x: cx + sd * Math.sin(a) * th / 2, y: cy + Math.cos(a) * th / 2, rz: -sd * a, sx: slabW - 0.02, sy: th - 0.01, sz: len + oh * 2 - 0.02 });
   }
   // shingle UVs: map the roof slabs along the slope (redo on the last two parts)
   const rp = B.parts.roof;
@@ -169,9 +189,11 @@ function house(B, W, D, r, barn) {
     const base = top + rise * (1 - Math.abs(cx) / hs) - 0.15;
     const ch = top + rise + 0.32 - base;
     B.add('wood', rbox(0.2, ch, 0.24, 0.015), { x: cx, y: base + ch / 2, z: cz, color: 0x9c4a36 });
+    B.sbox({ x: cx, y: base + ch / 2, z: cz, sx: 0.2, sy: ch, sz: 0.24 });
     B.add('wood', rbox(0.26, 0.06, 0.3, 0.015), { x: cx, y: base + ch, z: cz, color: 0x6e3326 });
   } else {
     B.add('wood', rbox(0.3, 0.26, 0.3, 0.02), { y: top + rise + 0.15, color: TRIM });
+    B.sbox({ y: top + rise + 0.15, sx: 0.3, sy: 0.26, sz: 0.3 });
     B.add('roof', G.cyl(4), { y: top + rise + 0.34, ry: Math.PI / 4, sx: 0.26, sz: 0.26, sy: 0.14, color: roofC });
   }
   // windows and a door on the eave walls; a window in each gable
@@ -232,7 +254,9 @@ function tower(B, r, n) {
   let y = 0;
   for (let k = 0; k < n; k++) {
     const v = Math.floor(r() * mats) % mats;
-    B.add('block' + v, M.blockGeo(), { x: (r() - 0.5) * 0.07, z: (r() - 0.5) * 0.07, y: y + 0.47, ry: Math.floor(r() * 4) * Math.PI / 2 + (r() - 0.5) * 0.22 });
+    const o = { x: (r() - 0.5) * 0.07, z: (r() - 0.5) * 0.07, y: y + 0.47, ry: Math.floor(r() * 4) * Math.PI / 2 + (r() - 0.5) * 0.22 };
+    B.add('block' + v, M.blockGeo(), o);
+    B.sbox({ ...o, sx: 0.93, sy: 0.93, sz: 0.93 });
     y += 0.94;
   }
   return y;
@@ -247,6 +271,19 @@ function books(B, W, D, r) {
   let x = -L / 2 + 0.05, maxH = 0;
   const end = L / 2 - 0.05;
   const b = 0.022;
+  // The two end books show their whole front/back cover: give those a blind-tooled border,
+  // a gilt frame and a title plate, so they read as hardbacks, not flat slabs.
+  const coverArt = (xf, sgn, H, dp, zc, col) => {
+    const X = xf + sgn * 0.004, dk = new THREE.Color(col).multiplyScalar(0.72).getHex();
+    const zw = dp - 0.1, hh = H - 0.12;
+    B.add('cover', G.box(), { x: X - sgn * 0.001, y: H / 2, z: zc, sx: 0.006, sy: hh, sz: zw, color: dk });
+    for (const [yy, sy, zz, sz] of [[H / 2 + hh / 2 - 0.05, 0.014, zc, zw - 0.1], [H / 2 - hh / 2 + 0.05, 0.014, zc, zw - 0.1], [H / 2, hh - 0.1, zc + (zw - 0.1) / 2, 0.014], [H / 2, hh - 0.1, zc - (zw - 0.1) / 2, 0.014]]) {
+      B.add('gold', G.box(), { x: X + sgn * 0.002, y: yy, z: zz, sx: 0.006, sy, sz });
+    }
+    B.add('cover', G.box(), { x: X + sgn * 0.002, y: H * 0.64, z: zc, sx: 0.006, sy: 0.22, sz: zw * 0.55, color: 0xefe4c6 });
+    B.add('gold', G.box(), { x: X + sgn * 0.004, y: H * 0.64, z: zc, sx: 0.004, sy: 0.03, sz: zw * 0.4 });
+  };
+  let first = true;
   while (x < end - 0.12) {
     const t = Math.min(0.14 + r() * 0.17, end - x), H = 1.3 + r() * 0.45, dp = 0.74 + r() * 0.16;
     const col = pick(r, BOOKS);
@@ -255,11 +292,15 @@ function books(B, W, D, r) {
     // covers, spine, page block
     B.add('cover', G.box(), { x: x + b / 2, y: H / 2, z: zc, sx: b, sy: H, sz: dp, color: col });
     B.add('cover', G.box(), { x: x + t - b / 2, y: H / 2, z: zc, sx: b, sy: H, sz: dp, color: col });
-    B.add('cover', rbox(t, H, 0.04, 0.012), { x: cx, y: H / 2, z: zs - face * 0.02, color: col });
+    B.add('cover', rbox(t, H, 0.04, 0.012, 1), { x: cx, y: H / 2, z: zs - face * 0.02, color: col });
     B.add('pages', G.box(), { x: cx, y: (H - 0.03) / 2 + 0.012, z: zc - face * 0.012, sx: t - b * 2, sy: H - 0.04, sz: dp - 0.05 });
+    B.sbox({ x: cx, y: H / 2, z: (zs + zc - face * dp / 2) / 2, sx: t, sy: H, sz: dp + 0.03 });
     // gilt bands + a paper title label on the spine
     for (const fy of [0.1, 0.86, 0.9]) B.add('gold', G.box(), { x: cx, y: H * fy, z: zs + face * 0.002, sx: t * 0.86, sy: 0.018, sz: 0.012 });
     if (r() < 0.75) B.add('cover', G.box(), { x: cx, y: H * (0.55 + r() * 0.15), z: zs + face * 0.003, sx: t * 0.7, sy: 0.2 + r() * 0.1, sz: 0.01, color: r() < 0.5 ? 0xf0e6cc : 0x1c1c1c });
+    if (first) coverArt(x, -1, H, dp, zc, col);
+    if (x + t + 0.004 >= end - 0.12) coverArt(x + t, 1, H, dp, zc, col);
+    first = false;
     maxH = Math.max(maxH, H);
     x += t + 0.004;
   }
@@ -274,16 +315,17 @@ function can(B, r) {
   const lid = [[R - 0.035, H - 0.03], [0.3, H - 0.03], [0.29, H - 0.018], [0.27, H - 0.03], [0.18, H - 0.03], [0.17, H - 0.018], [0.16, H - 0.03], [0, H - 0.03]];
   const v2 = (a) => a.map(([x, y]) => new THREE.Vector2(x, y));
   const hk = H.toFixed(2);
-  const body = once('canBody' + hk, () => new THREE.LatheGeometry(v2(side), 40));
-  const top = once('canLid' + hk, () => new THREE.LatheGeometry(v2(lid), 40));
+  const body = once('canBody' + hk, () => new THREE.LatheGeometry(v2(side), 32));
+  const top = once('canLid' + hk, () => new THREE.LatheGeometry(v2(lid), 32));
   const ry = r() * Math.PI * 2;
   B.add('tin', body, { ry });
   B.add('lid', top, { ry });
-  const lab = new THREE.CylinderGeometry(R + 0.005, R + 0.005, H - 0.26, 40, 1, true);
+  const lab = new THREE.CylinderGeometry(R + 0.005, R + 0.005, H - 0.26, 32, 1, true);
   const slot = Math.floor(r() * TX.CAN_LABELS), uv = lab.attributes.uv;
   for (let k = 0; k < uv.count; k++) uv.setY(k, 1 - (slot + 1 - uv.getY(k)) / TX.CAN_LABELS);
   B.add('label', lab, { y: H / 2, ry });
   lab.dispose();
+  B.sgeo(G.cyl(16), { y: H / 2, sx: R, sy: H, sz: R });
   return H;
 }
 
@@ -304,9 +346,10 @@ function bricks(B, W, D, r) {
     if (course === 1) lens.push(1);
     for (const l of lens) {
       const col = pick(r, BRICKS);
-      B.add('plastic', rbox(l * P - 0.012, HB - 0.008, 2 * P - 0.03, 0.025), { x: x0 + (s + l / 2) * P, y, color: col });
+      B.add('plastic', rbox(l * P - 0.012, HB - 0.008, 2 * P - 0.03, 0.025, 1), { x: x0 + (s + l / 2) * P, y, color: col });
+      B.sbox({ x: x0 + (s + l / 2) * P, y, sx: l * P - 0.012, sy: HB - 0.008, sz: 2 * P - 0.03 });
       if (course === 1) for (let k = 0; k < l; k++) for (const zz of [-P / 2, P / 2]) {
-        B.add('plastic', G.cyl(18), { x: x0 + (s + k + 0.5) * P, y: HB * 2 + 0.04, z: zz, sx: 0.14, sz: 0.14, sy: 0.08, color: col });
+        B.add('plastic', G.cyl(12), { x: x0 + (s + k + 0.5) * P, y: HB * 2 + 0.04, z: zz, sx: 0.14, sz: 0.14, sy: 0.08, color: col });
       }
       s += l;
     }
@@ -321,12 +364,13 @@ function fortWall(B, W, D, r, endL, endR) {
   if (!along) B.frame = (prev ? prev.clone() : new THREE.Matrix4()).multiply(new THREE.Matrix4().makeRotationY(Math.PI / 2));
   const T = 0.8, H = 1.12, col = 0xb9b4a8;
   B.add('stone', rbox(L - 0.04, H, T, 0.03), { y: H / 2, color: col, wuv: 1 });
+  B.sbox({ y: H / 2, sx: L - 0.04, sy: H, sz: T });
   B.add('stone', rbox(L, 0.08, T + 0.06, 0.02), { y: H - 0.02, color: 0xa8a397, wuv: 1 });
   // merlons across the top
   const step = 0.5, nM = Math.max(1, Math.floor(L / step));
   for (let k = 0; k < nM; k++) {
     const x = -L / 2 + (k + 0.5) * L / nM;
-    if (k % 2 === 0 || nM < 2) B.add('stone', rbox(L / nM * 0.95, 0.28, T + 0.02, 0.02), { x, y: H + 0.12, color: col, wuv: 1 });
+    if (k % 2 === 0 || nM < 2) { B.add('stone', rbox(L / nM * 0.95, 0.28, T + 0.02, 0.02, 1), { x, y: H + 0.12, color: col, wuv: 1 }); B.sbox({ x, y: H + 0.12, sx: L / nM * 0.95, sy: 0.28, sz: T }); }
   }
   // arrow slits
   for (let k = 0; k < Math.floor(L); k++) for (const sd of [-1, 1]) B.add('wood', G.box(), { x: -L / 2 + k + 0.5, y: H * 0.55, z: sd * (T / 2 + 0.003), sx: 0.06, sy: 0.26, sz: 0.01, color: 0x1a1816 });
@@ -335,7 +379,8 @@ function fortWall(B, W, D, r, endL, endR) {
     if (!on || L < 2) continue;
     const x = e * (L / 2 - 0.47);
     B.add('stone', rbox(0.92, 1.62, 0.92, 0.03), { x, y: 0.81, color: 0xc4bfb2, wuv: 1 });
-    for (const cx of [-1, 1]) for (const cz of [-1, 1]) B.add('stone', rbox(0.26, 0.26, 0.26, 0.02), { x: x + cx * 0.33, z: cz * 0.33, y: 1.75, color: 0xc4bfb2, wuv: 1 });
+    B.sbox({ x, y: 0.81, sx: 0.92, sy: 1.62, sz: 0.92 });
+    for (const cx of [-1, 1]) for (const cz of [-1, 1]) { B.add('stone', rbox(0.26, 0.26, 0.26, 0.02, 1), { x: x + cx * 0.33, z: cz * 0.33, y: 1.75, color: 0xc4bfb2, wuv: 1 }); B.sbox({ x: x + cx * 0.33, z: cz * 0.33, y: 1.75, sx: 0.26, sy: 0.26, sz: 0.26 }); }
   }
   B.frame = prev;
   return H + 0.26;
@@ -363,6 +408,22 @@ function aoQuad(B, W, D, f = 0.34, m = 0.05) {
 //           surface: Uint8Array (SURF_*) per cell, tris }
 export const SURF = { NONE: 0, WOOD: 1, PAPER: 2, METAL: 3, PLASTIC: 4, STONE: 5, CARD: 6 };
 const SURF_OF = { house: SURF.WOOD, tower: SURF.WOOD, books: SURF.PAPER, can: SURF.METAL, bricks: SURF.PLASTIC, wall: SURF.STONE, hedge: SURF.CARD, crates: SURF.CARD };
+
+// A foam hedge clump: a soft rounded block, lumpy (position-seeded, so seams stay closed).
+const hedgeGeo = () => once('hedgeGeo', () => {
+  const g = new RoundedBoxGeometry(1, 1, 1, 4, 0.28);
+  const p = g.attributes.position, n = g.attributes.normal, v = new THREE.Vector3();
+  const lump = (x, y, z) => Math.sin(x * 17.3 + y * 5.1) * Math.sin(z * 15.7 - x * 3.3) * Math.sin(y * 13.9 + z * 7.7);
+  for (let k = 0; k < p.count; k++) {
+    v.set(p.getX(k), p.getY(k), p.getZ(k));
+    const d = lump(v.x, v.y, v.z) * 0.035 + 0.01;
+    const l = v.length() || 1;
+    p.setXYZ(k, v.x + v.x / l * d, v.y + v.y / l * d, v.z + v.z / l * d);
+  }
+  void n; // keep the analytic normals: the lumps are small and the flock bump does the rest
+  return g;
+});
+const hedgeMat = () => once('hedgeMat', () => { const t = TX.hedgeFlock(); return new THREE.MeshStandardMaterial({ map: t, bumpMap: t, bumpScale: 2.5, roughness: 0.95, envMapIntensity: 0.25 }); });
 
 export function buildProps(world, OX, OZ) {
   const grid = world.grid, C = world.cols, R = world.rows;
@@ -432,13 +493,25 @@ export function buildProps(world, OX, OZ) {
   }
   B.frame = null;
   const tris = B.build(allMats, group);
-  // cardboard boxes (instanced so each cell can break on its own)
+  // cardboard boxes and foam hedges (instanced so each cell can break on its own)
   const crateCells = [];
   for (let j = 0; j < R; j++) for (let i = 0; i < C; i++) if (grid[j * C + i] === CELL_CRATE) crateCells.push([i, j]);
-  const boxes = [];
+  const hedgeCell = new Set();
+  props.forEach((p) => { if (p.kind === 'hedge') for (let j = p.j; j < p.j + p.h; j++) for (let i = p.i; i < p.i + p.w; i++) hedgeCell.add(j * C + i); });
+  const boxes = [], bushes = [];
   for (const [i, j] of crateCells) {
     const r = rng(i * 7349 + j * 1571 + 11);
     const cx = i + 0.5 - OX, cz = j + 0.5 - OZ, cell = j * C + i;
+    if (hedgeCell.has(cell)) {
+      // a clipped hedge: one main clump filling the cell, sometimes a smaller lump on top
+      const h0 = 0.78 + r() * 0.14;
+      // (slightly wider than the cell, so a row of cells reads as one continuous hedgerow)
+      bushes.push({ cell, x: cx + (r() - 0.5) * 0.03, y: h0 / 2, z: cz + (r() - 0.5) * 0.03, sx: 1.08 + r() * 0.05, sy: h0, sz: 1.08 + r() * 0.05, ry: Math.floor(r() * 4) * Math.PI / 2 });
+      let h = h0;
+      if (r() < 0.25) { const h1 = 0.16 + r() * 0.08; bushes.push({ cell, x: cx + (r() - 0.5) * 0.16, y: h0 + h1 / 2 - 0.08, z: cz + (r() - 0.5) * 0.16, sx: 0.62 + r() * 0.2, sy: h1 + 0.1, sz: 0.62 + r() * 0.2, ry: r() * 6 }); h += h1 - 0.08; }
+      height[cell] = h; surface[cell] = SURF.CARD;
+      continue;
+    }
     const h0 = 0.74 + r() * 0.1, w0 = 0.84 + r() * 0.06;
     boxes.push({ cell, x: cx + (r() - 0.5) * 0.04, y: h0 / 2, z: cz + (r() - 0.5) * 0.04, sx: w0, sy: h0, sz: 0.82 + r() * 0.08, ry: Math.floor(r() * 4) * Math.PI / 2 + (r() - 0.5) * 0.1 });
     let h = h0;
@@ -460,13 +533,27 @@ export function buildProps(world, OX, OZ) {
   crateCells.forEach(([i, j], k) => {
     _m.makeTranslation(i + 0.5 - OX, 0.004, j + 0.5 - OZ);
     crateAO.setMatrixAt(k, _m);
-    byCell.get(j * C + i).ao = k;
+    const e = byCell.get(j * C + i) || { boxes: [], ao: -1 }; e.ao = k; byCell.set(j * C + i, e);
   });
   crateMesh.count = boxes.length; crateAO.count = crateCells.length;
-  crateMesh.castShadow = crateMesh.receiveShadow = true; crateAO.renderOrder = 1;
+  const hedgeMesh = new THREE.InstancedMesh(hedgeGeo(), hedgeMat(), Math.max(1, bushes.length));
+  bushes.forEach((b, k) => {
+    _m.compose(_p.set(b.x, b.y, b.z), _q.setFromEuler(_e.set(0, b.ry, 0)), _s.set(b.sx, b.sy, b.sz));
+    hedgeMesh.setMatrixAt(k, _m);
+    const e = byCell.get(b.cell) || { boxes: [], bushes: [], ao: -1 }; (e.bushes || (e.bushes = [])).push(k); byCell.set(b.cell, e);
+  });
+  hedgeMesh.count = bushes.length; hedgeMesh.receiveShadow = true; hedgeMesh.userData.own = true;
+  const hedgeSh = new THREE.InstancedMesh(once('hedgeBox', () => new THREE.BoxGeometry(0.9, 0.9, 0.9)), M.proxyMat(), Math.max(1, bushes.length));
+  hedgeSh.instanceMatrix = hedgeMesh.instanceMatrix; hedgeSh.count = bushes.length; M.makeShadowOnly(hedgeSh);
+  group.add(hedgeMesh, hedgeSh);
+  crateMesh.castShadow = false; crateMesh.receiveShadow = true; crateAO.renderOrder = 1;
   crateMesh.userData.own = true; crateAO.userData.own = true;
-  group.add(crateMesh, crateAO);
-  return { group, crates: { mesh: crateMesh, ao: crateAO, byCell }, height, surface, tris: tris + boxes.length * 200 };
+  // shadow proxy: plain boxes sharing the crates' instance matrices (a broken crate vanishes from both)
+  const crateSh = new THREE.InstancedMesh(once('crateBox', () => new THREE.BoxGeometry(0.88, 0.8, 0.88)), crateMesh.material, Math.max(1, boxes.length));
+  crateSh.instanceMatrix = crateMesh.instanceMatrix; crateSh.count = boxes.length;
+  crateSh.material = M.proxyMat(); M.makeShadowOnly(crateSh);
+  group.add(crateMesh, crateAO, crateSh);
+  return { group, crates: { mesh: crateMesh, ao: crateAO, hedges: hedgeMesh, byCell }, height, surface, tris: tris + boxes.length * 200 };
 }
 
 const _zero = new THREE.Matrix4().makeScale(0, 0, 0);
@@ -474,6 +561,7 @@ export function breakCrate(crates, cell) {
   const e = crates.byCell.get(cell);
   if (!e) return false;
   for (const k of e.boxes) crates.mesh.setMatrixAt(k, _zero);
+  if (e.bushes) { for (const k of e.bushes) crates.hedges.setMatrixAt(k, _zero); crates.hedges.instanceMatrix.needsUpdate = true; }
   if (e.ao >= 0) crates.ao.setMatrixAt(e.ao, _zero);
   crates.mesh.instanceMatrix.needsUpdate = true; crates.ao.instanceMatrix.needsUpdate = true;
   crates.byCell.delete(cell);

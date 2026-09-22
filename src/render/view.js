@@ -31,9 +31,10 @@ const FLOOR_Y = -0.36;
 const SURF_NAME = ['frame', 'wood', 'paper', 'metal', 'plastic', 'stone', 'card'];
 
 export const QUALITY = {
-  low:    { name: 'low',    msaa: 0, shadow: 2048, dof: false, bloom: false, motes: false, grass: 0.3, pr: 0.85 },
-  medium: { name: 'medium', msaa: 4, shadow: 2048, dof: true,  bloom: true,  motes: true,  grass: 0.7, pr: 1.0 },
-  high:   { name: 'high',   msaa: 4, shadow: 4096, dof: true,  bloom: true,  motes: true,  grass: 1.0, pr: 1.5 },
+  // tankShadows: tanks cast real sun shadows (low keeps only the soft contact shadow)
+  low:    { name: 'low',    msaa: 0, shadow: 2048, dof: false, bloom: false, motes: false, grass: 0.3, pr: 0.85, tankShadows: false },
+  medium: { name: 'medium', msaa: 4, shadow: 2048, dof: true,  bloom: true,  motes: true,  grass: 0.55, pr: 1.0, tankShadows: true },
+  high:   { name: 'high',   msaa: 4, shadow: 4096, dof: true,  bloom: true,  motes: true,  grass: 1.0, pr: 1.5, tankShadows: true },
 };
 
 const AIM_VERT = /* glsl */`
@@ -248,13 +249,13 @@ export class View {
     // diorama tray (walnut) around the board
     const wal = this._wal || (this._wal = TX.walnut());
     const frameW = new THREE.MeshPhysicalMaterial({ map: wal, roughness: 0.42, clearcoat: 0.6, clearcoatRoughness: 0.5 });
-    const mk = (w, d, x, z) => { const m = new THREE.Mesh(new RoundedBoxGeometry(w, H, d, 3, 0.08), frameW); m.position.set(x, FLOOR_Y + H / 2, z); m.castShadow = true; m.receiveShadow = true; s.add(m); };
+    const mk = (w, d, x, z) => { const m = new THREE.Mesh(new RoundedBoxGeometry(w, H, d, 3, 0.08), frameW); m.position.set(x, FLOOR_Y + H / 2, z); m.castShadow = true; m.receiveShadow = true; m.userData.tray = true; s.add(m); };
     mk(this.cols + T * 2, T, 0, -OZ - T / 2); mk(this.cols + T * 2, T, 0, OZ + T / 2);
     mk(T, this.rows, -OX - T / 2, 0); mk(T, this.rows, OX + T / 2, 0);
     const brass = new THREE.MeshStandardMaterial({ color: 0xb8913f, metalness: 1, roughness: 0.62 });
     for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
       const c = new THREE.Mesh(new RoundedBoxGeometry(T + 0.06, 0.2, T + 0.06, 2, 0.05), brass);
-      c.position.set(x * (OX + T / 2), FLOOR_Y + H + 0.02, z * (OZ + T / 2)); c.castShadow = true; s.add(c);
+      c.position.set(x * (OX + T / 2), FLOOR_Y + H + 0.02, z * (OZ + T / 2)); c.castShadow = true; c.userData.tray = true; s.add(c);
     }
     const plate = new THREE.Mesh(new RoundedBoxGeometry(3.2, 0.5, 0.05, 2, 0.02), brass);
     plate.position.set(0, FLOOR_Y + 0.5, OZ + T + 0.01); s.add(plate);
@@ -275,9 +276,11 @@ export class View {
     cc.update(this.renderer, this.scene);
     for (const [o, v] of vis) o.visible = v;
     const pm = new THREE.PMREMGenerator(this.renderer);
-    const env = pm.fromCubemap(cubeRT.texture).texture;
-    if (this.scene.environment) this.scene.environment.dispose();
-    this.scene.environment = env;
+    // keep the PMREM render target itself: disposing only its texture leaks the target
+    const envRT = pm.fromCubemap(cubeRT.texture);
+    if (this._envRT) this._envRT.dispose();
+    this._envRT = envRT;
+    this.scene.environment = envRT.texture;
     this.scene.environmentIntensity = 0.55;
     this.scene.remove(cc); cubeRT.dispose(); pm.dispose();
     this._envDirty = false;
@@ -362,8 +365,23 @@ export class View {
     // 3D grass flock on open ground, following the painted grass patches
     let h = 7 + (world.levelIndex || 0) * 13 + C * 31;
     const rnd = () => { h = (h * 16807) % 2147483647; return h / 2147483647; };
-    const tuftGeo = this._tuftGeo || (this._tuftGeo = (() => { const a = new THREE.PlaneGeometry(0.16, 0.1); a.translate(0, 0.05, 0); const b = a.clone().rotateY(Math.PI / 2); const c2 = a.clone().rotateY(Math.PI / 4); const d = a.clone().rotateY(-Math.PI / 4); return mergeSimple([a, b, c2, d]); })());
-    const tuftMat = this._tuftMat || (this._tuftMat = new THREE.MeshStandardMaterial({ map: TX.grassCard(), alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.9 }));
+    const tuftGeo = this._tuftGeo || (this._tuftGeo = (() => { const a = new THREE.PlaneGeometry(0.16, 0.1); a.translate(0, 0.05, 0); const b = a.clone().rotateY(Math.PI / 3); const c2 = a.clone().rotateY(-Math.PI / 3); const m = mergeSimple([a, b, c2]);
+      // blades lit like the ground they grow from (upward normals), so tufts read as flock, not dark specks
+      const nn = m.attributes.normal; for (let k = 0; k < nn.count; k++) nn.setXYZ(k, 0, 1, 0);
+      return m; })());
+    const tuftMat = this._tuftMat || (this._tuftMat = (() => {
+      const m = new THREE.MeshStandardMaterial({ map: TX.grassCard(), alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.9 });
+      // mipmaps average the card's empty (black) texels into the blades: undo that darkening,
+      // or distant tufts turn into dark specks
+      // and light every blade like the ground it grows from (both faces: an up normal), so
+      // tufts read as flock rather than dark specks
+      m.onBeforeCompile = (sh) => {
+        sh.fragmentShader = sh.fragmentShader
+          .replace('#include <map_fragment>', '#include <map_fragment>\n diffuseColor.rgb /= max(sampledDiffuseColor.a, 0.25);')
+          .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz); nonPerturbedNormal = normal;');
+      };
+      return m;
+    })());
     const MAXT = Math.min(12000, Math.round(C * R * 7.5));
     const grass = new THREE.InstancedMesh(tuftGeo, tuftMat, MAXT);
     const mtx = new THREE.Matrix4(), q = new THREE.Quaternion(), sv = new THREE.Vector3(), pv = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
@@ -582,16 +600,74 @@ export class View {
     const emblem = t.human ? 'star' : t.typeKey === 'boss' ? 'skull' : 'ring';
     const root = M.buildTank(t.type, { emblem, colorOverride: t.colorOverride });
     const sc = t.type.scale || 1;
-    const shadow = new THREE.Mesh(new THREE.PlaneGeometry(1.1 * sc, 0.85 * sc).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: this._blob || (this._blob = TX.blobShadow()), transparent: true, depthWrite: false, opacity: 0.6, polygonOffset: true, polygonOffsetFactor: -1 }));
-    this.scene.add(root); this.scene.add(shadow);
+    // track links: every tank's links are drawn by one shared instanced mesh (_flushLinks)
+    root.userData.body.remove(root.userData.links);
+    // contact shadow: one instance of the shared blob mesh (drawn in _flushBlobs)
+    const shadow = { position: new THREE.Vector3(), rotation: { y: 0 }, material: { opacity: 0.6 }, sc };
+    this.scene.add(root);
     o = { shadowCast: true, root, shadow, lastTread: t.tread, lastRot: t.rot, trackAcc: 0, vis: 1, reveal: 0, bob: 0, prevSpeed: 0, brokenSide: 0, jam: 0, wreckT: -1, fly: null, fireLight: -1 };
     this.tankObjs.set(t.id, o);
     return o;
   }
   _dropTank(o) {
-    this.scene.remove(o.root); this.scene.remove(o.shadow);
+    this.scene.remove(o.root);
     for (const m of o.root.userData.mats) m.dispose();
-    o.shadow.geometry.dispose(); o.shadow.material.dispose();
+    if (o.root.userData.emblemTex) o.root.userData.emblemTex.dispose();
+  }
+  // Every tank's track links in one instanced draw (and one shadow draw): each tank's
+  // body-local link matrices (models.updateTracks) are carried into world space here.
+  _flushLinks() {
+    let need = 0;
+    for (const o of this.tankObjs.values()) need += o.root.userData.links.count;
+    let L = this.links;
+    if (!L || L.userData.max < need) {
+      if (L) { this.scene.remove(L); L.dispose(); }
+      const max = Math.max(512, need + 144);
+      L = this.links = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 0.018, 1), new THREE.MeshStandardMaterial({ color: 0x3a3a3c, metalness: 0.85, roughness: 0.5 }), max);
+      L.userData.max = max; L.frustumCulled = false; L.castShadow = true; L.receiveShadow = true;
+      L.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      this.scene.add(L);
+    }
+    const m = new THREE.Matrix4(), dst = L.instanceMatrix.array;
+    let n = 0;
+    for (const o of this.tankObjs.values()) {
+      if (!o.root.visible || o.vis < 0.5) continue;
+      const ud = o.root.userData, src = ud.links.instanceMatrix.array, T = ud.track;
+      ud.body.updateWorldMatrix(true, false);
+      for (let k = 0; k < ud.links.count; k++) {
+        // local link matrix × scale, then into the body's world frame
+        m.fromArray(src, k * 16);
+        const e = m.elements; for (let c = 0; c < 3; c++) { e[c] *= T.P / T.N * 0.82; e[8 + c] *= T.w; }
+        m.premultiply(ud.body.matrixWorld);
+        m.toArray(dst, n++ * 16);
+      }
+    }
+    L.count = n; L.instanceMatrix.needsUpdate = true;
+    L.castShadow = this.quality.tankShadows;
+  }
+  // Every tank's soft contact shadow in one instanced draw; per-instance alpha in instanceColor.r.
+  _flushBlobs() {
+    let b = this.blobs;
+    const n = this.tankObjs.size;
+    if (!b || b.userData.max < n) {
+      if (b) { this.scene.remove(b); b.dispose(); }
+      const mat = new THREE.MeshBasicMaterial({ map: this._blob || (this._blob = TX.blobShadow()), color: 0x000000, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 });
+      mat.onBeforeCompile = (sh) => { sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>', '#include <color_fragment>\n diffuseColor.a *= vColor.r;'); };
+      const max = Math.max(16, n * 2);
+      b = this.blobs = new THREE.InstancedMesh(new THREE.PlaneGeometry(1.1, 0.85).rotateX(-Math.PI / 2), mat, max);
+      b.userData.max = max; b.frustumCulled = false; b.renderOrder = 1;
+      b.setColorAt(0, new THREE.Color());
+      this.scene.add(b);
+    }
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sv = new THREE.Vector3(), c = new THREE.Color(), up = new THREE.Vector3(0, 1, 0);
+    let k = 0;
+    for (const o of this.tankObjs.values()) {
+      const sh = o.shadow, a = o.root.visible ? sh.material.opacity : 0;
+      m.compose(sh.position, q.setFromAxisAngle(up, sh.rotation.y), sv.set(sh.sc, 1, sh.sc));
+      b.setMatrixAt(k, m); b.setColorAt(k, c.setRGB(a, a, a)); k++;
+    }
+    b.count = k;
+    b.instanceMatrix.needsUpdate = true; b.instanceColor.needsUpdate = true;
   }
   // World point of a body-local point (x forward, y up) of tank `t` whose view pos is (vx, vz).
   _local(t, vx, vz, lx, ly, lz = 0) {
@@ -615,7 +691,7 @@ export class View {
       o.shadow.position.set(vx, 0.003, vz); o.shadow.rotation.y = -t.rot;
       ud.body.rotation.y = -t.rot;
       ud.turret.rotation.y = -t.aim;
-      ud.barrel.position.x = ud.barrelX - t.recoil * t.recoil * ud.spec.recoil;
+      ud.recoil = t.recoil * t.recoil * ud.spec.recoil;
       // tracks: straight travel moves both sides; turning in place counter-rotates them.
       // A tracked tank (modules.tracks > 0) throws a track: links drop, that side stops.
       const broken = t.modules && t.modules.tracks > 0;
@@ -630,8 +706,13 @@ export class View {
       o.bob += (Math.max(-1, Math.min(1, -acc * 0.02)) - o.bob) * Math.min(1, dt * 8);
       ud.body.rotation.z = o.bob * 0.06;
       ud.body.position.y = Math.abs(t.speedNow) > 0.1 ? Math.sin(now / 35 + t.id) * 0.004 : 0;
-      ud.flag.rotation.y = Math.sin(now / 160 + t.id) * 0.35 + Math.min(1, Math.abs(t.speedNow)) * 0.6;
-      ud.ant.visible = !(this.mode === 'chase' && t === focusTank); // it would wave right in front of the lens
+      for (const p of ud.proxies) p.visible = this.quality.tankShadows;
+      // far LOD beyond ~10 cells from the lens (so always from the tactical height)
+      ud.lod = this.camera.position.distanceToSquared(o.root.position) > 100;
+      ud.flagYaw = Math.sin(now / 160 + t.id) * 0.35 + Math.min(1, Math.abs(t.speedNow)) * 0.6;
+      // not on the chase tank (it would wave right in front of the lens), and not when it
+      // would be a pixel or two wide
+      ud.ant.visible = !(this.mode === 'chase' && t === focusTank) && this.camera.position.distanceToSquared(o.root.position) < 22 * 22;
       // jammed turret ring: the turret sits crooked and trickles smoke
       const jam = t.modules && t.modules.turret > 0;
       ud.turret.rotation.z += ((jam ? 0.045 : 0) - ud.turret.rotation.z) * Math.min(1, dt * 6);
@@ -709,6 +790,7 @@ export class View {
     }
     for (const [id, m] of this.mineObjs) if (!mseen.has(id)) { this.scene.remove(m); this.mineObjs.delete(id); }
 
+    this._flushBlobs(); this._flushLinks();
     this._updateCamera(dt, focusTank, aimYaw ?? (focusTank ? focusTank.aim : 0));
   }
 
@@ -720,12 +802,13 @@ export class View {
       o.root.position.set(vx, 0, vz); o.shadow.position.set(vx, 0.003, vz);
       ud.body.rotation.y = -t.rot; ud.turret.rotation.y = -t.aim;
       M.wreckTank(o.root, ((t.id * 0.6180339) % 1));
-      for (const m of ud.mats) { m.transparent = m === ud.emblemMat; m.opacity = m === ud.emblemMat ? m.opacity : 1; m.depthWrite = m !== ud.emblemMat; }
+      for (const m of ud.mats) { m.transparent = false; m.opacity = 1; m.depthWrite = true; }
       o.root.visible = true; o.shadow.material.opacity = 0.75; o.vis = 1;
       o.root.traverse((c) => { if (c.isMesh && c.userData.cast != null) c.castShadow = c.userData.cast; });
       if (o.wreckT < 0) o.wreckT = 0;
     }
     o.wreckT += dt;
+    for (const p of ud.proxies) p.visible = this.quality.tankShadows;
     const [vx, vz] = [o.root.position.x, o.root.position.z];
     // turret blown off by an ammo-rack hit: a short ballistic arc, then it lies on the ground
     if (o.fly) {
@@ -843,10 +926,16 @@ export class View {
         }
         case 'crateBreak': {
           const cell = e.i + e.j * this.cols;
+          const hedge = !!(this.props && this.props.crates.byCell.get(cell)?.bushes);
           if (this.props) { breakCrate(this.props.crates, cell); this.props.height[cell] = 0; this.props.surface[cell] = 0; }
           const [cx, cz] = toView(e.i + 0.5, e.j + 0.5);
-          this.fx.debrisBurst(cx, cz, [0xc49a64, 0xb38850, 0xd6b478, 0xe0cfa8], 22, 0.8, { y: 0.5, size: 0.12, flat: true });
-          this.fx.puff(cx, cz, 10, 0xc9b08a, 0.4);
+          if (hedge) {
+            this.fx.debrisBurst(cx, cz, [0x3f6a2c, 0x507f36, 0x2f4d22, 0x6b8f3e], 26, 0.7, { y: 0.45, size: 0.08 });
+            this.fx.puff(cx, cz, 8, 0x7a8f5a, 0.35);
+          } else {
+            this.fx.debrisBurst(cx, cz, [0xc49a64, 0xb38850, 0xd6b478, 0xe0cfa8], 22, 0.8, { y: 0.5, size: 0.12, flat: true });
+            this.fx.puff(cx, cz, 10, 0xc9b08a, 0.4);
+          }
           this.onSound('crate', { x: e.i + 0.5, z: e.j + 0.5 });
           break;
         }
@@ -880,27 +969,41 @@ export class View {
   }
 }
 
-// Merge every plain mesh under `group` that shares an equivalent material into one mesh
-// (the bedroom's furniture and toys are hundreds of small parts; this makes them ~30).
+// Merge every plain mesh under `group` that shares an equivalent material into one mesh. The
+// base colour is baked into vertex colours, so parts that differ only in colour share a draw
+// (the bedroom's furniture and toys are hundreds of small parts; this makes them ~20). Only
+// meshes flagged userData.tray keep casting sun shadows: nothing else is under the sun's
+// shadow frustum, which is fitted to the board.
 function mergeStatic(group) {
   group.updateMatrixWorld(true);
   const inv = new THREE.Matrix4().copy(group.matrixWorld).invert();
   const buckets = new Map();
-  const sig = (m) => [m.type, m.color && m.color.getHex(), m.map && m.map.uuid, m.roughness, m.metalness, m.clearcoat, m.emissive && m.emissive.getHex(), m.emissiveIntensity, m.transparent, m.opacity, m.side, m.roughnessMap && m.roughnessMap.uuid, m.depthWrite].join('|');
+  // untextured surfaces with near-identical finish share a bucket (roughness to 0.15, metal/clearcoat on/off)
+  const q = (v, k) => v == null ? '' : Math.round(v / k);
+  const sig = (m) => [m.type, m.map && m.map.uuid, m.map ? m.roughness : q(m.roughness, 0.15), m.map ? m.metalness : q(m.metalness, 0.5), m.map ? m.clearcoat : q(m.clearcoat, 0.5), m.emissive && m.emissive.getHex(), m.emissiveIntensity, m.transparent, m.opacity, m.side, m.roughnessMap && m.roughnessMap.uuid, m.depthWrite].join('|');
   const drop = [];
   group.traverse((o) => {
     if (!o.isMesh || o.isInstancedMesh || Array.isArray(o.material)) return;
     const k = sig(o.material);
-    const b = buckets.get(k) || { mat: o.material, list: [], cast: false, recv: false, order: o.renderOrder };
+    let b = buckets.get(k);
+    if (!b) {
+      const mat = o.material.clone(); mat.vertexColors = true; if (mat.color) mat.color.set(0xffffff);
+      b = { mat, list: [], cast: false, recv: false, order: o.renderOrder }; buckets.set(k, b);
+    }
     let g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
     for (const a of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(a)) g.deleteAttribute(a);
     if (!g.attributes.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
     if (!g.attributes.normal) g.computeVertexNormals();
     g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld));
-    b.list.push(g); b.cast ||= o.castShadow; b.recv ||= o.receiveShadow;
-    buckets.set(k, b); drop.push(o);
+    const c = o.material.color || new THREE.Color(1, 1, 1), n = g.attributes.position.count, col = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) { col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b; }
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    b.list.push(g); b.cast ||= o.castShadow && !!o.userData.tray; b.recv ||= o.receiveShadow;
+    drop.push(o);
   });
-  for (const o of drop) { o.parent.remove(o); o.geometry.dispose(); }
+  const mats = new Set();
+  for (const o of drop) { o.parent.remove(o); o.geometry.dispose(); mats.add(o.material); }
+  for (const m of mats) m.dispose();
   for (const b of buckets.values()) {
     const m = new THREE.Mesh(mergeGeometries(b.list, false), b.mat);
     for (const g of b.list) g.dispose();

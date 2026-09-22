@@ -33,7 +33,7 @@ function stripUV(geo) {
 }
 
 // ------------------------------------------------------------------ board pieces
-export const blockGeo = () => once('blockGeo', () => stripUV(new RoundedBoxGeometry(0.94, 0.94, 0.94, 3, 0.07)));
+export const blockGeo = () => once('blockGeo', () => stripUV(new RoundedBoxGeometry(0.94, 0.94, 0.94, 2, 0.07)));
 export const crateGeo = () => once('crateGeo', () => new RoundedBoxGeometry(0.9, 0.82, 0.9, 2, 0.03));
 
 export const blockMaterials = () => once('blockMats', () => [...Array(TX.BLOCK_VARIANTS)].map((_, v) =>
@@ -75,35 +75,59 @@ export function makeTrack({ R, xf, xr, yc, z, w, N }) {
 export const TRACK = makeTrack({ R: 0.085, xf: 0.3, xr: -0.3, yc: 0.1, z: 0.25, w: 0.13, N: 36 });
 
 const _km = new THREE.Matrix4(), _kq = new THREE.Quaternion(), _ke = new THREE.Euler(), _kp = new THREE.Vector3(), _ks = new THREE.Vector3();
+// Surface codes baked per vertex (aMat) — one material draws them all:
+const MAT = { paint: 0, detail: 1, trim: 2, rubber: 3, emblem: 4, flag: 5 };
+// Moving-part codes (aPart), animated in the vertex shader: 1 barrel (recoil/droop), 2 antenna, 3 pennant.
+const TONE = { steel: 0x6a6e75, dark: 0x0c0c0c, lamp: 0xfff2d0 };
+const _col = new THREE.Color();
+// Normalise to non-indexed {position, normal, uv, color, aMat, aPart, aWheel} so every part merges.
+function kitGeo(geo, m, { color = 0xffffff, mat = 0, part = 0, wheel = null } = {}) {
+  const g = geo.index ? geo.toNonIndexed() : geo.clone();
+  for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
+  if (!g.attributes.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
+  g.clearGroups();
+  if (m) g.applyMatrix4(m);
+  const n = g.attributes.position.count;
+  _col.set(color);
+  const c = new Float32Array(n * 3), am = new Float32Array(n).fill(mat), ap = new Float32Array(n).fill(part), aw = new Float32Array(n * 4);
+  for (let i = 0; i < n; i++) { c[i * 3] = _col.r; c[i * 3 + 1] = _col.g; c[i * 3 + 2] = _col.b; if (wheel) aw.set(wheel, i * 4); }
+  g.setAttribute('color', new THREE.BufferAttribute(c, 3));
+  g.setAttribute('aMat', new THREE.BufferAttribute(am, 1));
+  g.setAttribute('aPart', new THREE.BufferAttribute(ap, 1));
+  g.setAttribute('aWheel', new THREE.BufferAttribute(aw, 4));
+  return g;
+}
+const posOnly = (geo, m) => { const g = geo.index ? geo.toNonIndexed() : geo.clone(); for (const k of Object.keys(g.attributes)) if (k !== 'position') g.deleteAttribute(k); g.clearGroups(); if (m) g.applyMatrix4(m); return g; };
+
 class Kit {
-  constructor() { this.parts = {}; }
-  add(grp, mat, geo, o = {}) {
-    if (mat === 'steel' || mat === 'dark') return this._add(grp, 'detail', geo, o, mat === 'dark' ? 0x0c0c0c : 0x55585e);
-    if (mat === 'lamp') return this._add(grp, 'detail', geo, o, 0xfff2d0);
-    if (mat === 'trim' && grp !== 'turret') mat = 'paint';
-    return this._add(grp, mat, geo, o);
-  }
-  _add(grp, mat, geo, { x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1 } = {}, tone) {
-    let g = geo.index ? geo.toNonIndexed() : geo.clone();
-    for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
-    if (!g.attributes.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
-    g.clearGroups();
+  constructor() { this.parts = { body: [], turret: [], barrel: [] }; this.lo = { body: [], turret: [], barrel: [] }; this.shadow = { body: [], turret: [], barrel: [] }; }
+  add(grp, mat, geo, { x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1 } = {}) {
     _km.compose(_kp.set(x, y, z), _kq.setFromEuler(_ke.set(rx, ry, rz, 'YXZ')), _ks.set(sx, sy, sz));
-    g.applyMatrix4(_km);
-    if (tone != null) g.userData.tone = tone;
-    (this.parts[grp + ':' + mat] || (this.parts[grp + ':' + mat] = [])).push(g);
+    const part = grp === 'barrel' ? 1 : 0, g2 = grp;
+    let o;
+    if (TONE[mat] != null) o = { mat: MAT.detail, color: TONE[mat] };
+    else if (mat === 'trim' && grp === 'turret') o = { mat: MAT.trim };
+    else o = { mat: MAT.paint };
+    const kg = kitGeo(geo, _km, { ...o, part });
+    this.parts[g2].push(kg);
+    geo.computeBoundingBox(); const sz3 = geo.boundingBox.getSize(new THREE.Vector3()), big = Math.max(sz3.x * sx, sz3.y * sy, sz3.z * sz);
+    // The far LOD drops rivets, bolts, hooks and tools (under ~5 cm: a pixel or two away).
+    if (big > 0.05) this.lo[g2].push(kg.clone());
+    // Big painted shapes also cast the shadow (a cheap proxy: no rivets, lamps, tools).
+    if (mat === 'paint' && big > 0.12) this.shadow[g2].push(posOnly(geo, _km));
   }
+  raw(grp, g, lod = 'both') { if (lod !== 'lo') this.parts[grp].push(g); if (lod !== 'hi') this.lo[grp].push(lod === 'both' ? g.clone() : g); }
   // mirrored pair across z
   pair(grp, mat, geo, o) { this.add(grp, mat, geo, o); this.add(grp, mat, geo, { ...o, z: -(o.z || 0), ry: -(o.ry || 0), rx: -(o.rx || 0) }); }
-  bake() {
+  // Barrel parts were built about the barrel pivot; move them onto the turret.
+  bake(barrelAt) {
+    const t = new THREE.Matrix4().makeTranslation(barrelAt[0], barrelAt[1], 0);
+    for (const k of ['parts', 'lo', 'shadow']) { for (const g of this[k].barrel) g.applyMatrix4(t); this[k].turret.push(...this[k].barrel); this[k].barrel = []; }
     const out = {};
-    for (const [k, list] of Object.entries(this.parts)) {
-      if (k.endsWith(':detail')) for (const g of list) {
-        const c = new THREE.Color(g.userData.tone ?? 0x55585e), n = g.attributes.position.count, a = new Float32Array(n * 3);
-        for (let i = 0; i < n; i++) { a[i * 3] = c.r; a[i * 3 + 1] = c.g; a[i * 3 + 2] = c.b; }
-        g.setAttribute('color', new THREE.BufferAttribute(a, 3));
-      }
-      out[k] = mergeGeometries(list, false); for (const g of list) g.dispose();
+    for (const grp of ['body', 'turret']) {
+      out[grp] = mergeGeometries(this.parts[grp], false); for (const g of this.parts[grp]) g.dispose();
+      out[grp + 'Lo'] = mergeGeometries(this.lo[grp], false); for (const g of this.lo[grp]) g.dispose();
+      out[grp + 'Shadow'] = mergeGeometries(this.shadow[grp], false); for (const g of this.shadow[grp]) g.dispose();
     }
     return out;
   }
@@ -139,7 +163,7 @@ function plan(pts, h, bevel = 0.01, wall = 0) {
   g.rotateX(-Math.PI / 2);
   return g;
 }
-const sphere = (r, a = 8, b = 6) => new THREE.SphereGeometry(r, a, b);
+const sphere = (r, a = 8, b = 6) => new THREE.SphereGeometry(r, Math.min(a, r < 0.012 ? 5 : a), Math.min(b, r < 0.012 ? 3 : b));
 function rivetRow(K, grp, mat, x0, x1, n, y, z, r = 0.008) { for (let k = 0; k < n; k++) K.add(grp, mat, sphere(r, 6, 4), { x: x0 + (x1 - x0) * (n > 1 ? k / (n - 1) : 0.5), y, z }); }
 
 // Common hull furniture.
@@ -323,93 +347,164 @@ function tdParts(K) {
 
 const CLASS_PARTS = { light: lightParts, medium: mediumParts, heavy: heavyParts, td: tdParts };
 export const TANK_CLASSES = Object.keys(CLASS_PARTS);
-const classKit = (cls) => once('kit:' + cls, () => { const K = new Kit(); const spec = CLASS_PARTS[cls](K); return { spec, geos: K.bake() }; });
+// Road wheel (rubber tyre + painted hub with bolts) and toothed sprocket, unit radius, as
+// kit parts: [geometry, aMat, colour] lists.
+const wheelParts = () => once('wheelU', () => {
+  const P = [[cylZ(1, 1, 18), MAT.rubber, 0xffffff], [cylZ(0.74, 1.06, 16), MAT.paint, 0xffffff], [cylZ(0.3, 1.14, 10), MAT.paint, 0x999999]];
+  for (let k = 0; k < 6; k++) { const a = k / 6 * Math.PI * 2; const b = bx(0.14, 0.14, 1.12); b.translate(Math.cos(a) * 0.5, Math.sin(a) * 0.5, 0); P.push([b, MAT.paint, 0x808080]); }
+  return P;
+});
+const wheelPartsLo = () => once('wheelLo', () => [[cylZ(1, 1, 10), MAT.rubber, 0xffffff], [cylZ(0.74, 1.06, 8), MAT.paint, 0xffffff]]);
+const sprocketParts = () => once('sprU', () => {
+  const P = [[cylZ(0.8, 1.0, 16), MAT.detail, TONE.steel]];
+  for (let k = 0; k < 10; k++) { const a = k / 10 * Math.PI * 2; const b = bx(0.24, 0.3, 0.9); b.rotateZ(a); b.translate(Math.cos(a) * 0.9, Math.sin(a) * 0.9, 0); P.push([b, MAT.detail, TONE.steel]); }
+  return P;
+});
 
-// Road wheel (rubber tyre + painted hub with bolts) and toothed sprocket, unit radius.
-// Road wheel: rubber tyre + painted hub with bolts, one geometry; vertex colour picks rubber
-// (near black) or paint (white × the tank's paint colour).
-const wheelGeo = () => once('wheelU', () => {
-  const tint = (g, c) => { const n = g.index ? g.toNonIndexed() : g; for (const k of Object.keys(n.attributes)) if (!['position', 'normal', 'uv'].includes(k)) n.deleteAttribute(k); const a = new Float32Array(n.attributes.position.count * 3).fill(c); n.setAttribute('color', new THREE.BufferAttribute(a, 3)); return n; };
-  const parts = [tint(cylZ(1, 1, 22), 0.035), tint(cylZ(0.74, 1.06, 18), 1), tint(cylZ(0.3, 1.14, 10), 0.6)];
-  for (let k = 0; k < 6; k++) { const a = k / 6 * Math.PI * 2; const b = bx(0.14, 0.14, 1.12); b.translate(Math.cos(a) * 0.5, Math.sin(a) * 0.5, 0); parts.push(tint(b, 0.5)); }
-  return mergeGeometries(parts);
+// Everything static about a class, baked once: body (hull + wheels, which spin in the vertex
+// shader), turret (+ barrel, emblem decals, antenna and pennant), and the shadow proxies.
+const classKit = (cls) => once('kit:' + cls, () => {
+  const K = new Kit(); const spec = CLASS_PARTS[cls](K);
+  const T = spec.track, m = new THREE.Matrix4();
+  for (const side of [1, -1]) {
+    const list = [...spec.wheels.map((w) => ({ ...w })), ...spec.drive.map((w) => ({ ...w, sprocket: !w.idler }))];
+    for (const w of list) {
+      const z = side * T.z + side * 0.004;
+      m.compose(_kp.set(w.x, w.y, z), _kq.identity(), _ks.set(w.r, w.r, T.w * (w.big ? 0.95 : 0.85)));
+      for (const [g, mat, color] of (w.sprocket ? sprocketParts() : wheelParts())) K.raw('body', kitGeo(g, m, { mat, color, wheel: [w.x, w.y, w.r, side] }), 'hi');
+      for (const [g, mat, color] of (w.sprocket ? sprocketParts().slice(0, 1) : wheelPartsLo())) K.raw('body', kitGeo(g, m, { mat, color, wheel: [w.x, w.y, w.r, side] }), 'lo');
+    }
+  }
+  // emblem decals on the turret sides (uv 0..1 samples the emblem texture)
+  const E = spec.emblem;
+  for (const side of [1, -1]) {
+    m.compose(_kp.set(E.x, E.y, side * (E.z + 0.003)), _kq.setFromEuler(_ke.set(side * -E.rx, (side > 0 ? 0 : Math.PI) + side * (E.ry || 0), 0, 'YXZ')), _ks.set(1, 1, 1));
+    K.raw('turret', kitGeo(new THREE.PlaneGeometry(E.size, E.size), m, { mat: MAT.emblem }));
+  }
+  // antenna + pennant (two-sided)
+  const A = spec.antenna;
+  const ant = new THREE.CylinderGeometry(0.004, 0.006, A.h, 5); ant.translate(A.x, A.y + A.h / 2, A.z);
+  const antParts = [kitGeo(ant, null, { mat: MAT.detail, color: 0x3a3c40, part: 2 })];
+  const flag = new THREE.PlaneGeometry(0.12, 0.07, 6, 1); flag.translate(A.x - 0.06, A.y + A.h - 0.04, A.z);
+  const back = flag.clone(); back.index.array.reverse(); const bn = back.attributes.normal; for (let i = 0; i < bn.count; i++) bn.setZ(i, -bn.getZ(i));
+  antParts.push(kitGeo(flag, null, { mat: MAT.flag, part: 3 }), kitGeo(back, null, { mat: MAT.flag, part: 3 }));
+  const geos = K.bake(spec.barrelAt);
+  // the antenna is its own small mesh (same material) so it can be dropped at a distance
+  geos.ant = mergeGeometries(antParts, false);
+  // the vertex shader moves the barrel and pennant a little outside their static bounds
+  for (const k of ['ant', 'turret', 'turretLo']) { geos[k].computeBoundingSphere(); geos[k].boundingSphere.radius += 0.1; }
+  return { spec, geos };
 });
-const sprocketGeo = () => once('sprU', () => {
-  const parts = [cylZ(0.8, 1.0, 16)];
-  for (let k = 0; k < 10; k++) { const a = k / 10 * Math.PI * 2; const b = bx(0.24, 0.3, 0.9); b.rotateZ(a); b.translate(Math.cos(a) * 0.9, Math.sin(a) * 0.9, 0); parts.push(b); }
-  return mergeGeometries(parts.map((g) => { const n = g.index ? g.toNonIndexed() : g; for (const k of Object.keys(n.attributes)) if (!['position', 'normal', 'uv'].includes(k)) n.deleteAttribute(k); return n; }));
-});
+
+// One die-cast material per tank draws every surface of it. Per-vertex aMat picks paint,
+// bare steel (vertex colour), trim, rubber, emblem decal or cloth; the vertex shader spins
+// the road wheels, recoils/droops the barrel and waves the pennant.
+function tankMaterial(color, trim, flagColor, emblemTex) {
+  const w = wear();
+  const m = new THREE.MeshPhysicalMaterial({
+    color, map: w.map, metalnessMap: w.mr, roughnessMap: w.mr, metalness: 1, roughness: 1,
+    clearcoat: 0.85, clearcoatRoughness: 0.16, envMapIntensity: 1.25, vertexColors: true, // baked enamel: a crisp lacquer highlight
+  });
+  const u = m.userData.u = {
+    uPhase: { value: new THREE.Vector2() }, uBarrel: { value: new THREE.Vector4() }, // x recoil, y droop, z/w pivot
+    uAnt: { value: new THREE.Vector4() }, uAntY: { value: new THREE.Vector2() }, // (ax, az, flag angle, bend), (base y, hide)
+    uTrim: { value: new THREE.Color(trim) }, uFlag: { value: new THREE.Color(flagColor) },
+    uEmblem: { value: emblemTex }, uEmblemA: { value: 1 },
+  };
+  m.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, u);
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', `#include <common>
+        attribute float aMat; attribute float aPart; attribute vec4 aWheel;
+        uniform vec2 uPhase; uniform vec4 uBarrel; uniform vec4 uAnt; uniform vec2 uAntY;
+        varying float vMat;
+        vec2 rot2(vec2 v, float a) { float c = cos(a), s = sin(a); return vec2(c * v.x - s * v.y, s * v.x + c * v.y); }
+        vec3 ttX(vec3 p, bool dir) {
+          if (aWheel.z > 0.0) { float a = -(aWheel.w > 0.0 ? uPhase.x : uPhase.y) / aWheel.z; vec2 c = dir ? vec2(0.0) : aWheel.xy; p.xy = rot2(p.xy - c, a) + c; }
+          if (aPart > 0.5 && aPart < 1.5) { vec2 c = dir ? vec2(0.0) : uBarrel.zw; p.xy = rot2(p.xy - c, uBarrel.y) + c; if (!dir) p.x -= uBarrel.x; }
+          if (aPart > 1.5) {
+            vec2 c = dir ? vec2(0.0) : uAnt.xy;
+            if (aPart > 2.5) p.xz = rot2(p.xz - c, uAnt.z) + c;
+            vec2 b = dir ? vec2(0.0) : vec2(uAnt.x, uAntY.x); p.xy = rot2(p.xy - b, uAnt.w) + b;
+            if (!dir && uAntY.y > 0.5) p = vec3(uAnt.x, uAntY.x, uAnt.y);
+          }
+          return p;
+        }`)
+      .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\n objectNormal = ttX(objectNormal, true); vMat = aMat;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n transformed = ttX(transformed, false);');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying float vMat; uniform vec3 uTrim; uniform vec3 uFlag; uniform sampler2D uEmblem; uniform float uEmblemA;`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        float mDetail = step(0.5, vMat) * step(vMat, 1.5), mTrim = step(1.5, vMat) * step(vMat, 2.5), mRub = step(2.5, vMat) * step(vMat, 3.5);
+        float mEmb = step(3.5, vMat) * step(vMat, 4.5), mFlag = step(4.5, vMat);
+        float mFlat = max(max(mDetail, mRub), mFlag); // not paint: no wear, no clearcoat
+        float eA = 0.0;
+        if (mEmb > 0.5) { vec4 e = texture2D(uEmblem, vMapUv); if (e.a < 0.03) discard; eA = e.a * uEmblemA; diffuseColor.rgb = mix(diffuseColor.rgb, e.rgb, eA); }
+        diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb / max(diffuse, vec3(1e-3)) * uTrim, mTrim);
+        diffuseColor.rgb = mix(diffuseColor.rgb, vColor.rgb, mDetail);
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.022, 0.022, 0.024), mRub);
+        diffuseColor.rgb = mix(diffuseColor.rgb, uFlag, mFlag);`)
+      .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
+        metalnessFactor = mix(metalnessFactor, 0.55, mDetail); roughnessFactor = mix(roughnessFactor, 0.48, mDetail);
+        metalnessFactor = mix(metalnessFactor, 0.0, mRub + mFlag + eA); roughnessFactor = mix(roughnessFactor, 0.78, mRub); roughnessFactor = mix(roughnessFactor, 0.85, mFlag);
+        roughnessFactor = mix(roughnessFactor, 0.45, eA);`)
+      .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>
+        material.clearcoat *= 1.0 - mFlat;`);
+  };
+  m.customProgramCacheKey = () => 'tank1';
+  return m;
+}
+
+export const proxyMat = () => once('proxyMat', () => new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false }));
+// A mesh that only draws into the sun's shadow map. three tests layers against the main camera
+// in both passes, so instead the proxy empties its draw range for the main pass (and for the
+// reflection capture): the shadow pass runs first each frame and restores it.
+export function makeShadowOnly(m) {
+  const hide = (r, s, c, geo) => { geo.drawRange.start = 1e9; };
+  const show = (r, o, c, sc, geo) => { geo.drawRange.start = 0; };
+  m.onBeforeRender = hide; m.onBeforeShadow = show;
+  m.castShadow = true; m.receiveShadow = false;
+  return m;
+}
+export const shadowProxy = (geo) => makeShadowOnly(new THREE.Mesh(geo, proxyMat()));
 
 export function buildTank(type, { emblem = 'ring', colorOverride = null } = {}) {
   const cls = CLASS_PARTS[type.cls] ? type.cls : 'medium';
   const { spec, geos } = classKit(cls);
   const color = colorOverride ?? type.color;
-  const mats = {
-    paint: diecast(color),
-    trim: diecast(type.trim),
-    steel: new THREE.MeshStandardMaterial({ color: 0x55585e, metalness: 0.9, roughness: 0.42 }),
-    rubber: new THREE.MeshStandardMaterial({ color: 0x1c1d1f, roughness: 0.8, metalness: 0.2 }),
-    link: new THREE.MeshStandardMaterial({ color: 0x3a3a3c, metalness: 0.85, roughness: 0.5 }),
-    detail: new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.85, roughness: 0.45 }),
-    lamp: new THREE.MeshStandardMaterial({ color: 0xfff4d6, emissive: 0xffe0a0, emissiveIntensity: 0.35, roughness: 0.15, metalness: 0.3 }),
-  };
+  const T = spec.track;
+  const emblemTex = TX.emblem(emblem, '#f2efe6');
+  const mat = tankMaterial(color, type.trim, type.trim === 0x0b4f4d ? 0x1fb5b0 : color, emblemTex);
+  const u = mat.userData.u;
+  u.uBarrel.value.set(0, 0, spec.barrelAt[0], spec.barrelAt[1]);
+  u.uAnt.value.set(spec.antenna.x, spec.antenna.z, 0, 0); u.uAntY.value.set(spec.antenna.y, 0);
+  const linkMat = new THREE.MeshStandardMaterial({ color: 0x3a3a3c, metalness: 0.85, roughness: 0.5 });
   const root = new THREE.Group();
   const body = new THREE.Group(); root.add(body);
   const turret = new THREE.Group(); turret.position.set(spec.turretAt[0], spec.turretAt[1], 0); root.add(turret);
-  const barrel = new THREE.Group(); barrel.position.set(spec.barrelAt[0], spec.barrelAt[1], 0); turret.add(barrel);
-  const groups = { body, turret, barrel };
-  for (const [k, g] of Object.entries(geos)) {
-    const [grp, mat] = k.split(':');
-    const m = new THREE.Mesh(g, mats[mat]);
-    m.castShadow = mat === 'paint' || (mat === 'detail' && grp === 'body'); m.receiveShadow = true;
-    groups[grp].add(m);
-  }
-  // wheels: instanced tyres + hubs (+ sprockets), spun in updateTracks
-  const T = spec.track;
-  const wheelList = [];
-  for (const side of [1, -1]) {
-    for (const w of spec.wheels) wheelList.push({ ...w, z: side * T.z, side });
-    for (const w of spec.drive) wheelList.push({ ...w, z: side * T.z, side, sprocket: !w.idler });
-  }
-  const road = wheelList.filter((w) => !w.sprocket), spr = wheelList.filter((w) => w.sprocket);
-  mats.wheel = diecast(color, { vertexColors: true });
-  const tyres = new THREE.InstancedMesh(wheelGeo(), mats.wheel, road.length);
-  const hubs = null;
-  const sprockets = spr.length ? new THREE.InstancedMesh(sprocketGeo(), mats.steel, spr.length) : null;
-  const bound = new THREE.Sphere(new THREE.Vector3(0, 0.1, 0), 0.9);
-  for (const im of [tyres, sprockets]) if (im) { im.castShadow = true; im.receiveShadow = true; im.instanceMatrix.setUsage(THREE.DynamicDrawUsage); im.boundingSphere = bound; body.add(im); }
-  const links = new THREE.InstancedMesh(once('link:' + cls, () => new THREE.BoxGeometry(T.P / T.N * 0.82, 0.018, T.w)), mats.link, T.N * 2);
+  const bodyMesh = new THREE.Mesh(geos.body, mat); bodyMesh.receiveShadow = true; body.add(bodyMesh);
+  const turretMesh = new THREE.Mesh(geos.turret, mat); turretMesh.receiveShadow = true; turret.add(turretMesh);
+  const proxies = [shadowProxy(geos.bodyShadow), shadowProxy(geos.turretShadow)];
+  body.add(proxies[0]); turret.add(proxies[1]);
+  const ant = new THREE.Mesh(geos.ant, mat); turret.add(ant);
+  const links = new THREE.InstancedMesh(once('link:' + cls, () => new THREE.BoxGeometry(T.P / T.N * 0.82, 0.018, T.w)), linkMat, T.N * 2);
   links.castShadow = true; links.receiveShadow = true; links.instanceMatrix.setUsage(THREE.DynamicDrawUsage); links.boundingSphere = new THREE.Sphere(new THREE.Vector3(0.2, 0.05, 0), 1.3);
   body.add(links);
-  // emblem decals on the turret sides
-  const E = spec.emblem;
-  const emblemMat = new THREE.MeshStandardMaterial({ map: TX.emblem(emblem, '#f2efe6'), transparent: true, roughness: 0.5, polygonOffset: true, polygonOffsetFactor: -2, depthWrite: false });
-  const emGeo = once('emGeo:' + cls, () => {
-    const parts = [1, -1].map((side) => {
-      const p = new THREE.PlaneGeometry(E.size, E.size);
-      p.applyMatrix4(new THREE.Matrix4().compose(new THREE.Vector3(E.x, E.y, side * E.z), new THREE.Quaternion().setFromEuler(new THREE.Euler(side * -E.rx, (side > 0 ? 0 : Math.PI) + side * (E.ry || 0), 0, 'YXZ')), new THREE.Vector3(1, 1, 1)));
-      return p;
-    });
-    return mergeGeometries(parts);
-  });
-  const emMesh = new THREE.Mesh(emGeo, emblemMat); turret.add(emMesh);
-  const emblems = [emMesh];
-  // antenna + pennant
-  const A = spec.antenna;
-  const ant = new THREE.Mesh(once('ant:' + A.h, () => { const g = new THREE.CylinderGeometry(0.004, 0.006, A.h, 5); g.translate(0, A.h / 2, 0); return g; }), mats.steel);
-  ant.position.set(A.x, A.y, A.z); turret.add(ant);
-  const flagMat = new THREE.MeshStandardMaterial({ color: type.trim === 0x0b4f4d ? 0x1fb5b0 : color, side: THREE.DoubleSide, roughness: 0.85 });
-  const flag = new THREE.Mesh(once('flag2', () => { const g = new THREE.PlaneGeometry(0.12, 0.07, 6, 1); g.translate(-0.06, 0, 0); return g; }), flagMat);
-  flag.position.set(0, A.h - 0.04, 0); ant.add(flag);
-  // barrel tip marker (muzzle flash origin)
+  // barrel tip marker (muzzle flash origin); `barrel` is a pivot object kept in sync for tools
+  const barrel = new THREE.Object3D(); barrel.position.set(spec.barrelAt[0], spec.barrelAt[1], 0); turret.add(barrel);
   const tip = new THREE.Object3D(); tip.position.x = spec.muzzle; barrel.add(tip);
-  ant.castShadow = true; flag.castShadow = true;
   root.scale.setScalar(type.scale || 1);
+  const emblemMat = { set opacity(v) { u.uEmblemA.value = v; }, get opacity() { return u.uEmblemA.value; } };
   root.userData = {
-    cls, spec, body, turret, barrel, tip, ant, flag, emblems, links, tyres, hubs, sprockets, road, spr, track: T,
+    cls, spec, body, turret, barrel, tip, links, ant, proxies, track: T, mat, u,
     barrelX: spec.barrelAt[0], phaseL: 0, phaseR: 0, brokenL: false, brokenR: false,
-    mats: [mats.paint, mats.trim, mats.steel, mats.rubber, mats.link, mats.detail, mats.lamp, mats.wheel, emblemMat, flagMat],
-    paint: mats.paint, wheelMat: mats.wheel, trimMat: mats.trim, steelMat: mats.steel, detailMat: mats.detail, emblemMat, flagMat,
+    mats: [mat, linkMat], paint: mat, emblemMat, emblemTex,
+    // legacy knobs used by the view
+    set recoil(v) { u.uBarrel.value.x = v; barrel.position.x = spec.barrelAt[0] - v; },
+    set flagYaw(v) { u.uAnt.value.z = v; },
+    // far LOD: same material and silhouette, no rivets/tools, plain wheels
+    set lod(far) { if (far === this._far) return; this._far = far; bodyMesh.geometry = far ? geos.bodyLo : geos.body; turretMesh.geometry = far ? geos.turretLo : geos.turret; },
   };
   updateTracks(root, 0);
   return root;
@@ -424,7 +519,6 @@ export function updateTracks(root, left, right = left) {
   if (!ud.brokenL) ud.phaseL += left;
   if (!ud.brokenR) ud.phaseR += right;
   let n = 0;
-  const gap = T.P / T.N;
   for (const [side, ph, broken] of [[1, ud.phaseL, ud.brokenL], [-1, ud.phaseR, ud.brokenR]]) {
     for (let k = 0; k < T.N; k++) {
       const s0 = k / T.N * T.P + ph;
@@ -450,18 +544,7 @@ export function updateTracks(root, left, right = left) {
     }
   }
   ud.links.instanceMatrix.needsUpdate = true;
-  const spin = (list, im) => {
-    if (!im) return;
-    list.forEach((w, k) => {
-      const ph = w.side > 0 ? ud.phaseL : ud.phaseR;
-      _q4.setFromAxisAngle(_z, -ph / w.r);
-      _m4.compose(_p4.set(w.x, w.y, w.z + w.side * 0.004), _q4, _s4.set(w.r, w.r, T.w * (w.big ? 0.95 : 0.85)));
-      im.setMatrixAt(k, _m4);
-    });
-    im.instanceMatrix.needsUpdate = true;
-  };
-  spin(ud.road, ud.tyres); spin(ud.spr, ud.sprockets);
-  _s4.set(1, 1, 1);
+  ud.u.uPhase.value.set(ud.phaseL, ud.phaseR);
 }
 
 // Knocked out: char the paint, droop the gun, throw both tracks, knock the turret askew.
@@ -469,21 +552,18 @@ export function wreckTank(root, seed = Math.random()) {
   const ud = root.userData;
   if (ud.wrecked) return;
   ud.wrecked = true;
-  const char = new THREE.Color(0x1c1714);
-  for (const m of [ud.paint, ud.trimMat, ud.wheelMat]) { m.color.lerp(char, 0.93); m.clearcoat = 0.05; m.metalness = 0.4; m.roughnessMap = null; m.roughness = 0.85; m.needsUpdate = true; }
-  ud.steelMat.color.set(0x2a2624); ud.steelMat.roughness = 0.8;
-  ud.detailMat.color.set(0x5a504a); ud.detailMat.roughness = 0.85;
-  ud.emblemMat.opacity = 0.18;
-  ud.flag.visible = false;
-  ud.ant.rotation.z = 0.9 + seed * 0.5;
+  const m = ud.mat, u = ud.u;
+  m.color.lerp(new THREE.Color(0x1c1714), 0.93); m.clearcoat = 0.05; m.roughnessMap = null; m.roughness = 0.85; m.metalness = 0.4; m.needsUpdate = true;
+  u.uTrim.value.lerp(new THREE.Color(0x1c1714), 0.9);
+  u.uEmblemA.value = 0.18;
+  u.uAntY.value.y = 1; ud.ant.visible = false; // antenna shot away
   ud.brokenL = ud.brokenR = true;
   const r = (seed * 9301 + 49297) % 1;
   ud.turret.rotation.y += (r - 0.5) * 1.4;
   ud.turret.rotation.z = (seed - 0.5) * 0.3;
   ud.turret.rotation.x = (r - 0.5) * 0.25;
   ud.turret.position.y += 0.015;
-  ud.barrel.rotation.z = -0.1 - seed * 0.08;
-  ud.barrel.position.x = ud.barrelX;
+  u.uBarrel.value.y = -0.1 - seed * 0.08; u.uBarrel.value.x = 0;
   updateTracks(root, 0);
 }
 
@@ -493,23 +573,27 @@ export const rocketGeo = () => once('rocketGeo', () => { const g = new THREE.Cap
 export const shellMat = () => once('shellMat', () => new THREE.MeshStandardMaterial({ color: 0xd8b25a, metalness: 0.85, roughness: 0.25, emissive: 0x3a2600, emissiveIntensity: 0.4 }));
 export const rocketMat = () => once('rocketMat', () => new THREE.MeshStandardMaterial({ color: 0xe9ecef, metalness: 0.4, roughness: 0.3, emissive: 0xff5a1f, emissiveIntensity: 0.25 }));
 
+// A mine: casing, yellow dome and hazard stripes are one vertex-coloured mesh; the lamp blinks.
+const mineGeo = () => once('mineGeo', () => {
+  const parts = [];
+  const put = (g, color, x = 0, y = 0, z = 0, ry = 0) => {
+    const n = kitGeo(g, new THREE.Matrix4().compose(_kp.set(x, y, z), _kq.setFromAxisAngle(new THREE.Vector3(0, 1, 0), ry), _ks.set(1, 1, 1)), { color });
+    for (const k of ['aMat', 'aPart', 'aWheel']) n.deleteAttribute(k);
+    parts.push(n);
+  };
+  put(new THREE.CylinderGeometry(0.22, 0.24, 0.05, 24), 0x2b2b2b, 0, 0.025);
+  const d = new THREE.SphereGeometry(0.19, 24, 8, 0, Math.PI * 2, 0, Math.PI / 2); d.scale(1, 0.55, 1);
+  put(d, 0xf2c230, 0, 0.05);
+  for (let k = 0; k < 6; k++) { const a = (k / 6) * Math.PI * 2; put(new THREE.BoxGeometry(0.05, 0.03, 0.12), 0x1a1a1a, Math.cos(a) * 0.17, 0.075, Math.sin(a) * 0.17, -a); }
+  return mergeGeometries(parts, false);
+});
 export function buildMine() {
   const g = new THREE.Group();
-  const base = new THREE.Mesh(once('mineBase', () => new THREE.CylinderGeometry(0.22, 0.24, 0.05, 28)), new THREE.MeshStandardMaterial({ color: 0x2b2b2b, roughness: 0.5, metalness: 0.5 }));
-  base.position.y = 0.025; g.add(base);
-  const dome = new THREE.Mesh(once('mineDome', () => { const d = new THREE.SphereGeometry(0.19, 28, 12, 0, Math.PI * 2, 0, Math.PI / 2); d.scale(1, 0.55, 1); return d; }), plastic(0xf2c230));
-  dome.position.y = 0.05; g.add(dome);
-  // hazard stripes as small dark boxes around the dome skirt
-  for (let k = 0; k < 6; k++) {
-    const s = new THREE.Mesh(once('mineStripe', () => new THREE.BoxGeometry(0.05, 0.03, 0.12)), new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.6 }));
-    const a = (k / 6) * Math.PI * 2;
-    s.position.set(Math.cos(a) * 0.17, 0.075, Math.sin(a) * 0.17); s.rotation.y = -a;
-    g.add(s);
-  }
+  const body = new THREE.Mesh(mineGeo(), once('mineMat', () => new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.38, metalness: 0.15, clearcoat: 0.7, clearcoatRoughness: 0.2 })));
+  body.castShadow = true; body.receiveShadow = true; g.add(body);
   const lamp = new THREE.Mesh(once('mineLamp', () => new THREE.SphereGeometry(0.045, 16, 10)), new THREE.MeshStandardMaterial({ color: 0x550000, emissive: 0xff1a0a, emissiveIntensity: 0, roughness: 0.2 }));
   lamp.position.y = 0.16; g.add(lamp);
-  g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
-  g.userData.lamp = lamp; g.userData.dome = dome;
+  g.userData.lamp = lamp; g.userData.dome = body;
   return g;
 }
 

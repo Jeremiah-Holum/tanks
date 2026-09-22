@@ -4,6 +4,7 @@
 import { TYPES, ENEMY_ORDER, CLASSES, CLASS_ORDER } from './sim/tanks.js';
 import { CAMPAIGN, VERSUS, parseLevel } from './sim/levels.js';
 import { CELL } from './sim/world.js';
+import { Studio } from './garage3d.js';
 
 export const hex = (c) => '#' + (c >>> 0).toString(16).padStart(6, '0');
 const h = (tag, attrs = {}, ...kids) => {
@@ -82,7 +83,14 @@ export class UI {
     this.dirs = [];
     this.counts = { float: 0, hitMe: 0, callout: 0, feed: 0 }; // for tools/verify.mjs
   }
-  clear(name) { this.layers[name].innerHTML = ''; if (name === 'fx') { this.floaters = []; this.dirs = []; } }
+  clear(name) {
+    if (name === 'screen') this._closeStudio();
+    if (name === 'toast') this._pendingMsg = null;
+    if (name === 'banner') this.bannerUp = null;
+    this.layers[name].innerHTML = '';
+    if (name === 'fx') { this.floaters = []; this.dirs = []; }
+  }
+  _closeStudio() { if (this.studio) { this.studio.dispose(); this.studio = null; } this._garageSet = null; }
   _btn(label, sub, onclick, cls = '') {
     return h('button', { class: 'btn ' + cls, 'data-act': slug(label), onclick: () => { this.sound('ui'); onclick(); } }, label, sub ? h('span', { class: 'sub' }, sub) : null);
   }
@@ -108,7 +116,10 @@ export class UI {
   // ---------------------------------------------------------------- panels
   panel(kicker, title, body, actions, cls = '') {
     this.clear('screen');
-    const p = h('div', { class: 'panel interactive fade-in ' + cls }, h('div', { class: 'kicker' }, kicker), h('h2', {}, title), ...body, h('div', { class: 'actions' }, ...actions));
+    const p = h('div', { class: 'panel interactive fade-in ' + cls },
+      h('div', { class: 'p-head' }, h('div', { class: 'kicker' }, kicker), h('h2', {}, title)),
+      h('div', { class: 'p-body' }, ...body),
+      h('div', { class: 'actions' }, ...actions));
     this.layers.screen.append(h('div', { class: 'panel-wrap' }, p));
     return p;
   }
@@ -135,32 +146,47 @@ export class UI {
 
   // ---------------------------------------------------------------- garage
   // Pick a class. `brief` = { kicker, title, lines: [text], foes: [[color, label]] }.
-  garage({ cls, brief, onStart, onBack, onPick, startLabel = 'Roll out', backLabel = 'Back' }) {
+  // `paint` = { color, trim, emblem } for the product shots (the player's own paint job).
+  garage({ cls, brief, paint, onStart, onBack, onPick, startLabel = 'Roll out', backLabel = 'Back' }) {
     let sel = CLASSES[cls] ? cls : 'medium';
     const cards = h('div', { class: 'garage' });
+    const p = this.panel(brief ? brief.kicker : 'Garage', brief ? brief.title : 'Pick your tank', [], [], 'wide garage-panel');
+    // one shared renderer for every card; stills for all four, the live turntable on the selected one
+    const still = new URLSearchParams(location.search).has('paused') || matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const studio = this.studio = Studio.create({ ...(paint || {}), w: 232, h: 124, still });
+    const shots = {};
+    if (studio) for (const k of CLASS_ORDER) shots[k] = studio.shot(k);
+    const pic = (k) => {
+      const box = h('div', { class: 'gshot' + (studio && shots[k] ? '' : ' flat') });
+      if (studio && shots[k]) {
+        if (k === sel) studio.live(box, k);
+        else box.append(h('img', { src: shots[k], alt: CLASSES[k].label, draggable: 'false' }));
+      } else box.innerHTML = classSvg(k, k === sel ? '#4a5324' : '#6b6450');
+      return box;
+    };
     const draw = () => {
       cards.innerHTML = '';
       for (const k of CLASS_ORDER) {
         const c = CLASSES[k];
-        const bars = classStats(k).map(([lab, v, txt]) => h('div', { class: 'stat' }, h('span', { class: 'sl' }, lab), h('span', { class: 'sb' }, h('i', { style: `width:${Math.round(Math.max(0.06, Math.min(1, v)) * 100)}%` })), h('span', { class: 'sv' }, txt)));
+        const bars = classStats(k).map(([lab, v, txt]) => h('div', { class: 'stat' }, h('span', { class: 'sl' }, lab), h('span', { class: 'sv' }, txt), h('span', { class: 'sb' }, h('i', { style: `width:${Math.round(Math.max(0.06, Math.min(1, v)) * 100)}%` }))));
         cards.append(h('div', { class: 'gcard' + (k === sel ? ' on' : ''), 'data-cls': k, tabindex: 0,
           onclick: () => { if (sel !== k) { sel = k; this.sound('ui'); onPick && onPick(k); draw(); } },
           ondblclick: () => { sel = k; onPick && onPick(k); this.sound('uiBig'); onStart(k); } },
-        h('div', { class: 'gname' }, c.label), h('div', { class: 'gsil', html: classSvg(k, k === sel ? '#4a5324' : '#6b6450') }), h('div', { class: 'gblurb' }, c.blurb), ...bars));
+        h('div', { class: 'gname' }, c.label), pic(k), h('div', { class: 'gblurb' }, c.blurb), ...bars));
       }
     };
     draw();
     this._garageSet = (k) => { if (CLASSES[k]) { sel = k; draw(); } };
-    const body = [];
+    const body = p.querySelector('.p-body'), actions = p.querySelector('.actions');
     if (brief) {
-      body.push(h('div', { class: 'brief' },
+      body.append(h('div', { class: 'brief' },
         ...(brief.lines || []).map((l) => h('p', {}, l)),
         brief.foes && brief.foes.length ? h('div', { class: 'foes-row' }, h('b', {}, 'Opposition'), ...brief.foes.map(([color, label]) => h('span', {}, h('span', { class: 'chip', style: `background:${hex(color)}` }), label))) : null));
     }
-    body.push(h('div', { class: 'kicker', style: 'margin-top:14px' }, 'Choose your tank'), cards,
+    body.append(h('div', { class: 'kicker', style: 'margin-top:12px' }, 'Choose your tank'), cards,
       h('p', { class: 'fine' }, 'Armour is front / side / rear in toy-millimetres. Shells that hit steeper than 70° ricochet; otherwise penetration has to beat armour ÷ cos(angle).'));
-    const p = this.panel(brief ? brief.kicker : 'Garage', brief ? brief.title : 'Pick your tank', body,
-      [onBack ? this._btn(backLabel, null, onBack, 'small') : null, this._btn(startLabel, null, () => onStart(sel), 'small primary')].filter(Boolean), 'wide');
+    if (onBack) actions.append(this._btn(backLabel, null, onBack, 'small'));
+    actions.append(this._btn(startLabel, null, () => onStart(sel), 'small primary'));
     setTimeout(() => p.querySelector('.actions .primary')?.focus(), 60);
   }
 
@@ -240,23 +266,25 @@ export class UI {
     const counts = h('span', { class: 'counts' });
     const drawCounts = () => {
       counts.innerHTML = '';
+      if (cfg.format === '1v1') counts.append(h('span', { class: 'cl' }, 'You and one opponent'));
       if (cfg.format === 'ffa') counts.append(this.seg([[3, '3 tanks'], [4, '4 tanks']], cfg.ffa, (v) => { cfg.ffa = v; drawSlots(); }, 'ffa'));
       if (cfg.format === 'team') {
-        counts.append(h('span', { class: 'cl' }, 'Allies'), this.seg([[0, '0'], [1, '1'], [2, '2'], [3, '3'], [4, '4']], cfg.allies, (v) => { cfg.allies = v; drawSlots(); }, 'allies'),
+        counts.append(h('span', { class: 'cl', style: 'margin-left:0' }, 'Allies'), this.seg([[0, '0'], [1, '1'], [2, '2'], [3, '3'], [4, '4']], cfg.allies, (v) => { cfg.allies = v; drawSlots(); }, 'allies'),
           h('span', { class: 'cl' }, 'Enemies'), this.seg([[1, '1'], [2, '2'], [3, '3'], [4, '4'], [5, '5']], cfg.enemies, (v) => { cfg.enemies = v; drawSlots(); }, 'enemies'));
       }
     };
     drawCounts(); drawSlots();
-    const body = [
-      h('div', { class: 'row' }, h('label', {}, 'Format'), this.seg([['1v1', '1 v 1'], ['ffa', 'Free for all'], ['team', 'Team battle']], cfg.format, (v) => { cfg.format = v; drawCounts(); drawSlots(); }, 'format'), counts),
+    const left = h('div', { class: 'vs-col' },
+      h('div', { class: 'row' }, h('label', {}, 'Format'), this.seg([['1v1', '1 v 1'], ['ffa', 'Free for all'], ['team', 'Team battle']], cfg.format, (v) => { cfg.format = v; drawCounts(); drawSlots(); }, 'format')),
+      h('div', { class: 'row counts-row' }, h('label', {}, 'Tanks'), counts),
       h('div', { class: 'row' }, h('label', {}, 'First to'), this.seg([[1, '1 round'], [2, '2 rounds'], [3, '3 rounds'], [5, '5 rounds']], cfg.rounds, (v) => { cfg.rounds = v; }, 'rounds')),
-      h('div', { class: 'row' }, h('label', {}, 'Your tank'), this.seg(CLASS_OPTS, cfg.cls, (v) => { cfg.cls = v; }, 'mycls')),
       h('div', { class: 'slot-head' }, h('span', {}), h('span', {}, 'Crew'), h('span', {}, 'Skill'), h('span', {}, 'Personality'), h('span', {}, 'Tank')),
-      slots,
-      h('p', { class: 'fine' }, 'Bots are hand-written engines, not cheats: they only shoot what their team can see. Cadet reacts late and fires on the move. Veteran waits for its aim to settle, goes for your sides and flanks. Ace angles its armour, reads your shots and punishes a reload. Adaptive tracks your Director rating. Brawlers push, Snipers hold long lines, Flankers go round.'),
-      h('div', { class: 'row' }, h('label', {}, 'Battlefield')), maps,
-    ];
-    this.panel('Versus', 'Set up a match', body, [this._btn('Back', null, onBack, 'small'), this._btn('Roll out', null, () => onStart(cfg), 'small primary')], 'wide');
+      slots);
+    const right = h('div', { class: 'vs-col' },
+      h('div', { class: 'subhead', style: 'margin-top:0' }, 'Battlefield'), maps,
+      h('p', { class: 'fine' }, 'Bots are hand-written engines, not cheats: they only shoot what their team can see. Cadet reacts late and fires on the move. Veteran waits for its aim to settle and goes for your sides. Ace angles its armour, reads your shots and punishes a reload. Adaptive tracks your Director rating. Brawlers push, Snipers hold long lines, Flankers go round.'));
+    this.panel('Versus', 'Set up a match', [h('div', { class: 'vs-grid' }, left, right)],
+      [this._btn('Back', null, onBack, 'small'), this._btn('Choose tank', null, () => onStart(cfg), 'small primary')], 'wide');
   }
 
   mapThumb(level) {
@@ -278,26 +306,47 @@ export class UI {
   }
 
   // ---------------------------------------------------------------- banner
+  // Centre-screen messages never overlap: while a banner is up, toasts and callouts wait (only
+  // the newest is kept) and show when it closes; otherwise the newer message replaces the older.
   banner({ big, name, foes, sub }) {
     this.clear('banner');
+    this.clear('toast');
     const b = h('div', { class: 'banner' },
       h('div', { class: 'strip' }, h('div', { class: 'm' }, big), h('div', { class: 'n' }, name)),
       foes && foes.length ? h('div', { class: 'foes' }, ...foes.map(([color, label]) => h('span', {}, h('span', { class: 'chip', style: `background:${hex(color)}` }), label))) : null,
       sub ? h('div', { class: 'bsub' }, sub) : null,
     );
     this.layers.banner.append(b);
-    return () => { b.classList.add('out'); setTimeout(() => b.remove(), 400); };
+    this.bannerUp = b;
+    return () => {
+      if (b.classList.contains('out')) return;
+      b.classList.add('out');
+      // messages keep waiting until the banner has fully faded out
+      setTimeout(() => { b.remove(); if (this.bannerUp === b) { this.bannerUp = null; this._flushMsg(); } }, 400);
+    };
   }
 
-  toast(text, color) {
-    const t = h('div', { class: 'toast', style: color ? `color:${color}` : '' }, text);
-    this.layers.toast.append(t);
-    setTimeout(() => t.remove(), 1700);
+  // kind: 'toast' (one big stencil line) or 'callout' (line + small sub line on a plate)
+  message(text, { sub = null, color = null, kind = 'toast', life = 1.7 } = {}) {
+    if (this.bannerUp) { this._pendingMsg = { text, sub, color, kind, life, at: performance.now() }; return; }
+    this._pendingMsg = null;
+    const L = this.layers.toast;
+    L.innerHTML = '';
+    const el = kind === 'callout'
+      ? h('div', { class: 'msg callout' }, h('div', { class: 'co' }, h('b', { style: color ? `color:${color}` : '' }, text), sub ? h('span', {}, sub) : null))
+      : h('div', { class: 'msg toast' }, h('b', { style: color ? `color:${color}` : '' }, text));
+    L.append(el);
+    setTimeout(() => el.remove(), life * 1000 + 100);
   }
+  _flushMsg() {
+    const m = this._pendingMsg; this._pendingMsg = null;
+    if (m && performance.now() - m.at < 3000) this.message(m.text, m);
+  }
+  toast(text, color) { this.message(text, { color, life: 1.7 }); }
 
   // ---------------------------------------------------------------- HUD
   hud(on, { mode, title, sub } = {}) {
-    this.clear('hud'); this.clear('fx');
+    this.clear('hud'); this.clear('fx'); this.clear('toast');
     this.hudEls = null;
     if (!on) return;
     const mod = (k, label) => h('div', { class: 'mod', 'data-mod': k }, h('div', { class: 'mi', html: ICON[k] }), h('div', { class: 'ml' }, label), h('div', { class: 'mt' }));
@@ -318,14 +367,13 @@ export class UI {
       lock: h('div', { class: 'lockprompt hidden' }, 'CLICK TO TAKE COMMAND'),
       score: h('div', { class: 'score' }),
       feed: h('div', { class: 'feed' }),
-      callout: h('div', { class: 'callout' }),
       spec: h('div', { class: 'spectate hidden' }, h('div', { class: 'sp1' }), h('div', { class: 'sp2' }, 'TAB / CLICK — next ally')),
       flash: h('div', { class: 'dmgflash' }),
       hitmsg: h('div', { class: 'hitmsg' }, "YOU'VE BEEN HIT"),
       dirs: h('div', { class: 'dmgdirs' }),
     };
     els.barMap = new Map();
-    this.layers.hud.append(els.flash, els.bars, els.dirs, els.plaque, els.status, els.reload, els.foes, els.hint, els.reticle, els.lock, els.score, els.feed, els.callout, els.spec, els.hitmsg);
+    this.layers.hud.append(els.flash, els.bars, els.dirs, els.plaque, els.status, els.reload, els.foes, els.hint, els.reticle, els.lock, els.score, els.feed, els.spec, els.hitmsg);
     this.hudEls = els;
     this.setMode(mode);
   }
@@ -500,7 +548,7 @@ export class UI {
   hitMe(angle, pen) {
     const E = this.hudEls; if (!E) return;
     this.counts.hitMe++;
-    if (pen) {
+    if (pen && !this.bannerUp) {
       E.flash.classList.remove('on'); void E.flash.offsetWidth; E.flash.classList.add('on');
       E.hitmsg.classList.remove('on'); void E.hitmsg.offsetWidth; E.hitmsg.classList.add('on');
     }
@@ -511,12 +559,9 @@ export class UI {
     }
   }
   callout(text, sub) {
-    const E = this.hudEls; if (!E) return;
+    if (!this.hudEls) return;
     this.counts.callout++;
-    E.callout.innerHTML = '';
-    const el = h('div', { class: 'co' }, h('b', {}, text), sub ? h('span', {}, sub) : null);
-    E.callout.append(el);
-    setTimeout(() => el.remove(), 2200);
+    this.message(text, { sub, kind: 'callout', life: 2.2 });
   }
   feed(parts) {
     const E = this.hudEls; if (!E) return;
@@ -538,7 +583,9 @@ export class UI {
       const rise = 26 + f.age * 46 + f.stack * 26;
       const op = f.age > f.life - 0.35 ? (f.life - f.age) / 0.35 : 1;
       f.el.style.opacity = op.toFixed(2);
-      f.el.style.transform = `translate(${a.x.toFixed(1)}px, ${(a.y - rise).toFixed(1)}px) translate(-50%, -50%) scale(${f.age < 0.1 ? 1.5 - f.age * 5 : 1})`;
+      // keep the text on screen even when its tank sits at the edge
+      const fx = Math.max(90, Math.min(innerWidth - 90, a.x)), fy = Math.max(64, Math.min(innerHeight - 40, a.y - rise));
+      f.el.style.transform = `translate(${fx.toFixed(1)}px, ${fy.toFixed(1)}px) translate(-50%, -50%) scale(${f.age < 0.1 ? 1.5 - f.age * 5 : 1})`;
     }
     for (let k = this.dirs.length - 1; k >= 0; k--) {
       const d = this.dirs[k]; d.age += dt;
@@ -594,7 +641,7 @@ export function versusLayout(cfg) {
   } else {
     const n = cfg.format === '1v1' ? 2 : cfg.ffa;
     out.push({ human: true, team: 0, color: VS_COLORS[0], label: 'You', side: '' });
-    for (let k = 1; k < n; k++) out.push({ team: k, ref: cfg.enemySlots[k - 1], color: VS_COLORS[k], label: VS_NAMES[k], side: cfg.format === '1v1' ? 'Opponent' : 'Every tank for itself' });
+    for (let k = 1; k < n; k++) out.push({ team: k, ref: cfg.enemySlots[k - 1], color: VS_COLORS[k], label: VS_NAMES[k], side: cfg.format === '1v1' ? 'Opponent' : 'Rival' });
   }
   return out;
 }

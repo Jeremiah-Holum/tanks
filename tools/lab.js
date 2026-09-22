@@ -69,11 +69,12 @@ lab.look = (px, py, pz, tx, ty, tz, fov = 40) => {
 lab.props = (kind) => world.props.filter((p) => !kind || p.kind === kind);
 
 // A small flat test board with one tank per class (light, medium, heavy, td) in a row.
-lab.flat = (cls = ['light', 'medium', 'heavy', 'td'], cols = 20, rows = 12, extra = []) => {
+lab.flat = (cls = ['light', 'medium', 'heavy', 'td'], cols = 20, rows = 12, extra = [], gap = 3) => {
   const g = [...Array(rows)].map(() => Array(cols).fill('.'));
   for (const [i, j, ch] of extra) g[j][i] = ch;
-  cls.forEach((c, k) => { g[6][4 + k * 3] = String(k); });
-  const slots = cls.map((c, k) => ({ human: k === 0, team: k, skill: 'ace', style: 'hunt', cls: c, sp: k }));
+  cls.forEach((c, k) => { g[6][4 + k * gap] = String(k); });
+  const COLS = [0x3d6fc4, 0xc8453c, 0xc08a4a, 0x5d8a2f, 0x8d949c, 0x7a4fc0];
+  const slots = cls.map((c, k) => ({ human: k === 0, team: k, skill: 'ace', style: 'hunt', cls: c, sp: k, color: COLS[k % COLS.length] }));
   world = createWorld({ level: g.map((r) => r.join('')), mode: 'versus', slots, seed: 3 });
   lab._set();
   return world.tanks.map((t) => [t.type.cls, t.x, t.z]);
