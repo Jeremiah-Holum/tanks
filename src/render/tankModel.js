@@ -847,7 +847,7 @@ function hullDetails(gb, D, G, def, info) {
       gb.st = ST.dark; gb.cyl(M(x, top + 0.25, z + 0.55, Math.PI / 2, 0, 0, 0.025, 0.4, 0.025), null, 6);
     }
   }
-  if (look.sponsonGun) {
+  if (look.sponsonGun || look.hullGun) {
     const y = top - 0.38, x = -(halfTop - 0.28), z = D.frontZ(y) - 0.25;
     gb.st = ST.cast;
     gb.lathe([[0, 0.3], [0.3, 0.28], [0.36, 0.1], [0.36, -0.35]], 14, M(x, y, z, 0, -Math.PI / 2, 0));

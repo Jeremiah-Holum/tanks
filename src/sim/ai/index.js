@@ -12,7 +12,8 @@ import { bestAim, candWorld, lineTo, gunFacing, alphaOf, chooseShell, chanceWith
 import { wrap, clamp, hyp, headingTo, shellSlots, snapPassable, passable, TAU } from './util.js';
 
 const CRUISE_LOOK = 11;                    // m, carrot distance (+ speed)
-const ENGAGE_RANGE = { light: 330, medium: 380, heavy: 260, td: 520 };
+const ENGAGE_RANGE = { light: 300, medium: 330, heavy: 240, td: 480 };   // stop and fight inside this
+const FIRE_RANGE = { light: 330, medium: 390, heavy: 320, td: 520 };     // don't bother shooting beyond
 const _sol = {};
 
 export function createBrain(world, tank) { return new Brain(world, tank); }
@@ -508,6 +509,7 @@ export class Brain {
     if (t.reload > 0 || now < this.nextShot || t.ammo[t.shell] <= 0 || c.shell !== t.shell) return;
     // lights on passive spotting duty hold fire unless it's close, a kill, or late game
     if (this.cls === 'light' && this.scoutPhase > 0 && this.team.push < 1 && d > 200 && tg.hp > alphaOf(t) * 1.1 && now - this.lastHitT > 5) return;
+    if (d > FIRE_RANGE[this.cls] * (1 + 0.25 * (1 - s)) && now - this.lastHitT > 4) return;
     const sol = aimSolution(world, t, p, _sol);
     if (!sol.reachable) return;
     const angErr = Math.abs(wrap(sol.yaw - t.turretYaw)) + Math.abs(sol.pitch - t.gunPitch);
