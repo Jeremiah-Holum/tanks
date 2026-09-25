@@ -510,8 +510,9 @@ console.log('Review regressions');
   place(w9, o2, 520, 320, 0); run(w9, 3);
   check('spottedBy keeps the first spotter', tt9.spottedBy[0] === o1.id, tt9.spottedBy[0]);
   // 11. view range by class
-  const v = (c) => Object.values(TANKS).find((d) => d.tier === 5 && d.cls === c).view;
-  check('view: light > medium > heavy > TD at the same tier (320+12·tier + 40/20/10/0)', v('light') === 400 && v('medium') === 380 && v('heavy') === 370 && v('td') === 360, ['light', 'medium', 'heavy', 'td'].map(v).join(' '));
+  const bonus = { light: 40, medium: 20, heavy: 10, td: 0 };
+  const badV = Object.values(TANKS).filter((d) => d.view !== Math.min(445, 320 + 12 * d.tier + bonus[d.cls]));
+  check('view by class: 320 + 12·tier + light 40 / medium 20 / heavy 10 / TD 0', !badV.length, badV.map((d) => d.id).join(' ') || `BT-7 ${TANKS.ussr_bt7.view}, SU-76M ${TANKS.ussr_su76.view}`);
 }
 
 // ------------------------------------------------------------------ real maps
