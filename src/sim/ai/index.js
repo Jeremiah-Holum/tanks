@@ -5,7 +5,7 @@
 // Deterministic: randomness comes from a per-bot rng seeded from world.seed and the tank id.
 // The bot only uses what its team has spotted (world.visible[team]); no wallhacks.
 import { aimSolution, predictImpact, DT, makeRng, penPreview, hullToWorld } from '../battle.js';
-import { heightAt, lineClear } from '../map/query.js';
+import { heightAt, lineClear, waterDepthAt } from '../map/query.js';
 import { teamBrain, planBudget } from './team.js';
 import { plan, Follower, segClear } from './path.js';
 import { bestAim, candWorld, lineTo, gunFacing, alphaOf, chooseShell, chanceWith, pHit } from './combat.js';
@@ -37,9 +37,9 @@ export class Brain {
     const p = 1 - s;
     this.react = 0.2 + 1.3 * p ** 1.3;                 // s before a fresh contact is engaged
     this.evalN = Math.round(10 + 20 * p);               // ticks between target evaluations
-    this.aimErrBase = 0.08 + 3.6 * p * p;               // m of aim error at ~200 m
+    this.aimErrBase = 0.08 + 3.6 * p ** 1.6;             // m of aim error at ~200 m
     this.patience = 0.3 + 2.4 * s;                      // × gun aim time we are willing to wait
-    this.patienceK = 0.1 + 0.9 * s;                     // 1 ≈ optimal trigger timing, < 1 trigger-happy
+    this.patienceK = 0.1 + 0.6 * s;                     // 1 ≈ optimal trigger timing, < 1 trigger-happy
     this.errFloor = 0.2 + 0.6 * p;                      // aim error left after tracking a target
     this.leadK = 0.25 + 0.75 * s;                       // fraction of the true lead applied
     this.goldBudget = s > 0.6 ? Math.round((s - 0.6) * 25) : 0;
@@ -334,13 +334,16 @@ export class Brain {
     const goal = this.goal;
     if (!goal || this.hold || this.arrived) { this.holdStill(world); return; }
     if (this.needPlan && planBudget(world, t.team)) {
-      const r = plan(T.planNav(this.dangerW), T.navS, t.pos.x, t.pos.z, goal.x, goal.z);
+      const r = plan(T.planNav(this.dangerW), T.navS, t.pos.x, t.pos.z, goal.x, goal.z, world.map);
       this.stats.plans++;
       if (r) { this.follow.set(r.pts); T.notePath(r.raw); this.needPlan = false; this.planFail = 0; this.lastRemain = Infinity; }
       else { this.follow.set([{ x: t.pos.x, z: t.pos.z }, { x: goal.x, z: goal.z }]); this.needPlan = false; if (++this.planFail > 2) this.jitter = { x: (this.rng() - 0.5) * 40, z: (this.rng() - 0.5) * 40 }; }
     }
     const spd = Math.abs(t.speed);
-    const car = this.follow.carrot(t.pos.x, t.pos.z, CRUISE_LOOK + spd * 0.8, this.carrot);
+    let car = this.follow.carrot(t.pos.x, t.pos.z, CRUISE_LOOK + spd * 0.8, this.carrot);
+    // near water (bridges, fords): don't cut the corner through the deep bit
+    if (car && world.map.water && (waterDepthAt(world.map, (car.x + t.pos.x) / 2, (car.z + t.pos.z) / 2) > 1.1 || waterDepthAt(world.map, car.x, car.z) > 1.1))
+      car = this.follow.carrot(t.pos.x, t.pos.z, 3, this.carrot);
     const tx = car ? car.x : goal.x, tz = car ? car.z : goal.z;
     const remain = car ? car.remain + hyp(tx - t.pos.x, tz - t.pos.z) : hyp(goal.x - t.pos.x, goal.z - t.pos.z);
     const dg = hyp(goal.x - t.pos.x, goal.z - t.pos.z);
@@ -429,7 +432,7 @@ export class Brain {
     for (let i = 0; i < 16; i++) {
       const a = i * TAU / 16, r = i % 2 ? 14 : 24, dx = Math.sin(a), dz = Math.cos(a);
       const x = t.pos.x + dx * r, z = t.pos.z + dz * r;
-      if (!passable(nav, x, z, 2.2) || !segClear(nav, t.pos.x, t.pos.z, x, z)) continue;
+      if (!passable(nav, x, z, 2.2) || !segClear(nav, t.pos.x, t.pos.z, x, z, 2.6, world.map)) continue;
       let near = false;
       for (const o of world.tanks) if (o !== t && hyp(o.pos.x - x, o.pos.z - z) < 7) { near = true; break; }
       if (near) continue;
@@ -455,7 +458,7 @@ export class Brain {
       let best = null, bs = -Infinity;
       for (let i = -3; i <= 3; i++) {
         const a = back + i * 0.29, px = t.pos.x + Math.sin(a) * r, pz = t.pos.z + Math.cos(a) * r;
-        if (!passable(nav, px, pz, 2.2) || !segClear(nav, t.pos.x, t.pos.z, px, pz)) continue;
+        if (!passable(nav, px, pz, 2.2) || !segClear(nav, t.pos.x, t.pos.z, px, pz, 2.6, map)) continue;
         B.x = px; B.z = pz; B.y = heightAt(map, px, pz) + top;
         let hidden = true;
         for (const E of eyes) if (lineClear(map, E, B)) { hidden = false; break; }

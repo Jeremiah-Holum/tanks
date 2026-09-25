@@ -56,7 +56,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0d0c; }
 
 /* ---------------------------------------------------------------- markers & floating damage */
 .mk { position: absolute; left: 0; top: 0; will-change: transform; display: flex; flex-direction: column; align-items: center; gap: 2px;
-  margin-left: -50px; width: 100px; margin-top: -30px; font: 600 12px/1 var(--cond); text-shadow: var(--shadow-t); }
+  margin-left: -50px; width: 100px; margin-top: -26px; transform-origin: 50% 100%; font: 600 12px/1 var(--cond); text-shadow: var(--shadow-t); transition: opacity .15s; }
 .mk-l { display: flex; gap: 5px; align-items: baseline; white-space: nowrap; }
 .mk-t { font-weight: 700; font-size: 13px; }
 .mk-n { opacity: .8; font-weight: 500; }
@@ -65,9 +65,11 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0d0c; }
 .mk-hp { position: absolute; left: 100%; top: -3px; margin-left: 4px; font-size: 11px; opacity: .85; }
 .mk.en { color: #ff6a4c; } .mk.en .mk-bar i { background: linear-gradient(180deg, #ff6a4c, #c02a18); }
 .mk.al { color: #9ae86a; } .mk.al .mk-bar i { background: linear-gradient(180deg, #9ae86a, #4c9a2c); }
-.mk.al { opacity: .82; }
-.mk.far .mk-hp, .mk.far .mk-n { display: none; }
-.mk.lock .mk-t { color: #fff; }
+.mk.al { margin-top: -20px; }
+.mk.al .mk-t { font-size: 12px; opacity: .9; }
+.mk.al .mk-bar { width: 44px; height: 5px; }
+.mk-n:empty, .mk-hp:empty { display: none; }
+.mk.lock .mk-t, .mk.lock .mk-n { color: #fff; opacity: 1; }
 .fd { position: absolute; left: 0; top: 0; margin-left: -30px; width: 60px; text-align: center; will-change: transform, opacity;
   font: 700 22px/1 var(--cond); color: #ffb13a; text-shadow: 0 0 2px #000, 0 2px 4px rgba(0,0,0,.9); }
 
@@ -229,7 +231,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0d0c; }
 .hm-btn.danger { background: linear-gradient(180deg, #5a2a20, #3a1a14); }
 .hm-btn.danger:hover { color: #ffb0a0; border-color: var(--red); }
 .hm-note { margin: 4px 0 0; font: 500 12px/1.3 var(--cond); color: var(--muted); text-align: center; }
-.hud-perf { position: absolute; left: 50%; top: 66px; transform: translateX(-50%); font: 500 11px/1 ui-monospace, monospace; color: #cfe; background: rgba(0,0,0,.5); padding: 3px 6px; display: none; white-space: nowrap; }
+.hud-perf { position: absolute; left: 50%; top: 62px; max-width: calc(100% - 400px); overflow: hidden; text-overflow: ellipsis; transform: translateX(-50%); font: 500 11px/1 ui-monospace, monospace; color: #cfe; background: rgba(0,0,0,.5); padding: 3px 6px; display: none; white-space: nowrap; }
 .hud-perf.on { display: block; }
 
 /* dead: hide the driving UI */

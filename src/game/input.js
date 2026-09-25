@@ -15,7 +15,7 @@ export class Input {
     on(window, 'keydown', (e) => {
       if (!this.enabled) return;
       if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
-      if (e.code === 'Tab' || e.code === 'Space' || (e.code.startsWith('Digit'))) e.preventDefault();
+      if (e.code === 'Tab' || e.code === 'Space' || e.code === 'F3' || e.code.startsWith('Digit')) e.preventDefault();
       if (!e.repeat) this.pressed.add(e.code);
       this.keys.add(e.code);
     });

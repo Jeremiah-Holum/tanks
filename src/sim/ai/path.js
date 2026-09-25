@@ -2,23 +2,28 @@
 // check) and a pure-pursuit follower along the smoothed route.
 import { findPath } from '../map/nav.js';
 import { hyp, passable } from './util.js';
+import { waterDepthAt } from '../map/query.js';
 
 // Can a tank drive straight from a to b? Samples every 2.5 m, centre and ±2.4 m sideways,
 // against the base nav (finite, not too costly: no cutting through buildings, steep or deep).
-export function segClear(nav, ax, az, bx, bz, maxCost = 2.6) {
+// With `map` given, also refuses water deeper than fording depth (nav cells at a bridge's
+// edge are passable, but the water beside the deck is not).
+export function segClear(nav, ax, az, bx, bz, maxCost = 2.6, map = null) {
   const L = hyp(bx - ax, bz - az);
   if (L < 1) return true;
   const ux = (bx - ax) / L, uz = (bz - az) / L, lx = -uz * 2.4, lz = ux * 2.4;
+  const wet = map && map.water ? (x, z) => waterDepthAt(map, x, z) > 1.1 : null;
   for (let d = 0; d <= L; d += 2.5) {
     const x = ax + ux * d, z = az + uz * d;
     if (!passable(nav, x, z, maxCost) || !passable(nav, x + lx, z + lz, maxCost) || !passable(nav, x - lx, z - lz, maxCost)) return false;
+    if (wet && (wet(x, z) || wet(x + lx, z + lz) || wet(x - lx, z - lz))) return false;
   }
   return true;
 }
 
 // Greedy string-pulling: from each kept point jump to the farthest point still in clear view
 // (max 120 m per leg so long straight legs still follow gentle road bends).
-export function smooth(nav, pts) {
+export function smooth(nav, pts, map = null) {
   if (pts.length < 3) return pts.map(([x, z]) => ({ x, z }));
   const out = [{ x: pts[0][0], z: pts[0][1] }];
   let i = 0;
@@ -26,7 +31,7 @@ export function smooth(nav, pts) {
     let j = i + 1;
     for (let k = i + 2; k < pts.length; k++) {
       if (hyp(pts[k][0] - pts[i][0], pts[k][1] - pts[i][1]) > 120) break;
-      if (segClear(nav, pts[i][0], pts[i][1], pts[k][0], pts[k][1])) j = k;
+      if (segClear(nav, pts[i][0], pts[i][1], pts[k][0], pts[k][1], 2.6, map)) j = k;
       else if (k - j > 4) break; // gave up looking further along this stretch
     }
     out.push({ x: pts[j][0], z: pts[j][1] });
@@ -36,11 +41,11 @@ export function smooth(nav, pts) {
 }
 
 // Plan from (ax, az) to (bx, bz) on the overlay nav; returns { pts:[{x,z}], raw } or null.
-export function plan(navOverlay, baseNav, ax, az, bx, bz) {
+export function plan(navOverlay, baseNav, ax, az, bx, bz, map = null) {
   if (!navOverlay) return { pts: [{ x: ax, z: az }, { x: bx, z: bz }], raw: [] };
   const raw = findPath(navOverlay, ax, az, bx, bz, 60000);
   if (!raw || !raw.length) return null;
-  const pts = smooth(baseNav, raw);
+  const pts = smooth(baseNav, raw, map);
   // start from where we are and end on the exact goal (when clear of the last cell centre)
   pts[0] = { x: ax, z: az };
   const last = pts[pts.length - 1];

@@ -45,7 +45,7 @@ const perfNote = (s) => s.perf && s.perf.fps ? `${s.perf.fps.toFixed(1)} fps, fr
 
 try {
   await check('boot → hangar', async () => {
-    await page.goto(`http://127.0.0.1:${PORT}/index.html?fast=1&speed=1&limit=400&q=${q}&perf=1`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`http://127.0.0.1:${PORT}/index.html?fast=1&speed=1&limit=400&q=${q}`, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.hangar .sf-battle', { timeout: 120000 });
     await wait(1500);
     await shot('hangar');

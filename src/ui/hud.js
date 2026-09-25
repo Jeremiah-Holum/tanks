@@ -186,7 +186,7 @@ export class Hud {
     this._banner(s);
     cls(this.scoreEl, 'on', s.score); if (s.score && (this._scoreT = (this._scoreT || 0) - s.dt) <= 0) { this._scoreT = 0.5; this._scorePanel(w); }
     if (!s.score) this._scoreT = 0;
-    cls(this.perfEl, 'on', !!s.perf);
+    cls(this.perfEl, 'on', !!s.perf && s.perfShow);
     if (s.perf && s.perf.fps) txt(this.perfEl, `${s.perf.fps.toFixed(0)} fps · ${s.perf.frame.toFixed(1)} ms/frame · ${s.perf.steps.toFixed(1)} steps · per step: sim ${s.perf.sim.toFixed(2)} ai ${s.perf.ai.toFixed(2)} · per frame: render ${s.perf.render.toFixed(1)} · hud ${s.perf.hud.toFixed(2)} · ${s.perf.calls} calls · ${(s.perf.tris / 1e6).toFixed(2)} M tris · ${s.quality}`);
     // hints
     let hint = '';
@@ -282,35 +282,58 @@ export class Hud {
     return [(_v.x + 1) / 2 * this.W, (1 - _v.y) / 2 * this.H];
   }
 
+  // Markers over visible enemies (full) and nearby allies (compact: tank + hp; name within 100 m or under
+  // the crosshair). Scaled down with distance; overlapping plates stack upwards (nearest keeps its spot),
+  // and a plate that still overlaps fades.
   _markers(s) {
-    const w = s.world, vis = s.visible, cam = s.cam, P = {};
-    const used = new Set();
+    const w = s.world, vis = s.visible, cam = s.cam, P = {}, list = this._mkList || (this._mkList = []);
+    list.length = 0;
+    const zoom = cam.sniper ? cam.zoom : 1;
     for (const t of w.tanks) {
       if (!t.alive || t.id === s.focus.id) continue;
       const enemy = t.team !== this.team;
-      if (enemy && !vis.has(t.id)) continue;
+      if (enemy && !vis.has(t.id)) continue;           // only spotted enemies, ever
       s.ipos(t, P);
       const d = Math.hypot(P.x - cam.pos.x, P.y - cam.pos.y, P.z - cam.pos.z);
-      if (!enemy && d > 260) continue;
-      if (d > 720) continue;
-      const p = this._proj(P.x, P.y + t.cy * 2 + 1.6, P.z);
-      if (!p || p[0] < -50 || p[0] > this.W + 50 || p[1] < -30 || p[1] > this.H + 30) continue;
+      if ((!enemy && d > 300) || d > 720) continue;
+      const p = this._proj(P.x, P.y + t.cy * 2 + 1.4, P.z);
+      if (!p || p[0] < -60 || p[0] > this.W + 60 || p[1] < -30 || p[1] > this.H + 30) continue;
+      const de = d / zoom;                                // apparent distance
+      const sc = Math.max(enemy ? 0.72 : 0.62, Math.min(1, 1.12 - de / 500));
+      list.push({ t, enemy, d, x: p[0], y: p[1], sc, hw: (enemy ? 44 : 34) * sc, hh: (enemy ? 24 : 18) * sc });
+    }
+    list.sort((a, b) => a.d - b.d);
+    const placed = [];
+    for (const it of list) {
+      let y = it.y, ok = false;
+      for (let k = 0; k < 4 && !ok; k++) {
+        ok = true;
+        for (const q of placed) if (Math.abs(q.x - it.x) < q.hw + it.hw && Math.abs(q.y - y) < (q.hh + it.hh) / 2) { ok = false; y = q.y - (q.hh + it.hh) / 2 - 1; break; }
+      }
+      it.y = y; it.clash = !ok;
+      placed.push(it);
+    }
+    const used = this._mkUsed || (this._mkUsed = new Set());
+    used.clear();
+    for (const it of list) {
+      const t = it.t;
       let m = this.markerPool.get(t.id);
       if (!m) {
         const bar = h('i'), name = h('span.mk-n'), tank = h('span.mk-t', t.def.short || t.def.name), hpn = h('span.mk-hp');
-        const el = h('div.mk' + (enemy ? '.en' : '.al'), h('div.mk-l', tank, name), h('div.mk-bar', bar, hpn));
+        const el = h('div.mk' + (it.enemy ? '.en' : '.al'), h('div.mk-l', tank, name), h('div.mk-bar', bar, hpn));
         this.markers.append(el);
         m = { el, bar, name, hpn }; this.markerPool.set(t.id, m);
       }
       used.add(t.id);
-      sty(m.el, 'transform', `translate3d(${p[0].toFixed(1)}px,${p[1].toFixed(1)}px,0)`);
+      sty(m.el, 'transform', `translate3d(${it.x.toFixed(1)}px,${it.y.toFixed(1)}px,0) scale(${it.sc.toFixed(2)})`);
       sty(m.el, 'display', '');
+      sty(m.el, 'opacity', it.clash ? '0.35' : '');
       const f = Math.max(0, Math.min(1, t.hp / t.maxHp));
       sty(m.bar, 'transform', `scaleX(${f.toFixed(3)})`);
-      txt(m.hpn, Math.round(t.hp));
-      txt(m.name, d < 160 ? t.name : '');
-      cls(m.el, 'far', d > 300);
-      cls(m.el, 'lock', t.id === s.lockTarget);
+      txt(m.hpn, it.enemy && it.d < 350 ? Math.round(t.hp) : '');
+      const aimed = s.aim && s.aim.tankId === t.id;
+      txt(m.name, (it.enemy ? it.d < 160 : it.d < 100) || aimed ? t.name : '');
+      cls(m.el, 'lock', t.id === s.lockTarget || aimed);
     }
     for (const [id, m] of this.markerPool) if (!used.has(id)) sty(m.el, 'display', 'none');
   }

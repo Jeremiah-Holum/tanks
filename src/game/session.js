@@ -45,6 +45,7 @@ export class BattleSession {
     this._ctl = new Map();
     this._ip = new Map();          // tank id → Float64Array [px,py,pz,pyaw, cx,cy,cz,cyaw]
     this._lockLost = false;
+    this.perfShow = !!settings.showFps || P.get('debug') === '1' || P.get('perf') === '1';   // F3 toggles
   }
 
   // ------------------------------------------------------------------ loading
@@ -201,6 +202,7 @@ export class BattleSession {
     for (let i = 0; i < Math.abs(w); i++) this._zoom(w > 0 ? 1 : -1);
     if (inp.take('ShiftLeft') || inp.take('ShiftRight')) this._zoom(0);
     if (inp.take('KeyM')) this.hud.cycleMinimap();
+    if (inp.take('F3')) this.perfShow = !this.perfShow;
     this.scoreOpen = inp.down('Tab');
     const me = this.player;
     if (this.phase === 'dead') {
@@ -385,7 +387,7 @@ export class BattleSession {
       aim: this.aim, impact: this.impact, pen: this.pen, lockTarget: this.lockTarget, gunLock: this.gunLock,
       phase: this.phase, countdown: this.countdown, score: this.scoreOpen, menu: this.menuOpen,
       visible: this.world.visible[this.team], ipos: (t, o) => this.ipos(t, o), viewRange: viewRange(this.player),
-      spec: this.spec, perf: this.settings.showFps || this.params.get('perf') === '1' ? this.perf : null, quality: this.quality,
+      spec: this.spec, perf: this.perf, perfShow: this.perfShow, quality: this.quality,
     };
   }
 
