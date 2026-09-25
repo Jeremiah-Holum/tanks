@@ -13,5 +13,6 @@ Counted overage: AI +16k (final 438k).
 Counted overage: INTEGRATION +20k (final 354k).
 Counted: QA+FIX 188k.
 Counted: AUDIO overhaul 202k.
-Total counted ≈ 2.71M of the 3.5M cap.
+Counted: AUDIO cannon "loud bang" pass +20k.
+Total counted ≈ 2.73M of the 3.5M cap.
 - ☐ Graphics: 'ultra-low' tier for integrated GPUs (no shadows/post, lower res, fewer trees and grass). Owner plays on Intel integrated graphics.

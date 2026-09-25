@@ -105,6 +105,18 @@ export class Kit {
     g.connect(out);
     return g;
   }
+  // Muzzle-blast N-wave: instant rise (1 sample) to +1, linear fall through zero to the negative
+  // phase over `ms`, a slower recovery, with a little broadband roughness. Cached per ms. Played raw
+  // (no filter, no attack): the sharpest moment of a gun report.
+  nwave(out, t, ms, gain) {
+    const key = Math.round(ms * 2) / 2, W = this._nw || (this._nw = {});
+    if (!W[key]) {
+      const sr = this.sr, n1 = Math.max(2, Math.round(key / 1000 * sr)), n = n1 * 3, b = this.ctx.createBuffer(1, n, sr), d = b.getChannelData(0), R = rng(key * 977);
+      for (let i = 0; i < n; i++) { const x = i < n1 ? 1 - 1.6 * i / n1 : -0.6 * (1 - (i - n1) / (2 * n1)) ** 2; d[i] = x * (0.85 + 0.3 * R()) + 0.12 * (R() * 2 - 1) * (1 - i / n); }
+      W[key] = b;
+    }
+    const s = this.ctx.createBufferSource(), g = this.ctx.createGain(); s.buffer = W[key]; g.gain.value = gain; s.connect(g); g.connect(out); s.start(t);
+  }
   // Low-end body: a sine whose pitch drops fast (f → f1 over fdur), soft-clipped so it thumps on
   // small speakers too (the clipping adds 2nd/3rd harmonics of the sub). o: {f, f1, fdur, dur, gain, shape}
   boom(out, t, o) {

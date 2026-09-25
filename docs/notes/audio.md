@@ -140,6 +140,29 @@ or in battle, and output energy above 2 kHz stays at the floor (jagdpanther: −
 Engines: harmonic stacks on the firing frequency with pulse modulation (5 ms envelope CV 0.28–0.44), no
 narrow peaks above 2 kHz (max prominence 2.2 dB). Nothing clips; pre-clipper peak ≤ 0.85.
 
+## Cannon rework 2 (owner: "not very cannon-ey", then "just a loud bang")
+The first pass maximised sub-bass and the rolling tail, so shots read as thunder. A gun is its REPORT:
+1. muzzle-blast N-wave (`Kit.nwave`: 1-sample rise, 2–8 ms slap by calibre, negative phase, played raw)
+   plus a short driven high-passed crack: the loudest, sharpest moment; no attack ramps or sweeps in the first 20 ms;
+2. the bark: bandpass noise at 520→260 Hz (by calibre) driven hard, plus a driven lowpass layer and a saturated
+   saw, 45–125 ms: what laptop speakers actually play;
+3. the boom: 125→70 Hz decaying in 0.25–0.45 s, plus a little 60→38 Hz sub for ≥ 50 mm;
+4. one or two quiet slaps (0.15–0.6 s), rolling tail cut to ~15 %.
+Own shot: ×1.8 into the limiter (`OWN_SHOT`), extra close bark, recoil slam + breech clank + case,
+duck of everything else to 0.2 for 150 ms (release 0.25 s), small reverb send.
+Metrics (tools/audio-render.mjs, shot* only; from onset): crest = peak/rms 0–50 ms; ttp = time to 90 %
+of peak; bark = share of 0–120 ms energy in 150–900 Hz; "small" = the same after a 2-pole 150 Hz high-pass.
+| | crest before → after | ttp ms | bark | small-speaker rms 0–120 ms |
+|---|---|---|---|---|
+| 37 mm @50 m | 3.4 → 5.9 | 0.7 → 0.23 | 0.13 → 0.34 | 0.053 → 0.036 |
+| 88 mm @50 m | 2.6 → 5.1 | 0.7 → 0.79 | 0.10 → 0.29 | 0.072 → 0.042 |
+| 152 mm @50 m | 2.4 → 4.2 | 0.7 → 0.79 | 0.09 → 0.28 | 0.081 → 0.052 |
+| own 88 mm | 2.7 → 4.8 | 2.06 → 0.52 | 0.09 → 0.31 | 0.134 → 0.117 (peak 0.74) |
+| own 122 mm | 2.3 → 4.4 | 1.41 → 0.54 | 0.10 → 0.27 | 0.145 → 0.129 (peak 0.79) |
+(Small-speaker rms fell because the old rumble tail filled the window; small-speaker crest rose 3.3 → 5.3 at 88 mm.)
+Spectrograms: shots/audio/before-report-* and after-report-*. The "≥ 50 % below 120 Hz" check became ≥ 20 %;
+new checks: ttp < 2 ms and crest ≥ 4, bark ≥ 25 %, small-speaker calibre ordering. All 20 pass.
+
 ## Known gaps
 - No shell fly-by whizz for shells in flight (needs per-frame shell positions; only near-miss impacts snap).
 - Tracks don't vary by ground type (could use `groundAt` under the tank; needs the map in `engine()`).

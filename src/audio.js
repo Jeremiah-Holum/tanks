@@ -12,6 +12,7 @@ import { Crew, LINES } from './audio/speech.js';
 const SOUND = 343;          // m/s
 const MAX_DELAY = 0.6;      // cap on the speed-of-sound delay, s
 const MAX_ONESHOTS = 40;
+const OWN_SHOT = 1.8;      // the player's gun: driven into the limiter (loudest thing in the game)
 const SFX = 0.62;           // sfx bus level (headroom for stacked one-shots; the compressor + limiter do the rest)    // concurrent one-shot sounds before quiet ones are dropped
 const ROLE_LINE = { commander: 'commander', gunner: 'gunner', driver: 'driver', radioman: 'radioman', radio: 'radioman', loader: 'loader' };
 const MODULE_LINE = { engine: ['engineDmg', 'engineDead'], gun: ['gunDmg', 'gunDead'], ammoRack: ['ammoDmg', 'ammoDmg'], fuel: ['fuelDmg', 'fuelDmg'], turretRing: ['ringDmg', 'ringDmg'], trackL: [null, 'trackDead'], trackR: [null, 'trackDead'] };
@@ -177,10 +178,10 @@ export class Audio {
         const tk = this._tank(world, ev.tank), sh = this._shell(world, ev.shell);
         const cal = ev.cal ?? sh?.cal ?? tk?.gunDef?.cal ?? 75, brake = !!tk?.gunDef?.muzzleBrake, k = S.size(cal);
         if (this._isPlayer(ev.tank)) {
-          const p = this._direct(this.front, 4); const s = this.ctx.createGain(); s.gain.value = 0.25 + 0.35 * k; s.connect(this.fieldSend);
-          const g = this.ctx.createGain(); g.gain.value = 1; g.connect(this.front); g.connect(s);
+          const p = this._direct(this.front, 2); const s = this.ctx.createGain(); s.gain.value = 0.08 + 0.1 * k; s.connect(this.fieldSend);
+          const g = this.ctx.createGain(); g.gain.value = OWN_SHOT; g.connect(this.front); g.connect(s);
           S.cannon(K, g, p.t, cal, { player: true, brake });
-          this._duckFor(p.t, 0.35 - 0.1 * k, 0.1 + 0.15 * k, 0.25 + 0.3 * k);
+          this._duckFor(p.t, 0.2, 0.15, 0.25);   // duck everything else hard for ~150 ms
         } else {
           const p = this._place(ev.pos || tk?.pos, { ref: 15, roll: 0.45, range: 1.4, wet: 0.35 + 0.5 * k, len: 1 + 3 * k, gain: 0.55 + 0.45 * k });
           if (p) S.cannon(K, p.node, p.t, cal, { brake, far: clamp((p.P.d - 80) / 500) });

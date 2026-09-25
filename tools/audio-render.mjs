@@ -102,9 +102,12 @@ const CHECKS = [
   ['calibre ordering: 20 < 88 < 122 in length', (M) => (M.shot20_50m && M.shot88_50m && M.shot122_50m && !(M.shot20_50m.len < M.shot88_50m.len && M.shot88_50m.len < M.shot122_50m.len)) ? [`len ${M.shot20_50m.len} ${M.shot88_50m.len} ${M.shot122_50m.len}`] : []],
   ['calibre ordering: 20 < 88 < 122 in low-band energy', (M) => (M.shot20_50m && M.shot88_50m && M.shot122_50m && !(M.shot20_50m.low < M.shot88_50m.low && M.shot88_50m.low < M.shot122_50m.low)) ? [`low ${M.shot20_50m.low} ${M.shot88_50m.low} ${M.shot122_50m.low}`] : []],
   ['calibre ordering: 20 < 37 < 75 < 88 < 122 < 152 in sub-120 Hz level', (M) => { const k = ['shot20_50m', 'shot37_50m', 'shot75_50m', 'shot88_50m', 'shot122_50m', 'shot152_50m'].filter((n) => M[n]); for (let i = 1; i < k.length; i++) if (!(M[k[i]].sub > M[k[i - 1]].sub)) return [k.map((n) => M[n].sub).join(' ')]; return []; }],
-  ['cannons (≥75 mm): sub-120 Hz dominates (≥ 50 % of energy)', (M) => ['shot75_50m', 'shot88_50m', 'shot122_50m', 'shot152_50m', 'shot88_own', 'shot122_own'].filter((n) => M[n] && M[n].subF < 0.5).map((n) => `${n} ${M[n].subF}`)],
+  ['cannons (≥75 mm): real low end (≥ 20 % of energy below 120 Hz)', (M) => ['shot75_50m', 'shot88_50m', 'shot122_50m', 'shot152_50m', 'shot88_own', 'shot122_own'].filter((n) => M[n] && M[n].subF < 0.2).map((n) => `${n} ${M[n].subF}`)],
   ['mouse-only traverse adds nothing above 2 kHz (≤ idle + 1 dB)', (M) => (M.traverse_td && M.idle_player && M.traverse_td.hi > M.idle_player.hi + 1) ? [`${M.traverse_td.hi} vs ${M.idle_player.hi}`] : []],
   ['engines: no narrow peaks above 2 kHz (prominence < 10 dB)', (M) => Object.entries(M).filter(([n, m]) => /^engine_|idle_player|traverse/.test(n) && m.pk >= 10).map(([n, m]) => `${n} ${m.pk}dB@${m.pkHz}`)],
+  ['gun report: sharp onset (time to peak < 2 ms) and crest factor ≥ 4 in the first 50 ms (≥ 30 mm)', (M) => Object.entries(M).filter(([n, m]) => m.gun && !/20_|600m/.test(n) && (m.gun.ttp >= 2 || m.gun.crest < 4)).map(([n, m]) => `${n} ttp ${m.gun.ttp} crest ${m.gun.crest}`)],
+  ['gun bark: ≥ 25 % of the first 120 ms in 150–900 Hz (≥ 30 mm, near)', (M) => Object.entries(M).filter(([n, m]) => m.gun && !/20_|600m/.test(n) && m.gun.bark < 0.25).map(([n, m]) => `${n} ${m.gun.bark}`)],
+  ['small speaker (HP 150 Hz): calibre ordering in body (rms 0–120 ms) 37 < 75 < 88 < 122 < 152', (M) => { const k = ['shot37_50m', 'shot75_50m', 'shot88_50m', 'shot122_50m', 'shot152_50m'].filter((n) => M[n]); for (let i = 1; i < k.length; i++) if (!(M[k[i]].gun.sRms120 > M[k[i - 1]].gun.sRms120)) return [k.map((n) => M[n].gun.sRms120).join(' ')]; return []; }],
   ['own 122 louder than 122 at 50 m', (M) => (M.shot122_own && M.shot122_50m && M.shot122_own.rms <= M.shot122_50m.rms) ? ['not louder'] : []],
   ['600 m shot delayed by the capped speed of sound (≈0.6 s)', (M) => (M.shot88_600m && Math.abs(M.shot88_600m.onset - 0.61) > 0.06) ? [`onset ${M.shot88_600m.onset}`] : []],
   ['600 m shot darker than 50 m shot', (M) => (M.shot88_600m && M.shot88_50m && M.shot88_600m.zcr >= M.shot88_50m.zcr) ? [`zcr ${M.shot88_600m.zcr} vs ${M.shot88_50m.zcr}`] : []],
@@ -180,6 +183,22 @@ try {
         const mu = env.reduce((s, v) => s + v, 0) / env.length, sd = Math.sqrt(env.reduce((s, v) => s + (v - mu) ** 2, 0) / env.length); pm = sd / (mu || 1); }
       function fftN(re, im, N) { for (let i = 1, j = 0; i < N; i++) { let b = N >> 1; for (; j & b; b >>= 1) j ^= b; j ^= b; if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; } }
         for (let len = 2; len <= N; len <<= 1) { const a = -2 * Math.PI / len; for (let i = 0; i < N; i += len) for (let k = 0; k < len / 2; k++) { const c = Math.cos(a * k), s = Math.sin(a * k), xr = re[i + k + len / 2] * c - im[i + k + len / 2] * s, xi = re[i + k + len / 2] * s + im[i + k + len / 2] * c; re[i + k + len / 2] = re[i + k] - xr; im[i + k + len / 2] = im[i + k] - xi; re[i + k] += xr; im[i + k] += xi; } } }
+      // gun report (shot* only), from the onset (first sample > 5 % of peak): crest factor peak/rms in 0–50 ms,
+      // time to peak, bark = share of 0–120 ms energy in 150–900 Hz; small speaker = 2-pole high-pass at 150 Hz.
+      let gun = null;
+      if (/^shot/.test(name)) {
+        const mono = new Float32Array(n); for (let i = 0; i < n; i++) mono[i] = (L[i] + R[i]) / 2;
+        const bq = (x, type, f) => { const w = 2 * Math.PI * f / SR, cw = Math.cos(w), al = Math.sin(w) / (2 * 0.7071), a0 = 1 + al; let b0, b1, b2; if (type === 'hp') { b0 = (1 + cw) / 2; b1 = -(1 + cw); b2 = b0; } else { b0 = (1 - cw) / 2; b1 = 1 - cw; b2 = b0; }
+          const y = new Float32Array(x.length); let x1 = 0, x2 = 0, y1 = 0, y2 = 0; for (let i = 0; i < x.length; i++) { const v = (b0 * x[i] + b1 * x1 + b2 * x2 - (-2 * cw) * y1 - (1 - al) * y2) / a0; x2 = x1; x1 = x[i]; y2 = y1; y1 = v; y[i] = v; } return y; };
+        const rep = (x) => { let pk = 0; for (let i = 0; i < x.length; i++) pk = Math.max(pk, Math.abs(x[i])); let o = 0; while (o < x.length && Math.abs(x[o]) < pk * 0.05) o++;
+          const w50 = Math.round(0.05 * SR), w120 = Math.round(0.12 * SR); let p50 = 0, ip = o, e50 = 0; for (let i = o; i < Math.min(x.length, o + w50); i++) { const v = Math.abs(x[i]); e50 += v * v; if (v > p50) { p50 = v; ip = i; } }
+          let i9 = o; while (i9 < ip && Math.abs(x[i9]) < 0.9 * p50) i9++;   // time to 90 % of the peak (a limiter plateau doesn't count as a slow rise)
+          return { o, crest: p50 / Math.sqrt(e50 / w50 + 1e-12), ttp: (i9 - o) / SR * 1000, p50, w120 }; };
+        const r0 = rep(mono), bark = bq(bq(bq(bq(mono, 'hp', 150), 'hp', 150), 'lp', 900), 'lp', 900); let eb = 0, et = 0;
+        for (let i = r0.o; i < Math.min(n, r0.o + r0.w120); i++) { et += mono[i] * mono[i]; eb += bark[i] * bark[i]; }
+        const small = bq(bq(mono, 'hp', 150), 'hp', 150), rs = rep(small); let es = 0; for (let i = rs.o; i < Math.min(n, rs.o + rs.w120); i++) es += small[i] * small[i];
+        gun = { crest: +r0.crest.toFixed(1), ttp: +r0.ttp.toFixed(2), bark: +(eb / (et || 1)).toFixed(2), sPeak: +rs.p50.toFixed(3), sCrest: +rs.crest.toFixed(1), sRms120: +Math.sqrt(es / r0.w120).toFixed(4) };
+      }
       for (const ch of [cut(raw, 0), cut(raw, 1)]) for (let i = 0; i < n; i++) { const v = Math.abs(ch[i]); if (v > rawPeak) rawPeak = v; }
       // envelope in 10 ms windows → onset (first > -40 dB re peak) and length (last > -40 dB)
       const win = Math.round(SR * 0.01), thr = peak * 0.01; let on = -1, off = 0;
@@ -188,7 +207,7 @@ try {
       const seg = [0, 1, 2, 3].map((s) => { let q = 0; const a0 = Math.floor(n * s / 4), a1 = Math.floor(n * (s + 1) / 4); for (let i = a0; i < a1; i++) q += L[i] * L[i] + R[i] * R[i]; return +Math.sqrt(q / (2 * (a1 - a0))).toFixed(4); });
       if (engine) { const q = seg.slice(); seg.length = 0; seg.push(q[0], (q[2] + q[3]) / 2); }
       const r4 = (v) => +v.toFixed(4);
-      const out = { peak: r4(peak), raw: r4(rawPeak), clip, rms: r4(Math.sqrt(e / n)), onset: r4(Math.max(0, on) / SR), len: r4(off / SR), low: r4(lowE / (e || 1)), zcr: Math.round(zc / (n / SR)), pan: r4((Math.sqrt(eR) - Math.sqrt(eL)) / (Math.sqrt(eR) + Math.sqrt(eL) + 1e-9)), seg, speed: r4(dur * 1000 / ms), sub: +subDb.toFixed(1), hi: +hiDb.toFixed(1), subF: r4(subFrac), pk: pk.db ? +pk.db.toFixed(1) : 0, pkHz: pk.hz, pm: r4(pm), dc: r4((L.reduce((s, v) => s + v, 0)) / n) };
+      const out = { peak: r4(peak), raw: r4(rawPeak), clip, rms: r4(Math.sqrt(e / n)), onset: r4(Math.max(0, on) / SR), len: r4(off / SR), low: r4(lowE / (e || 1)), zcr: Math.round(zc / (n / SR)), pan: r4((Math.sqrt(eR) - Math.sqrt(eL)) / (Math.sqrt(eR) + Math.sqrt(eL) + 1e-9)), seg, speed: r4(dur * 1000 / ms), sub: +subDb.toFixed(1), hi: +hiDb.toFixed(1), subF: r4(subFrac), pk: pk.db ? +pk.db.toFixed(1) : 0, pkHz: pk.hz, pm: r4(pm), gun, dc: r4((L.reduce((s, v) => s + v, 0)) / n) };
       if (wantWav) { const i16 = new Int16Array(n * 2); for (let i = 0; i < n; i++) { i16[2 * i] = Math.max(-1, Math.min(1, L[i])) * 32767; i16[2 * i + 1] = Math.max(-1, Math.min(1, R[i])) * 32767; } let s = ''; const u8 = new Uint8Array(i16.buffer); for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); out.wav = btoa(s); }
       if (wantPng) out.png = spectro(L, R, SR, name);
       return out;
@@ -219,7 +238,7 @@ try {
     if (res.png) { mkdirSync(pngDir, { recursive: true }); writeFileSync(join(pngDir, name + '.png'), Buffer.from(res.png, 'base64')); delete res.png; }
     if (res.wav) { mkdirSync(wavDir, { recursive: true }); writeFileSync(join(wavDir, name + '.wav'), wav(Buffer.from(res.wav, 'base64'))); delete res.wav; }
     M[name] = res;
-    console.log(name.padEnd(14), `peak ${res.peak.toFixed(3)} raw ${res.raw.toFixed(3)} rms ${res.rms.toFixed(4)} clip ${res.clip} onset ${res.onset.toFixed(2)}s len ${res.len.toFixed(2)}s low ${res.low.toFixed(2)} zcr ${String(res.zcr).padStart(5)} pan ${res.pan.toFixed(2)} sub<120 ${res.sub}dB (${res.subF.toFixed(2)}) hi>2k ${res.hi}dB ×rt ${res.speed.toFixed(0)}` + (sc.engine ? ` pk>2k ${res.pk}dB@${res.pkHz} pm ${res.pm}` : '') + ((sc.engine || /music|amb/.test(name)) ? ` seg ${res.seg}` : ''));
+    console.log(name.padEnd(14), `peak ${res.peak.toFixed(3)} raw ${res.raw.toFixed(3)} rms ${res.rms.toFixed(4)} clip ${res.clip} onset ${res.onset.toFixed(2)}s len ${res.len.toFixed(2)}s low ${res.low.toFixed(2)} zcr ${String(res.zcr).padStart(5)} pan ${res.pan.toFixed(2)} sub<120 ${res.sub}dB (${res.subF.toFixed(2)}) hi>2k ${res.hi}dB ×rt ${res.speed.toFixed(0)}` + (res.gun ? ` | crest ${res.gun.crest} ttp ${res.gun.ttp}ms bark ${res.gun.bark} small: pk ${res.gun.sPeak} crest ${res.gun.sCrest} rms120 ${res.gun.sRms120}` : '') + (sc.engine ? ` pk>2k ${res.pk}dB@${res.pkHz} pm ${res.pm}` : '') + ((sc.engine || /music|amb/.test(name)) ? ` seg ${res.seg}` : ''));
   }
   console.log('');
   for (const [label, f] of CHECKS) { const bad = f(M); if (bad.length) failed++; console.log((bad.length ? 'FAIL ' : 'ok   ') + label + (bad.length ? ': ' + bad.join('; ') : '')); }
