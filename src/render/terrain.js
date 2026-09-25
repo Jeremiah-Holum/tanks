@@ -579,7 +579,7 @@ export class Terrain {
           vec2 uvm = wp / uSize;
           vec4 SA = texture2D(tSplatA, uvm), SB = texture2D(tSplatB, uvm);
           float patchN = texture2D(tNoise, wp / 23.0).g;
-          float dens = smoothstep(0.55, 0.9, SA.r) * (1.0 - SB.r) * smoothstep(0.25, 0.6, patchN + 0.2) * uDensity;
+          float dens = smoothstep(0.55, 0.9, SA.r) * (1.0 - SB.r) * smoothstep(0.3, 0.7, patchN + 0.15) * 0.8 * uDensity;
           // cereal stalks on wheat / barley / stubble fields
           vec4 FC = texture2D(tField, uvm);
           int crop = int(FC.b * 4.0 + 0.5);
@@ -589,12 +589,15 @@ export class Terrain {
           float inMap = step(0.0, wp.x) * step(0.0, wp.y) * step(wp.x, uSize) * step(wp.y, uSize);
           float keep = step(hh.z, dens) * inMap;
           float fade = 1.0 - smoothstep(uRadius * 0.55, uRadius * 0.98, dist);
-          float sc = keep * fade * (0.65 + 0.7 * fract(hh.z * 13.7));
+          float sc = keep * fade * (0.75 + 0.5 * fract(hh.z * 13.7));
           float ang = hh.x * 6.2831;
           vec3 transformed = position;
           transformed.xz = mat2(cos(ang), -sin(ang), sin(ang), cos(ang)) * transformed.xz * (0.8 + 0.5 * hh.y);
           float tall = texture2D(tNoise, wp / 9.0 + 0.3).b;
-          transformed.y *= sc * mix(0.22 + 0.5 * patchN * patchN + 0.25 * tall, cropH * (0.8 + 0.2 * tall), onField);
+          // gameplay cap: grass ≤ 0.45 m so it never hides hulls; cereal is lower right at the camera
+          float gH = min(0.45, 0.12 + 0.22 * patchN + 0.1 * tall);
+          float cH = cropH * (0.8 + 0.2 * tall) * mix(0.55, 1.0, smoothstep(4.0, 16.0, dist));
+          transformed.y *= sc * mix(gH, cH, onField);
           transformed.xz *= 0.75;
           transformed.xz *= step(0.001, sc);
           float sway = sin(uTime * 1.9 + wp.x * 0.35 + wp.y * 0.21) + 0.4 * sin(uTime * 4.3 + wp.x * 1.3);
@@ -618,7 +621,8 @@ export class Terrain {
     this.grass = { mesh, U, spacing: gq.spacing };
   }
 
-  update(camera, dt, U) {
+  update(camera, dt, sniper = false) {
+    if (this.grass) this.grass.mesh.visible = !sniper; // WoT hides grass in sniper mode
     if (this.grass) {
       const s = this.grass.spacing, u = this.grass.U;
       u.uOrigin.value.set(Math.round(camera.position.x / s), Math.round(camera.position.z / s));

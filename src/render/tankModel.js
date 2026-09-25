@@ -197,7 +197,7 @@ if (paintM > 0.5) {
   pc = mix(pc, uCamoB, smoothstep(0.565, 0.585, c2) * (1.0 - smoothstep(0.52, 0.545, c1)));
 #endif
   pc *= 0.86 + 0.28*n1;
-  pc *= 1.0 - 0.13*smoothstep(0.55, 0.95, tkNoise(P*vec3(16.0, 1.4, 16.0)));
+  pc *= 1.0 - 0.12*smoothstep(0.55, 0.95, tkNoise(vec3((P.x + P.z)*14.0, P.y*1.3, 0.5)));  // rain streaks down the plates
   col *= pc;
 }
 if (kind > 0.5 && kind < 1.5) {           // markings (atlas)

@@ -27,7 +27,7 @@ const SUMMER = {
     bare: false,
   },
   sky: { zenith: [0.15, 0.32, 0.76], horizon: [0.8, 0.83, 0.88], sun: [1.0, 0.8, 0.58], sunI: 4.4, elev: 24, azim: 235,
-    fog: 1 / 1700, haze: 0.9, clouds: 0.46, ground: [0.24, 0.24, 0.16], exposure: 1.0, env: 0.42 },
+    fog: 1 / 1900, haze: 0.9, clouds: 0.46, ground: [0.24, 0.24, 0.16], exposure: 1.0, env: 0.42 },
   grassDensity: 1, cropMix: 1,
 };
 function variant(base, over) {
@@ -41,7 +41,7 @@ export const THEMES = {
     ground: { grass: [[92, 90, 42], [112, 104, 50], [150, 126, 70], [80, 86, 40], [176, 140, 80]], field: [[132, 104, 76], [108, 86, 64], [150, 124, 72], [170, 140, 84]], fieldCover: 0.25 },
     foliage: { leaf: [[168, 92, 30], [196, 132, 40], [132, 60, 26], [150, 128, 44], [110, 96, 40]], leaf2: [[206, 160, 50], [180, 120, 40], [150, 136, 56]],
       blade: [[112, 104, 50], [132, 116, 58], [150, 130, 70], [96, 92, 44]], flowers: [[200, 170, 90]] },
-    sky: { zenith: [0.2, 0.34, 0.66], horizon: [0.86, 0.8, 0.72], sun: [1.0, 0.78, 0.54], sunI: 3.0, elev: 18, fog: 1 / 1300, clouds: 0.56 },
+    sky: { zenith: [0.2, 0.34, 0.66], horizon: [0.86, 0.8, 0.72], sun: [1.0, 0.78, 0.54], sunI: 3.2, elev: 17, fog: 1 / 1600, clouds: 0.56 },
     cropMix: 0.45,
   }),
   winter: variant(SUMMER, {
@@ -50,7 +50,7 @@ export const THEMES = {
     foliage: { needle: [[30, 46, 34], [40, 58, 44], [150, 160, 170]], bare: true, blade: [[160, 156, 130], [180, 176, 150]], flowers: [[230, 230, 230]],
       leaf2: [[92, 82, 64], [110, 96, 74], [76, 70, 58], [200, 206, 214]], leaf: [[70, 76, 56], [84, 88, 64], [196, 204, 214]] },
     snow: 1,
-    sky: { zenith: [0.3, 0.42, 0.66], horizon: [0.84, 0.86, 0.9], sun: [1.0, 0.9, 0.8], sunI: 2.4, elev: 14, fog: 1 / 1100, clouds: 0.62, ground: [0.6, 0.62, 0.66], env: 0.75 },
+    sky: { zenith: [0.3, 0.42, 0.66], horizon: [0.84, 0.86, 0.9], sun: [1.0, 0.9, 0.8], sunI: 2.4, elev: 14, fog: 1 / 1350, clouds: 0.62, ground: [0.6, 0.62, 0.66], env: 0.75 },
     grassDensity: 0.25, cropMix: 0,
   }),
   desert: variant(SUMMER, {

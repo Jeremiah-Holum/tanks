@@ -33,7 +33,7 @@ export class Brain {
     this.evalN = Math.round(10 + 20 * p);               // ticks between target evaluations
     this.aimErrBase = 0.08 + 2.2 * p * p;               // m of aim error at ~200 m
     this.patience = 0.3 + 2.4 * s;                      // × gun aim time we are willing to wait
-    this.fireQ = 0.12 + 0.73 * s;                       // fire at this fraction of the full-aim hit chance
+    this.patienceK = 0.35 + 0.65 * s;                   // 1 ≈ optimal trigger timing, < 1 trigger-happy
     this.errFloor = 0.2 + 0.6 * p;                      // aim error left after tracking a target
     this.leadK = 0.25 + 0.75 * s;                       // fraction of the true lead applied
     this.goldBudget = s > 0.6 ? Math.round((s - 0.6) * 25) : 0;
@@ -50,7 +50,7 @@ export class Brain {
     this.seen = new Map(); this.enemies = [];
     this.target = null; this.targetLos = false; this.targetD = 0; this.aimPt = null; this.aimAt = -9;
     this.aimSince = 0; this.laidSince = -1; this.err = { x: 0, y: 0, z: 0 }; this.errAt = -9;
-    this.nextShot = 0; this.checkAt = 0; this.curErr = 0;
+    this.nextShot = 0; this.checkAt = 0; this.curErr = 0; this.readyAt = 0;
     this.lastHitT = -99; this.hitDir = null; this.recentDmg = 0;
     this.stuckT = 0; this.reverseT = 0; this.revSteer = 0; this.unsticks = []; this.jitter = null;
     this.progX = tank.pos.x; this.progZ = tank.pos.z; this.progT = 0;
@@ -59,7 +59,7 @@ export class Brain {
     this.brawlPushAt = 70 + this.rng() * 50;
     this.yolo = this.rng() < 0.45 - s;                  // potatoes that charge alone
     this.yoloAt = 50 + this.rng() * 80;
-    this.retreated = false; this.defending = false;
+    this.retreated = false; this.defending = false; this.cover = null; this.coverAt = -99;
     this.useAt = {}; this.carrot = { x: 0, z: 0, remain: 0 };
     this.stats = { unsticks: 0, plans: 0 };
   }
@@ -165,6 +165,14 @@ export class Brain {
         else if (blind && now - this.relocAt > 25 && T.push < 2) { const q = T.relocatePost(this); if (q) { this.setPost(q); this.relocAt = now; this.arrived = false; } }
       }
     }
+    // lit in the open on the way to the post (skilled bots): break contact behind nearby cover
+    if (this.cover && (now > this.cover.until || this.defending)) this.cover = null;
+    if (s > 0.45 && !this.cover && t.spotted && !this.arrived && now > this.coverAt + 8 && this.post && !this.defending
+      && hyp(this.post.x - pos.x, this.post.z - pos.z) > 40 && (now - this.lastHitT < 2.5 || this.enemies.some((x) => x.los && x.d < 420 && gunFacing(x.e, pos.x, pos.z) > 0.97))) {
+      this.coverAt = now;
+      const cv = this.findCover(world);
+      if (cv) this.cover = { x: cv.x, z: cv.z, until: now + 5 + 6 * this.rng(), geo: this.post.geo };
+    }
     const range = ENGAGE_RANGE[this.cls];
     const g = this.post ? this.post.geo : T.info.brawlLane;
     const prog = T.prog(pos.x, pos.z, g);
@@ -188,7 +196,9 @@ export class Brain {
         this.setPost(list.length ? T.postAt(T.leastUsed(list)) : T.lanePost(ng, 0.45)); this.arrived = false;
       }
     }
-    if (this.defending) {
+    if (this.cover) {
+      goal = this.cover; mode = 'cover';
+    } else if (this.defending) {
       // back to base: stop and shoot cappers / close enemies, otherwise drive into the circle
       const b = T.base, db = hyp(pos.x - b.x, pos.z - b.z);
       mode = 'defend';
@@ -336,6 +346,34 @@ export class Brain {
     }
   }
 
+  // A spot within ~40 m that no enemy currently shooting at us can see (closest ring first,
+  // preferring spots away from them). null when there is none or no known threat.
+  findCover(world) {
+    const t = this.t, map = world.map, nav = this.team.navS;
+    const th = this.enemies.filter((x) => x.los && x.d < 450).sort((a, b) => a.d - b.d).slice(0, 3);
+    if (!th.length) return null;
+    const eyes = th.map((x) => ({ x: x.e.pos.x, y: x.e.pos.y + x.e.cy * 1.6, z: x.e.pos.z }));
+    let ax = 0, az = 0;
+    for (const e of eyes) { const d = hyp(e.x - t.pos.x, e.z - t.pos.z) || 1; ax += (e.x - t.pos.x) / d; az += (e.z - t.pos.z) / d; }
+    const top = t.def.hull.clr + t.def.hull.H + t.def.turret.H * 0.8, B = {};
+    const a0 = this.rng() * TAU;
+    for (const r of [10, 18, 28, 40]) {
+      let best = null, bs = -Infinity;
+      for (let i = 0; i < 10; i++) {
+        const a = a0 + i * TAU / 10, px = t.pos.x + Math.cos(a) * r, pz = t.pos.z + Math.sin(a) * r;
+        if (!passable(nav, px, pz, 2.2)) continue;
+        B.x = px; B.z = pz; B.y = heightAt(map, px, pz) + top;
+        let hidden = true;
+        for (const E of eyes) if (lineClear(map, E, B)) { hidden = false; break; }
+        if (!hidden) continue;
+        const sc = -((px - t.pos.x) * ax + (pz - t.pos.z) * az) / r;
+        if (sc > bs) { bs = sc; best = { x: px, z: pz }; }
+      }
+      if (best) return best;
+    }
+    return null;
+  }
+
   // Would backing up `dist` metres hide us from the enemies that can see us now?
   coverBehind(world, dist) {
     const t = this.t, map = world.map, fx = Math.sin(t.yaw), fz = Math.cos(t.yaw);
@@ -401,6 +439,7 @@ export class Brain {
     const want = this.wantShell != null ? this.wantShell : t.shell;
     c.shell = want !== t.shell && t.ammo[want] > 0 && (t.reload > t.gunDef.reload * 0.55 || t.ammo[t.shell] <= 0) ? want : t.shell;
     if (t.ammo[c.shell] <= 0) { const alt = t.ammo.findIndex((n) => n > 0); if (alt >= 0) c.shell = alt; }
+    if (t.reload > 0) this.readyAt = now + t.reload;
     const vis = world.visible[t.team];
     if (tg && tg.alive && vis.has(tg.id) && this.aimPt) {
       if (now - this.aimAt > 0.6) this.pickAim(world);
@@ -448,17 +487,22 @@ export class Brain {
     const laid = angErr * d < 0.35 + 0.4 * Rd;
     if (!laid) { this.laidSince = -1; return; }
     if (this.laidSince < 0) this.laidSince = now;
-    // Fire when the hit chance on the chosen area is close enough to what full aim would give
-    // (skilled bots hold out for more), when patience runs out, or when the target is leaving.
-    const size = s < 0.3 ? 1.3 : this.aimPt.cand.size;
-    const pNow = pHit(size, Rd, this.curErr), pFull = pHit(size, t.dispTarget * d / 100, this.curErr);
+    // When to pull the trigger: optimal stopping for hits per second. Waiting another 0.3 s buys
+    // (pNext − pNow); a shot costs a whole cycle (reload + time spent waiting). Fire when the
+    // marginal gain × cycle drops below pNow / patienceK (skilled ≈ optimal, potatoes trigger-happy).
+    // Also fire when patience runs out, or the target is about to vanish.
+    const size = 1.2;                   // ~ the tank's half-size: hits anywhere count
+    const tau = t.gunDef.aim / (0.85 + 0.15 * (t.crewSkill ?? 1));
+    const Rnext = (t.dispTarget + (t.disp - t.dispTarget) * Math.exp(-0.3 / tau)) * d / 100;
+    const pNow = pHit(size, Rd, this.curErr), pNext = pHit(size, Rnext, this.curErr), pFull = pHit(size, t.dispTarget * d / 100, this.curErr);
+    const cycle = t.gunDef.reload + Math.max(0, now - Math.max(this.readyAt, this.aimSince));
     const waited = now - this.laidSince >= this.patience * t.gunDef.aim;
     // leaving: the team is about to lose sight of it (last sighting ageing), or it's moving fast
     const leaving = now - tg.lastSeen[t.team] > 1.4 || (Math.abs(tg.speed) > 5 && s > 0.4);
-    const q = pNow / Math.max(1e-3, pFull);
     // skilled bots don't waste shots (and camo) on hopeless long-range pokes
     if (s > 0.5 && pFull * Math.max(0.05, this.aimPt.chance) < 0.12 * s && !leaving && now - this.lastHitT > 3) return;
-    if (!(q >= this.fireQ || waited || (leaving && q >= this.fireQ * 0.5))) return;
+    const ready = (pNext - pNow) / 0.3 * cycle * this.patienceK <= pNow;
+    if (!(ready || waited || (leaving && pNow >= 0.5 * pFull))) return;
     // don't shoot friends or into a wall
     if (now < this.checkAt) return;
     this.checkAt = now + 0.08;

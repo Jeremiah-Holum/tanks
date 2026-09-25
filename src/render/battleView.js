@@ -119,7 +119,7 @@ export class BattleView {
     else { fwd.y = 0; if (fwd.lengthSq() < 1e-6) fwd.set(0, 0, 1); fwd.normalize(); f.copy(camera.position).addScaledVector(fwd, R * 0.5); f.y = this.map ? this.heightAt(f.x, f.z) : 0; }
     this.env.update(camera, dt, f);
     this.U.uFarC.value.set(f.x, f.z); this.U.uFarR.value = this.debugNoFar ? 1e9 : R;
-    this.terrain.update(camera, dt);
+    this.terrain.update(camera, dt, sniper);
     this.props.update(camera, dt);
     this.renderer.info.reset();
     this.post.render(this.scene, camera, { sniper, exposure: this.exposure, fogBase: this.fogBase || 0 });

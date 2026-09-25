@@ -270,7 +270,9 @@ class GB {
   }
   // box with arbitrary orientation: centre c, axes (unit) ax, ay, az with half sizes
   obox(c, ax, ay, az, hx, hy, hz, cell, rough = 0.88) {
-    const m = new THREE.Matrix4().makeBasis(ax, ay, az).setPosition(c);
+    // orthonormal, right-handed basis from ax and ay (az is implied; mirrored boxes would cull)
+    const X = ax.clone().normalize(), Z = X.clone().cross(ay).normalize(), Y = Z.clone().cross(X).normalize();
+    const m = new THREE.Matrix4().makeBasis(X, Y, Z).setPosition(c);
     const save = this.m.clone();
     this.setMatrix(save.clone().multiply(m));
     this.box(0, 0, 0, hx, hy, hz, cell, cell, { bottom: true, ao: false, rough });
@@ -664,17 +666,56 @@ function rockGeometry(seed) {
   return g0;
 }
 
-// Rubble pile in a unit footprint (x,z ∈ [-1,1], y ∈ [0,1]) for destroyed/crushed props.
-function rubbleGeometry(seed, low) {
+// Rubble for a destroyed / crushed prop, built at its real size S = {x, y, z} (half footprint,
+// heap height) so textures keep their scale: a displaced masonry heap, broken wall stubs at the
+// corners (high), masonry chunks and beams resting on the heap surface.
+function rubbleGeometry(seed, low, wallCell, S) {
   const g = new GB(), r = rng(seed);
-  for (let k = 0; k < (low ? 10 : 16); k++) {
-    const x = (r() - 0.5) * 1.7, z = (r() - 0.5) * 1.7, rr = 0.25 + r() * 0.45, h = (low ? 0.5 : 0.35) * (0.4 + r() * 0.6) * (1 - Math.hypot(x, z) * 0.35);
-    g.cyl(x, z, -0.1, h, rr, rr * 0.35, 6, 'rubble', { cap: true, tile: 1 });
+  const bumps = [...Array(7)].map(() => ({ x: (r() - 0.5) * 1.2, z: (r() - 0.5) * 1.2, a: 0.1 + r() * 0.2, w: 0.2 + r() * 0.3 }));
+  const peak = low ? 0.8 : 0.62;
+  // heap height (unit) at unit (x, z): a rounded mound with lumps, 0 at the rim
+  const hh = (x, z) => {
+    const q = Math.max(Math.abs(x) * 0.8 + Math.hypot(x, z) * 0.35, Math.abs(z) * 0.8 + Math.hypot(x, z) * 0.35);
+    let h = peak * Math.pow(Math.max(0, 1 - q * q), 0.75);
+    for (const b of bumps) h += b.a * Math.exp(-((x - b.x) ** 2 + (z - b.z) ** 2) / (b.w * b.w)) * Math.min(1, h * 4);
+    return h + Math.sin(x * 17 + seed) * Math.sin(z * 13) * 0.03 * Math.min(1, h * 5);
+  };
+  const M = (x, y, z) => V3(x * S.x, y * S.y, z * S.z);
+  const N = 16, rect = ATLAS.rubble, b0 = g.p.length / 3, T = TILE_M.rubble;
+  for (let j = 0; j <= N; j++) for (let i = 0; i <= N; i++) {
+    const x = (i / N) * 2.2 - 1.1, z = (j / N) * 2.2 - 1.1, y = hh(x, z) - 0.08 / S.y * 0.5;
+    const e = 0.02, gx = (hh(x + e, z) - hh(x - e, z)) * S.y / (2 * e * S.x), gz = (hh(x, z + e) - hh(x, z - e)) * S.y / (2 * e * S.z);
+    const n = V3(-gx, 1, -gz).normalize(), p = M(x, y, z);
+    g.p.push(p.x, p.y, p.z); g.n.push(n.x, n.y, n.z); g.uv.push(p.x / T * 2, p.z / T * 2);
+    const ao = 0.6 + 0.4 * Math.min(1, y / peak + 0.2);
+    g.c.push(ao, ao * 0.97, ao * 0.95); g.r.push(...rect); g.rough.push(0.95);
   }
-  if (!low) for (let k = 0; k < 5; k++) { // broken wall stumps and beams
-    const x = (r() - 0.5) * 1.6, z = (r() - 0.5) * 1.6;
-    g.box(x, 0.3, z, 0.06 + r() * 0.2, 0.3 + r() * 0.25, 0.04, 'brick', 'rubble', { tile: 0.5 });
-    g.obox(V3(x * 0.8, 0.25, z * 0.8), V3(Math.cos(k), 0.25, Math.sin(k)).normalize(), V3(0, 1, 0), V3(-Math.sin(k), 0, Math.cos(k)), 0.7, 0.04, 0.04, 'timber');
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) { const a = b0 + j * (N + 1) + i, b = a + 1, c = a + N + 1, d = c + 1; g.i.push(a, c, b, b, c, d); }
+  const onHeap = (x, z) => M(x, Math.max(0, hh(x, z)), z);
+  // masonry chunks (0.2–0.6 m) resting on the surface
+  const nChunk = Math.round((low ? 6 : 10) + S.x * S.z * 0.25);
+  for (let k = 0; k < Math.min(40, nChunk); k++) {
+    const x = (r() - 0.5) * 1.6, z = (r() - 0.5) * 1.6, p = onHeap(x, z), s0 = 0.1 + r() * 0.2, a = r() * 6.28;
+    g.obox(p.clone().add(V3(0, s0 * 0.5, 0)), V3(Math.cos(a), 0.3 * (r() - 0.5), Math.sin(a)), V3(0.2 * (r() - 0.5), 1, 0.2 * (r() - 0.5)), null, s0 * 1.5, s0 * 0.7, s0, k % 3 ? wallCell : 'stone');
+  }
+  if (!low) {
+    // broken wall stubs along the old walls, jagged tops, standing in the heap
+    for (const [cx, cz, ax] of [[-0.9, -0.9, 0], [0.9, 0.9, 1], [0.9, -0.9, 0], [-0.9, 0.5, 1]]) {
+      if (r() < 0.2) continue;
+      for (let t = 0; t < 4; t++) {
+        const hgt = S.y * (1.2 - t * 0.25) * (0.55 + r() * 0.5), off = t * 0.8;
+        const x = ax ? cx * S.x : cx * S.x - Math.sign(cx) * off, z = ax ? cz * S.z - Math.sign(cz) * off : cz * S.z;
+        g.box(x, hgt / 2 - 0.3, z, ax ? 0.2 : 0.42, hgt / 2 + 0.3, ax ? 0.42 : 0.2, wallCell, 'rubble');
+      }
+    }
+    // beams: one end on the heap, the other on the ground
+    for (let k = 0; k < 4; k++) {
+      const a = r() * 6.28, f0 = 0.1 + r() * 0.2, f1 = 0.85 + r() * 0.3;
+      const p0 = onHeap(Math.cos(a) * f0, Math.sin(a) * f0).add(V3(0, 0.1, 0));
+      const p1 = onHeap(Math.cos(a) * f1, Math.sin(a) * f1).add(V3(0, 0.1, 0));
+      const d = p1.clone().sub(p0), L = d.length();
+      g.obox(p0.clone().add(p1).multiplyScalar(0.5), d, V3(0, 1, 0), null, L / 2 + 0.2, 0.1, 0.1, 'timber');
+    }
   }
   return g.geometry();
 }
@@ -874,8 +915,7 @@ export class Props {
     this.veg = veg; this.group.add(veg);
     // ---------------- solids
     const solidGeo = new Map(), solidList = [];
-    const rubble = { high: rubbleGeometry(3, false), low: rubbleGeometry(4, true) };
-    for (const o of map.objects) {
+        for (const o of map.objects) {
       if (VEG_KINDS[o.kind] || o.kind === 'crater') continue;
       const c = Math.cos(o.yaw), s = Math.sin(o.yaw);
       const drape = o.kind === 'wall' || o.kind === 'fence' || o.kind === 'sandbags' || o.kind === 'bridge';
@@ -888,14 +928,16 @@ export class Props {
     }
     let sv = 0, si = 0;
     for (const g of solidGeo.values()) { sv += g.attributes.position.count; si += g.index.count; }
-    for (const g of Object.values(rubble)) { sv += g.attributes.position.count; si += g.index.count; }
+    // headroom for rubble geometries built on demand (one per distinct size and material)
+    this._rubbleCap = { v: 60000, i: 180000 };
+    sv += this._rubbleCap.v; si += this._rubbleCap.i;
     this.U.uSnow = { value: theme.snow || 0 };
     const smat = solidMaterial(this.U);
     const solid = new THREE.BatchedMesh(solidList.length * 2 + 16, sv + 16, si + 16, smat);
     solid.castShadow = true; solid.receiveShadow = true; solid.name = 'structures';
     const sgid = new Map();
     for (const [k, g] of solidGeo) { sgid.set(k, solid.addGeometry(g)); g.dispose(); }
-    this.rubbleId = { high: solid.addGeometry(rubble.high), low: solid.addGeometry(rubble.low) };
+    this.rubbleIds = new Map();
     for (const { o, key } of solidList) {
       const id = solid.addInstance(sgid.get(key));
       Q.setFromAxisAngle(Y, o.yaw);
@@ -954,10 +996,24 @@ export class Props {
     } else if (kind === 'haystack' || kind === 'bush') {
       this.anims.push({ rec, type: 'squash', t: instant ? 99 : 0, dur: 0.5 });
     } else if (RUBBLE_ON_BREAK[kind]) {
-      const p = rec.parts[0], sub = RUBBLE_ON_BREAK[kind];
-      p.mesh.setGeometryIdAt(p.id, this.rubbleId[sub]);
-      const [sx, sy, sz] = o.s, M = new THREE.Matrix4().compose(V3(o.x, o.y, o.z), new THREE.Quaternion().setFromAxisAngle(V3(0, 1, 0), o.yaw), V3(sx * 1.05, sub === 'low' ? Math.min(0.9, sy * 1.1) : Math.min(3.5, sy * 0.55), sz * (sub === 'low' ? 2.5 : 1.05)));
-      p.mesh.setMatrixAt(p.id, M);
+      const p = rec.parts[0], sub = RUBBLE_ON_BREAK[kind], low = sub === 'low';
+      const [sx, sy, sz] = o.s;
+      const S = { x: Math.round(sx * 1.05 * 2) / 2, y: Math.round((low ? Math.min(0.9, sy * 1.1) : Math.min(3.5, sy * 0.55)) * 4) / 4, z: Math.round(sz * (low ? 2.5 : 1.05) * 2) / 2 };
+      const cell = kind === 'wall' ? 'stone' : kind === 'sandbags' ? 'plaster2' : kind === 'church' ? 'ashlar' : wallOf(kind, o.variant | 0);
+      const key = [sub, S.x, S.y, S.z, cell].join('|');
+      let gid = this.rubbleIds.get(key);
+      if (gid === undefined) {
+        const geo = rubbleGeometry((o.id | 0) + 77, low, cell, S), nv = geo.attributes.position.count, ni = geo.index.count;
+        if (nv <= this._rubbleCap.v && ni <= this._rubbleCap.i) {
+          this._rubbleCap.v -= nv; this._rubbleCap.i -= ni;
+          gid = this.solid.addGeometry(geo); this.rubbleIds.set(key, gid);
+        }
+        geo.dispose();
+      }
+      if (gid !== undefined) {
+        p.mesh.setGeometryIdAt(p.id, gid);
+        p.mesh.setMatrixAt(p.id, new THREE.Matrix4().compose(V3(o.x, o.y, o.z), new THREE.Quaternion().setFromAxisAngle(V3(0, 1, 0), o.yaw), V3(1, 1, 1)));
+      } else p.mesh.setVisibleAt(p.id, false);
     } else {
       for (const p of rec.parts) p.mesh.setVisibleAt(p.id, false);
     }

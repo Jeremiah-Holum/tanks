@@ -41,11 +41,17 @@ export function candWorld(tg, c, out) {
   return turretToWorld(tg, c.x, c.y, c.z, out, c.fixed ? 0 : tg.turretYaw);
 }
 
-// Hit probability for an aimable area of radius `size` at distance d, given the gun's aimed
-// dispersion (σ = R/2) and the bot's own aim error `err` (m).
+// Hit probability for an aimable area of radius `size` at distance d. The sim deviates a shot
+// by r = |N(0, R/2)| clipped at R (a half-normal radius, not a 2D gaussian), so
+// P(r < size) = erf(size / (σ√2)) / erf(√2) with σ = R/2; the bot's own aim error `err` (m)
+// widens σ.
+const erf = (x) => { // Abramowitz–Stegun 7.1.26
+  const t = 1 / (1 + 0.3275911 * x);
+  return 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+};
 export function pHit(size, R, err) {
-  const s2 = (R * 0.5) ** 2 + err * err;
-  return 1 - Math.exp(-(size * size) / (2 * s2 + 1e-6));
+  const sg = Math.sqrt((R * 0.5) ** 2 + err * err) + 1e-6;
+  return Math.min(1, erf(size / (sg * Math.SQRT2)) / 0.9545);
 }
 
 // Best aim point on target tg for bot b: { cand, chance, ev } or null when nothing is visible.

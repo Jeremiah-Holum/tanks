@@ -161,10 +161,18 @@ async function battle() {
   for (const t of world.tanks) { t.pos.z = t.team ? 500 + 60 : 500 - 60; t.pos.x = 500 + (t.id % 5 - 2) * 12; }
   const bots = new Map(world.tanks.map((t) => [t.id, simpleBot(t)]));
   const tr = new TankRenderer(scene, 'high'), fx = new FxRenderer(scene, 'high');
-  const c = (Q.get('cam') || '540,25,470,500,10,500').split(',').map(Number);
-  camera.position.set(c[0], c[1], c[2]); camera.lookAt(c[3], c[4], c[5]); camera.updateMatrixWorld();
-  sun.target.position.set(c[3], c[4], c[5]); sun.position.set(c[3] - 30, c[4] + 26, c[5] + 18);
-  Object.assign(sun.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60 }); sun.shadow.camera.updateProjectionMatrix();
+  ground.position.set(500, 10, 500);
+  const setCam = () => {
+    let c = Q.get('cam') && Q.get('cam').split(',').map(Number);
+    if (!c) { // frame the live tanks
+      const t0 = world.tanks[num('follow', 0)], fx_ = Math.sin(t0.yaw + t0.turretYaw), fz = Math.cos(t0.yaw + t0.turretYaw);
+      c = [t0.pos.x - fx_ * 16 + fz * 5, t0.pos.y + 6, t0.pos.z - fz * 16 - fx_ * 5, t0.pos.x + fx_ * 30, t0.pos.y + 1, t0.pos.z + fz * 30];
+    }
+    camera.position.set(c[0], c[1], c[2]); camera.lookAt(c[3], c[4], c[5]); camera.updateMatrixWorld();
+    sun.target.position.set(c[3], c[4], c[5]); sun.position.set(c[3] - 30, c[4] + 26, c[5] + 18);
+    Object.assign(sun.shadow.camera, { left: -70, right: 70, top: 70, bottom: -70 }); sun.shadow.camera.updateProjectionMatrix();
+  };
+  setCam();
   const T = num('t', 20);
   const ctl = new Map();
   let events = 0;
@@ -175,7 +183,9 @@ async function battle() {
     tr.sync(world, { alpha: 1, dt: DT, camera, playerId: world.tanks[0].id });
     fx.update(DT, camera, world);
     if (world.result) break;
+    if (k % 60 === 0) setCam();
   }
+  setCam();
   renderer.render(scene, camera);
   lab.info = { time: world.time.toFixed(1), events, alive: world.tanks.filter((t) => t.alive).length, fx: fx.stats(), tanks: tr.stats(), result: world.result };
   lab.world = world; lab.tr = tr; lab.fx = fx;

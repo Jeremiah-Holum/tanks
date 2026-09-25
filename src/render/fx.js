@@ -57,15 +57,24 @@ function atlas() {
   const at = (i, fn) => { g.save(); g.translate((i % 4) * S, Math.floor(i / 4) * S); g.beginPath(); g.rect(0, 0, S, S); g.clip(); fn(); g.restore(); };
   const radial = (x, y, r0, r1, stops) => { const gr = g.createRadialGradient(x, y, r0, x, y, r1); for (const [o, col] of stops) gr.addColorStop(o, col); return gr; };
   at(T.GLOW, () => { g.fillStyle = radial(64, 64, 0, 62, [[0, 'rgba(255,255,255,1)'], [0.25, 'rgba(255,255,255,0.6)'], [1, 'rgba(255,255,255,0)']]); g.fillRect(0, 0, S, S); });
-  const puff = (soft) => {
-    for (let k = 0; k < 26; k++) {
-      const a = r() * 6.28, d = r() * 30, x = 64 + Math.cos(a) * d, y = 64 + Math.sin(a) * d, rr = 18 + r() * 26;
-      g.fillStyle = radial(x, y, 0, rr, [[0, `rgba(255,255,255,${soft * (0.35 + r() * 0.3)})`], [1, 'rgba(255,255,255,0)']]);
-      g.fillRect(0, 0, S, S);
+  // cloudy puffs: fbm value noise under a soft radial falloff, lit from above (rgb), alpha = density
+  const lat = new Float32Array(33 * 33 * 4).map(() => r());
+  const vn = (x, y, o) => { const xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi, u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy);
+    const L = (i, j) => lat[(((j % 32) + 32) % 32) * 33 * 4 + (((i % 32) + 32) % 32) * 4 + o];
+    return (L(xi, yi) * (1 - u) + L(xi + 1, yi) * u) * (1 - v) + (L(xi, yi + 1) * (1 - u) + L(xi + 1, yi + 1) * u) * v; };
+  const puff = (tile, o, soft, dens) => {
+    const id = g.createImageData(S, S);
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      const px = x / S * 2 - 1, py = y / S * 2 - 1, rr = Math.hypot(px, py);
+      let n = 0, amp = 0.5, f = 3;
+      for (let k = 0; k < 4; k++) { n += amp * vn(x / S * f + o * 7, y / S * f + o * 3, o); amp *= 0.5; f *= 2; }
+      const a = Math.max(0, Math.min(1, (n * 1.6 - 0.35 - rr * rr * 1.1) * dens)) * Math.max(0, 1 - rr);
+      const lit = 0.72 + 0.28 * Math.max(0, Math.min(1, 0.5 - py * 0.6 + (n - 0.5)));
+      const i = (y * S + x) * 4; id.data[i] = id.data[i + 1] = id.data[i + 2] = Math.round(255 * lit); id.data[i + 3] = Math.round(255 * Math.min(1, a * soft));
     }
+    g.putImageData(id, (tile % 4) * S, Math.floor(tile / 4) * S);
   };
-  at(T.SMOKE, () => puff(0.55)); at(T.SMOKE2, () => puff(0.5)); at(T.SMOKE3, () => puff(0.6));
-  at(T.DUST, () => puff(0.35));
+  puff(T.SMOKE, 0, 1.0, 1.6); puff(T.SMOKE2, 1, 1.0, 1.5); puff(T.SMOKE3, 2, 1.0, 1.7); puff(T.DUST, 3, 0.8, 1.2);
   at(T.FLAME, () => { // tongues: tall soft ellipses rising from a bright base
     for (let k = 0; k < 9; k++) {
       const x = 64 + (r() - 0.5) * 44, h = 40 + r() * 50, w = 10 + r() * 12;
@@ -75,12 +84,15 @@ function atlas() {
     }
     g.fillStyle = radial(64, 96, 0, 34, [[0, 'rgba(255,255,255,0.8)'], [1, 'rgba(255,255,255,0)']]); g.fillRect(0, 0, S, S);
   });
-  at(T.SPARK, () => { // head at the bottom of the tile (v = 0), fading towards the top
-    const gr = g.createLinearGradient(0, S, 0, 0); gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.15, 'rgba(255,255,255,0.9)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
-    const gx = g.createLinearGradient(0, 0, S, 0); gx.addColorStop(0, 'rgba(0,0,0,1)'); gx.addColorStop(0.5, 'rgba(0,0,0,0)'); gx.addColorStop(1, 'rgba(0,0,0,1)');
-    g.fillStyle = gr; g.fillRect(0, 0, S, S);
-    g.globalCompositeOperation = 'destination-out'; g.fillStyle = gx; g.fillRect(0, 0, S, S); g.globalCompositeOperation = 'source-over';
-  });
+  { // spark / tracer streak: head at the bottom of the tile (v = 0), thin bright core
+    const id = g.createImageData(S, S);
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      const u = (x + 0.5) / S - 0.5, v = 1 - (y + 0.5) / S;
+      const a = Math.exp(-(u * u) / 0.012) * Math.pow(1 - v, 1.3) * Math.min(1, v * 12 + 0.3);
+      const o = (y * S + x) * 4; id.data[o] = id.data[o + 1] = id.data[o + 2] = 255; id.data[o + 3] = Math.round(255 * Math.min(1, a * 1.3));
+    }
+    g.putImageData(id, (T.SPARK % 4) * S, Math.floor(T.SPARK / 4) * S);
+  }
   at(T.CHUNK, () => {
     for (let k = 0; k < 3; k++) {
       g.fillStyle = `rgba(255,255,255,${0.9 - k * 0.2})`; g.beginPath();
@@ -114,7 +126,7 @@ void main() {
     vec3 d = mv2.xyz - mvPosition.xyz;
     vec2 dir = d.xy; float l = length(dir);
     dir = l > 1e-5 ? dir / l : vec2(0.0, 1.0);
-    vec2 perp = vec2(-dir.y, dir.x);
+    vec2 perp = vec2(dir.y, -dir.x); // keeps the quad front-facing
     mvPosition.xyz += d * (position.y + 0.5) + vec3(perp * position.x * size, 0.0);
   } else {
     float c = cos(iRF.x), s = sin(iRF.x);
@@ -142,7 +154,7 @@ void main() {
   #endif
   ${additive
     ? 'gl_FragColor = vec4(vCol.rgb * t.a * vCol.a * (1.0 - fogF), 1.0);'
-    : `gl_FragColor = vec4(vCol.rgb, t.a * vCol.a);
+    : `gl_FragColor = vec4(vCol.rgb * t.rgb, t.a * vCol.a);
   #ifdef USE_FOG
   gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, fogF);
   #endif`}
@@ -421,10 +433,10 @@ export class FxRenderer {
     const A = this.add, s = Math.sqrt(cal / 75);
     for (let k = 0; k < this._n(22 * amt * s); k++) {
       cone(n.x ?? 0, (n.y ?? 1) + 0.2, n.z ?? 0, 0.9, _c); const v = 8 + rnd() * 22;
-      A.spawn({ x: p.x, y: p.y, z: p.z, vx: _c.x * v, vy: _c.y * v, vz: _c.z * v, life: 0.25 + rnd() * 0.35, s0: 0.05, s1: 0.03, frame: T.SPARK, streak: 0.035,
-        r: 5, g: 3.2, b: 1.4, a: 1, drag: 2, grav: 9, fadeIn: 0, curve: 0.7 });
+      A.spawn({ x: p.x, y: p.y, z: p.z, vx: _c.x * v, vy: _c.y * v, vz: _c.z * v, life: 0.25 + rnd() * 0.35, s0: 0.045, s1: 0.03, frame: T.SPARK, streak: 0.02,
+        r: 3, g: 1.7, b: 0.6, a: 1, drag: 2, grav: 9, fadeIn: 0, curve: 0.7 });
     }
-    A.spawn({ x: p.x + (n.x ?? 0) * 0.1, y: p.y + (n.y ?? 0) * 0.1, z: p.z + (n.z ?? 0) * 0.1, life: 0.08, s0: 0.9 * s, s1: 1.3 * s, frame: T.FLASH, r: 5, g: 4, b: 2.6, a: 1, drag: 0, fadeIn: 0 });
+    A.spawn({ x: p.x + (n.x ?? 0) * 0.1, y: p.y + (n.y ?? 0) * 0.1, z: p.z + (n.z ?? 0) * 0.1, life: 0.08, s0: 0.8 * s, s1: 1.1 * s, frame: T.FLASH, r: 2.6, g: 2, b: 1.2, a: 1, drag: 0, fadeIn: 0 });
     const g = 0.45;
     this.alpha.spawn({ x: p.x, y: p.y, z: p.z, vx: (n.x ?? 0) * 1.5, vy: 0.5, vz: (n.z ?? 0) * 1.5, life: 1.2, s0: 0.3 * s, s1: 1.4 * s, frame: T.SMOKE2, r: g, g, b: g, a: 0.4, drag: 1.5, grav: -0.3 });
   }
@@ -435,11 +447,11 @@ export class FxRenderer {
     if (dir) { const dn = dir.x * n.x + dir.y * n.y + dir.z * n.z; rx = dir.x - 2 * dn * n.x; ry = dir.y - 2 * dn * n.y; rz = dir.z - 2 * dn * n.z; }
     for (let k = 0; k < this._n(26 * s); k++) {
       cone(rx, ry, rz, 0.3, _c); const v = 25 + rnd() * 40;
-      A.spawn({ x: p.x, y: p.y, z: p.z, vx: _c.x * v, vy: _c.y * v, vz: _c.z * v, life: 0.2 + rnd() * 0.3, s0: 0.06, s1: 0.03, frame: T.SPARK, streak: 0.045,
-        r: 6, g: 4.2, b: 2.2, a: 1, drag: 1.5, grav: 6, fadeIn: 0, curve: 0.8 });
+      A.spawn({ x: p.x, y: p.y, z: p.z, vx: _c.x * v, vy: _c.y * v, vz: _c.z * v, life: 0.2 + rnd() * 0.3, s0: 0.05, s1: 0.03, frame: T.SPARK, streak: 0.025,
+        r: 3.2, g: 1.9, b: 0.7, a: 1, drag: 1.5, grav: 6, fadeIn: 0, curve: 0.8 });
     }
-    A.spawn({ x: p.x, y: p.y, z: p.z, vx: rx * 30, vy: ry * 30, vz: rz * 30, life: 0.12, s0: 0.25 * s, s1: 0.2, frame: T.SPARK, streak: 0.12, r: 8, g: 6, b: 3, drag: 0, fadeIn: 0 });
-    A.spawn({ x: p.x, y: p.y, z: p.z, life: 0.07, s0: 1.4 * s, s1: 1.8 * s, frame: T.FLASH, r: 6, g: 5, b: 3.5, a: 1, drag: 0, fadeIn: 0 });
+    A.spawn({ x: p.x, y: p.y, z: p.z, vx: rx * 30, vy: ry * 30, vz: rz * 30, life: 0.12, s0: 0.25 * s, s1: 0.2, frame: T.SPARK, streak: 0.08, r: 4, g: 3, b: 1.6, drag: 0, fadeIn: 0 });
+    A.spawn({ x: p.x, y: p.y, z: p.z, life: 0.07, s0: 1.1 * s, s1: 1.5 * s, frame: T.FLASH, r: 3, g: 2.4, b: 1.6, a: 1, drag: 0, fadeIn: 0 });
   }
   // Penetration: hot flash, sparks, dark fragments and a puff of smoke from the hole.
   penetration(p, n, cal = 75, big = false) {
@@ -448,7 +460,7 @@ export class FxRenderer {
     A.spawn({ x: p.x + n.x * 0.2, y: p.y + n.y * 0.2, z: p.z + n.z * 0.2, life: 0.22, s0: 0.8 * s, s1: 1.4 * s, frame: T.FLAME, r: 1.8, g: 0.7, b: 0.15, a: 1, drag: 0, fadeIn: 0 });
     for (let k = 0; k < this._n(18 * s); k++) {
       cone(n.x, n.y + 0.3, n.z, 1.0, _c); const v = 10 + rnd() * 25;
-      A.spawn({ x: p.x, y: p.y, z: p.z, vx: _c.x * v, vy: _c.y * v, vz: _c.z * v, life: 0.3 + rnd() * 0.5, s0: 0.06, s1: 0.03, frame: T.SPARK, streak: 0.04, r: 5, g: 2.4, b: 0.8, drag: 2, grav: 9, fadeIn: 0 });
+      A.spawn({ x: p.x, y: p.y, z: p.z, vx: _c.x * v, vy: _c.y * v, vz: _c.z * v, life: 0.3 + rnd() * 0.5, s0: 0.05, s1: 0.03, frame: T.SPARK, streak: 0.022, r: 3, g: 1.4, b: 0.45, drag: 2, grav: 9, fadeIn: 0 });
     }
     for (let k = 0; k < this._n(10 * s); k++) {
       cone(n.x, n.y + 0.5, n.z, 0.9, _c); const v = 4 + rnd() * 9;
@@ -476,7 +488,7 @@ export class FxRenderer {
     }
     for (let k = 0; k < this._n(18 * s); k++) {
       cone(0, 1, 0, 1.1, _c); const v = (8 + rnd() * 16) * s;
-      A.spawn({ x: p.x, y: p.y + 0.3, z: p.z, vx: _c.x * v, vy: Math.abs(_c.y) * v, vz: _c.z * v, life: 0.5 + rnd() * 0.6, s0: 0.08, s1: 0.04, frame: T.SPARK, streak: 0.04, r: 5, g: 2.5, b: 0.8, drag: 1, grav: 9, fadeIn: 0 });
+      A.spawn({ x: p.x, y: p.y + 0.3, z: p.z, vx: _c.x * v, vy: Math.abs(_c.y) * v, vz: _c.z * v, life: 0.5 + rnd() * 0.6, s0: 0.07, s1: 0.04, frame: T.SPARK, streak: 0.025, r: 3, g: 1.5, b: 0.45, drag: 1, grav: 9, fadeIn: 0 });
     }
     if (surf && surf !== 'metal') this.groundHit(p, { x: 0, y: 1, z: 0 }, surf, 75 * s * s);
     const S = SURF[surf] || SURF.dirt, c = S.dust;
@@ -557,10 +569,10 @@ export class FxRenderer {
   }
   // A burning tank: flames licking up plus thick black smoke.
   fire(x, y, z, dt, s = 1) {
-    const nf = 30 * s * this.mul * dt, cf = Math.floor(nf) + (rnd() < nf % 1 ? 1 : 0);
+    const nf = 22 * s * this.mul * dt, cf = Math.floor(nf) + (rnd() < nf % 1 ? 1 : 0);
     for (let k = 0; k < cf; k++) {
       this.add.spawn({ x: x + rs(0.7 * s), y: y + rnd() * 0.2, z: z + rs(0.7 * s), vx: rs(0.3) + this.wind.x * 0.2, vy: 1.2 + rnd() * 1.6, vz: rs(0.3) + this.wind.z * 0.2,
-        life: 0.45 + rnd() * 0.45, s0: 0.7 * s, s1: 0.2 * s, frame: T.FLAME, r: 1.7, g: 0.62, b: 0.12, r2: 0.9, g2: 0.15, b2: 0.02, a: 0.85, drag: 1, grav: -1.8, fadeIn: 0.1, curve: 0.7, rotV: rs(2) });
+        life: 0.5 + rnd() * 0.45, s0: 1.3 * s, s1: 0.4 * s, frame: T.FLAME, r: 1.2, g: 0.45, b: 0.09, r2: 0.7, g2: 0.12, b2: 0.02, a: 0.7, drag: 1, grav: -1.8, fadeIn: 0.1, curve: 0.7, rotV: rs(2) });
     }
     const ns = 6 * s * this.mul * dt, cs = Math.floor(ns) + (rnd() < ns % 1 ? 1 : 0);
     for (let k = 0; k < cs; k++) {

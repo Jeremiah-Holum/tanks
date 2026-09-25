@@ -182,6 +182,7 @@ export class TeamBrain {
   }
   // A post near point p for the k-th user: spread sideways, snapped to passable ground.
   postAt(p, spread = 14) {
+    if (!p) return this.lanePost(this.info.brawlLane, 0.35);
     const k = this.pointUse.get(p.i) || 0;
     this.pointUse.set(p.i, k + 1);
     const face = this.faceFrom(p.x, p.z, p.geo);

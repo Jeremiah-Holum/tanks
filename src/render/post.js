@@ -70,7 +70,8 @@ void main() {
     // exponential height fog, integrated along the ray (falloff 1/140 m above fogBase)
     float b = 1.0 / 140.0, h0 = camPos.y - fogBase, h1 = wp.y - fogBase, dh = h1 - h0;
     float hf = abs(dh) > 0.1 ? (exp(-b * max(h0, -60.0)) - exp(-b * max(h1, -60.0))) / (b * dh) : exp(-b * max(h0, -60.0));
-    float amt = 1.0 - exp(-uFogDensity * dist * hf);
+    // thinner at combat range (≤ 445 m stays readable), full haze toward the horizon
+    float amt = 1.0 - exp(-uFogDensity * dist * hf * (0.55 + 0.45 * smoothstep(250.0, 1600.0, dist)));
     vec3 fogCol = skyBase(normalize(vec3(rd.x, max(rd.y, 0.0) * 0.6 + 0.01, rd.z)));
     col = mix(col, fogCol, clamp(amt, 0.0, 1.0));
   }
