@@ -85,7 +85,7 @@ export class Brain {
     this.yoloAt = 50 + this.rng() * 80;
     this.retreated = false; this.defending = false; this.huntId = null; this.why = ''; this.cleared = new Map(); this.capping = false; this.pushS = 0; this.pushGoal = null; this.cover = null; this.coverAt = -99;
     this.useAt = {}; this.carrot = { x: 0, z: 0, remain: 0 };
-    this.stats = { unsticks: 0, plans: 0 };
+    this.stats = { unsticks: 0, plans: 0, nf: {} };
   }
 
   setPost(post) {
@@ -552,7 +552,7 @@ export class Brain {
     const vis = world.visible[t.team];
     if (tg && tg.alive && vis.has(tg.id) && this.aimPt) {
       if (now - this.aimAt > 0.6) this.pickAim(world);
-      if (!this.aimPt) { this.lookAround(world); return; }
+      if (!this.aimPt) { this.nf('noaim'); this.lookAround(world); return; }
       const d = hyp(tg.pos.x - t.pos.x, tg.pos.z - t.pos.z);
       const p = candWorld(tg, this.aimPt.cand, this._aim);
       // lead: shell flight time × target velocity × how well this bot leads
@@ -586,18 +586,20 @@ export class Brain {
 
   maybeFire(world, tg, p, d) {
     const t = this.t, c = this.c, now = world.time, s = this.skill;
-    if (t.reload > 0 || now < this.nextShot || t.ammo[t.shell] <= 0 || c.shell !== t.shell) return;
+    if (t.reload > 0 || now < this.nextShot || t.ammo[t.shell] <= 0) return;
+    if (c.shell !== t.shell) return this.nf('shell');
     // lights on passive spotting duty hold fire unless it's close, a kill, or late game
-    if (this.cls === 'light' && this.scoutPhase > 0 && this.team.push < 1 && d > 200 && tg.hp > alphaOf(t) * 1.1 && now - this.lastHitT > 5) return;
-    if (d > FIRE_RANGE[this.cls] * (this.knows.discipline ? 1 : 1.6) && now - this.lastHitT > 4) return;
+    if (this.cls === 'light' && this.scoutPhase > 0 && this.team.push < 1 && d > 200 && tg.hp > alphaOf(t) * 1.1 && now - this.lastHitT > 5) return this.nf('light');
+    // range discipline keeps camo: once we're lit anyway, shoot back (up to the view cap)
+    if (d > (t.spotted ? 445 : FIRE_RANGE[this.cls] * (this.knows.discipline ? 1 : 1.6)) && now - this.lastHitT > 4) return this.nf('range');
     // opening discipline: unspotted non-TDs keep their camo at range early on (potatoes don't)
-    if (now < this.openingT && !t.spotted && this.knows.discipline && this.cls !== 'td' && d > 220 && tg.hp > alphaOf(t) && now - this.lastHitT > 4) return;
+    if (now < this.openingT && !t.spotted && this.knows.discipline && this.cls !== 'td' && d > 220 && tg.hp > alphaOf(t) && now - this.lastHitT > 4) return this.nf('opening');
     const sol = aimSolution(world, t, p, _sol);
-    if (!sol.reachable) { this.blocked(world); return; }
+    if (!sol.reachable) { this.blocked(world); return this.nf('unreach'); }
     const angErr = Math.abs(wrap(sol.yaw - t.turretYaw)) + Math.abs(sol.pitch - t.gunPitch);
     const Rd = t.disp * d / 100;
     const laid = angErr * d < 0.35 + 0.4 * Rd;
-    if (!laid) { this.laidSince = -1; return; }
+    if (!laid) { this.laidSince = -1; return this.nf('laying'); }
     if (this.laidSince < 0) this.laidSince = now;
     // When to pull the trigger: optimal stopping for hits per second. Waiting another 0.3 s buys
     // (pNext − pNow); a shot costs a whole cycle (reload + time spent waiting). Fire when the
@@ -612,9 +614,11 @@ export class Brain {
     // leaving: the team is about to lose sight of it (last sighting ageing), or it's moving fast
     const leaving = now - tg.lastSeen[t.team] > 1.4 || (Math.abs(tg.speed) > 5 && s > 0.4);
     // skilled bots don't waste shots (and camo) on hopeless long-range pokes
-    if (this.knows.discipline && pFull * Math.max(0.05, this.aimPt.chance) < 0.12 * s && !leaving && now - this.lastHitT > 3) return;
+    if (this.knows.discipline && pFull * Math.max(0.05, this.aimPt.chance) < 0.12 * s && !leaving && now - this.lastHitT > 3) return this.nf('hopeless');
     const ready = (pNext - pNow) / 0.3 * cycle * this.patienceK <= pNow;
-    if (!(ready || waited || (leaving && pNow >= 0.5 * pFull))) return;
+    // snap shots on the move are for close range; better players wait until they've stopped
+    if (Math.abs(t.speed) > 1.5 && pNow < 0.55 && d > 80 && this.knows.discipline && !leaving) return this.nf('moving');
+    if (!(ready || waited || (leaving && pNow >= 0.5 * pFull))) return this.nf('aiming');
     // don't shoot friends or into a wall
     if (now < this.checkAt) return;
     this.checkAt = now + 0.08;
@@ -622,7 +626,7 @@ export class Brain {
     if (hit.targetId) {
       const o = world.byId[hit.targetId];
       if (o && o.team === t.team && o.alive) return;
-    } else if (hit.dist < d - 10 && s > 0.2) { this.blocked(world, 0.08); return; }
+    } else if (hit.dist < d - 10 && s > 0.2) { this.blocked(world, 0.08); return this.nf('blocked'); }
     c.fire = true; this.blockedT = 0;
     this.nextShot = now + 0.2;
     if (c.shell === this.slots.gold) this.goldUsed++;
@@ -630,6 +634,9 @@ export class Brain {
     // next shell choice happens on the next pickAim; rechoose now if we were on gold / HE
     if (this.aimPt) this.wantShell = chooseShell(this, tg, this.aimPt, d);
   }
+
+  // why a loaded bot with a target didn't fire this tick (battle-sim diagnostics)
+  nf(why) { if (this.t.reload <= 0) this.stats.nf[why] = (this.stats.nf[why] || 0) + 1; }
 
   // Loaded, on target, but the shot can't be made (gun depression, a crest or a wall in the
   // way): after ~3 s give up on that target for a while so the bot moves instead of staring.

@@ -87,7 +87,7 @@ async function runBattle({ mapId, seed, limit, verbose, skills, tune }) {
   const tanks = world.tanks.map((t) => ({
     team: t.team, cls: t.def.cls, tier: t.def.tier, hp: t.maxHp, skill: t.bot ? t.bot.skill : 0.5, alive: t.alive,
     life: t.alive ? world.time : deathT[t.id] ?? world.time, share: (t.alive ? world.time : deathT[t.id] ?? world.time) / world.time, dmg: t.stats.dmg, shots: t.stats.shots, hits: t.stats.hits, pens: t.stats.pens,
-    kills: t.stats.kills, received: t.stats.received, use: use.get(t.id), unsticks: brains.get(t.id).stats.unsticks, spotted: t.stats.spotted,
+    kills: t.stats.kills, received: t.stats.received, use: use.get(t.id), nf: brains.get(t.id).stats.nf, unsticks: brains.get(t.id).stats.unsticks, spotted: t.stats.spotted,
   }));
   const bots = world.tanks.length;
   return {
@@ -177,6 +177,9 @@ function report(R, secs) {
   // how bots spend their lives, by skill bucket (fractions of alive time)
   for (const [lo, hi, name] of [[0, 0.35, 'potato'], [0.35, 0.65, 'average'], [0.65, 1.01, 'unicum']]) {
     const L = T.filter((t) => t.skill >= lo && t.skill < hi && t.use), S = (k) => L.reduce((a, t) => a + t.use[k], 0), al = S('alive') || 1;
+    const nf = {}; for (const t of L) for (const k in t.nf) nf[k] = (nf[k] || 0) + t.nf[k];
+    const nfs = Object.entries(nf).sort((a, b) => b[1] - a[1]).map(([k, v]) => k + ' ' + pct(v / 10, al)).join(', ');
+    console.log(`  time ${name}: [held fire: ${nfs}]`);
     console.log(`  time ${name}: target in sight ${pct(S('tgt'), al)}, loaded+target ${pct(S('ready'), al)}, hiding ${pct(S('cover'), al)}, moving ${pct(S('move'), al)}, lit ${pct(S('lit'), al)}`);
   }
   // how bots die (state at death) by skill bucket
