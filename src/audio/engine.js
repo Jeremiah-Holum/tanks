@@ -7,6 +7,7 @@ const TAU = 0.08;           // param smoothing time constant, s
 const STALE_MS = 300;       // a voice not updated for this long fades out and is freed
 const DESTROY_MS = 8000;    // a free voice idle this long is torn down (its sources stopped)
 const MAX_DIST = 320;       // engines beyond this aren't worth a voice
+const TURRET_WHINE = 0;    // turret traverse whine level (0 = off)
 
 // Narrow pulse train as a PeriodicWave: drives the track-link clatter amplitude.
 function pulseWave(ctx) {
@@ -100,9 +101,9 @@ class EngineVoice {
     smooth(this.trkBp.frequency, 1000 + v * 70, now);
     smooth(this.sqBp.frequency, 2600 + 180 * Math.sin(this.sqPh), now, 0.03);
     smooth(this.sqG.gain, turning * (1 - 0.6 * sf) * 0.035 * (tank.alive === false ? 0 : 1), now);
-    // turret traverse whine
+    // turret traverse whine: muted (owner feedback: every mouse move made a "woup"). Set TURRET_WHINE > 0 to restore.
     const tr = Math.abs(tank.turretRate || 0);
-    smooth(this.whG.gain, clamp(tr / 0.25) * (isPlayer ? 0.05 : 0.025), now, 0.05);
+    smooth(this.whG.gain, clamp(tr / 0.25) * (isPlayer ? 0.05 : 0.025) * TURRET_WHINE, now, 0.05);
     smooth(this.wA.frequency, 330 + tr * 420, now); smooth(this.wB.frequency, 165 + tr * 210, now);
     // placement
     const P = this.A._pos(tank.pos, { ref: 6, roll: 1, range: 0.8 });

@@ -16,6 +16,7 @@ Status: ☐ todo · ☑ done. The detail for each item lives in HANDOFF.md and d
 
 ## Next
 - ☐ Real-GPU fps measurement and quality tuning; a listening pass on the audio
+- ☐ Ultra-low graphics tier for integrated GPUs (owner plays on Intel iGPU)
 - ☐ AI: skill → survival correlation, light-tank survival, fewer long-range kills, map length balance
 - ☐ Garage: Sell button
 - ☐ HUD: scale bottom panels at 1080p+; "skip to results" after leaving dead

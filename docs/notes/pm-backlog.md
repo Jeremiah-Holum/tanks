@@ -13,3 +13,4 @@ Counted overage: AI +16k (final 438k).
 Counted overage: INTEGRATION +20k (final 354k).
 Counted: QA+FIX 188k.
 Total counted ≈ 2.51M of the 3.5M cap (PM usage not tallied, per the owner). Stopped at a good point with ~1M unspent.
+- ☐ Graphics: 'ultra-low' tier for integrated GPUs (no shadows/post, lower res, fewer trees and grass). Owner plays on Intel integrated graphics.
