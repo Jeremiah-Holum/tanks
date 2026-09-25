@@ -102,3 +102,11 @@ pen.png, he.png, tracer.png, dust.png · battle.png, battle2.png (real sim throu
 ## Contract change requests
 - none blocking. Suggestion for SIM: the track piece end planes use normal (0, 0.35, ±1), which makes
   the hitbox longer at the bottom; real tracks are longer at the top (raised sprocket/idler).
+
+## Silhouette pass (PM-authorised dimension edits in src/data/tanks.js)
+Dimension/`look` fields only (no armour, guns or mobility): M2 Medium (narrow barbette body, exposed
+tracks, small turret), M3 Lee (taller hull, `look.hullGun` = right-sponson 75 mm), T1 Heavy / M6
+(taller slab hulls, wider tracks; M6 bigger turret), T29 (huge wide cast turret), T20 (long, low),
+T25 AT (low casemate), MS-1 / T-26 / AT-1 / BT-7 (narrow low hulls, taller tracks, smaller turrets;
+BT-7 four big Christie wheels), T-28 (exposed tracks, main turret back so the MG sub-turrets fit).
+rules-test 91/91, meta-test 38/38. M6 near LOD is now ~29k tris (twin HVSS wheels).

@@ -58,6 +58,7 @@ export class Brain {
     this.peek = 0; this.peekT = 0; this.peekDur = 0; this.peekWhy = ''; this.duckUntil = -1;
     this.scoutPhase = 0; this.scoutAt = -1; this.relocAt = -99; this.flexAt = 40 + this.rng() * 30;
     this.brawlPushAt = 70 + this.rng() * 50;
+    this.openingT = 75 + 40 * this.rng();
     this.yolo = this.rng() < 0.45 - s;                  // potatoes that charge alone
     this.yoloAt = 50 + this.rng() * 80;
     this.retreated = false; this.defending = false; this.cover = null; this.coverAt = -99;
@@ -65,7 +66,16 @@ export class Brain {
     this.stats = { unsticks: 0, plans: 0 };
   }
 
-  setPost(post) { if (this.post && this.post.point !== (post && post.point)) this.team.releasePoint(this.post.point); this.post = post; }
+  setPost(post) {
+    if (this.post && this.post.point !== (post && post.point)) this.team.releasePoint(this.post.point);
+    // skilled snipers sit ~18 m behind their bush: the sim drops a target's own bush (≤ 15 m)
+    // from its camo after it fires, but foliage farther in front still hides the muzzle flash
+    if (post && this.skill > 0.55 && (post.kind === 'sniper' || post.kind === 'bush') && this.cls !== 'heavy') {
+      const back = 17 + this.rng() * 4, x = post.x - Math.sin(post.yaw) * back, z = post.z - Math.cos(post.yaw) * back;
+      if (passable(this.team.navS, x, z, 2.2)) post = { ...post, x, z, behind: true };
+    }
+    this.post = post;
+  }
 
   control(world) {
     const t = this.t, c = this.c;
@@ -510,6 +520,8 @@ export class Brain {
     // lights on passive spotting duty hold fire unless it's close, a kill, or late game
     if (this.cls === 'light' && this.scoutPhase > 0 && this.team.push < 1 && d > 200 && tg.hp > alphaOf(t) * 1.1 && now - this.lastHitT > 5) return;
     if (d > FIRE_RANGE[this.cls] * (1 + 0.25 * (1 - s)) && now - this.lastHitT > 4) return;
+    // opening discipline: unspotted non-TDs keep their camo at range early on (potatoes don't)
+    if (now < this.openingT && !t.spotted && s >= 0.3 && this.cls !== 'td' && d > 220 && tg.hp > alphaOf(t) && now - this.lastHitT > 4) return;
     const sol = aimSolution(world, t, p, _sol);
     if (!sol.reachable) return;
     const angErr = Math.abs(wrap(sol.yaw - t.turretYaw)) + Math.abs(sol.pitch - t.gunPitch);

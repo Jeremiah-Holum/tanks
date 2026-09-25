@@ -4,3 +4,4 @@
 - META follow-up: Sell button in the hangar/details (economy.sell exists).
 - SIM: a pivot buried underground on a steep crest is unhandled (rare).
 - SIM: delete old toy sim files (world.js, tanks.js, levels.js, game.js, director.js, mapgen.js, maps.js, ai.js) once main.js is replaced.
+- RENDER-TANKS polish (later): early boxy silhouettes (MS-1, T-26, AT-1) need glacis frac/shape tweaks; M6 near LOD 29k tris (trim twin wheels); tracers not interpolated; track hitbox taper (SIM).
