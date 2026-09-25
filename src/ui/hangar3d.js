@@ -83,7 +83,7 @@ export class HangarScene {
     scene.fog = new THREE.Fog(0x141613, 30, 70);
     const pm = new THREE.PMREMGenerator(r);
     this.env = pm.fromScene(new RoomEnvironment(), 0.04).texture; pm.dispose();
-    scene.environment = this.env; scene.environmentIntensity = 0.35;
+    scene.environment = this.env; scene.environmentIntensity = 0.22;
     this.camera = new THREE.PerspectiveCamera(30, 1, 0.1, 150);
     this.orbit = { az: -0.7, el: 0.16, dist: 16, tAz: -0.7, tEl: 0.16, tDist: 16, target: new THREE.Vector3(0, 1.1, 0) };
     this.spin = 0; this.idle = 0;
@@ -154,8 +154,8 @@ export class HangarScene {
     this.tankHolder = new THREE.Group(); this.tankHolder.position.y = 0.24; table.add(this.tankHolder);
     s.add(table);
     // lights
-    s.add(new THREE.HemisphereLight(0x9aa6b8, 0x2a241c, 0.55));
-    const key = this.key = new THREE.SpotLight(0xfff0d8, 420, 40, 0.62, 0.55, 1.6);
+    s.add(new THREE.HemisphereLight(0x9aa6b8, 0x2a241c, 0.28));
+    const key = this.key = new THREE.SpotLight(0xfff0d8, 520, 40, 0.5, 0.6, 1.6);
     key.position.set(4.5, 10.5, 7); key.target.position.set(0, 0.5, 0);
     key.castShadow = true; key.shadow.mapSize.set(1024, 1024); key.shadow.bias = -0.0004; key.shadow.normalBias = 0.02;
     s.add(key, key.target);
@@ -247,12 +247,12 @@ export class HangarScene {
     if (!this._thumbR) {
       const r = this._thumbR = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
       r.setPixelRatio(1); r.setSize(w, h, false);
-      r.outputColorSpace = THREE.SRGBColorSpace; r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.1;
+      r.outputColorSpace = THREE.SRGBColorSpace; r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 0.95;
       r.setClearColor(0x000000, 0);
       const s = this._thumbScene = new THREE.Scene();
       const pm = new THREE.PMREMGenerator(r);
       this._thumbEnv = pm.fromScene(new RoomEnvironment(), 0.04).texture; pm.dispose();
-      s.environment = this._thumbEnv; s.environmentIntensity = 0.55;
+      s.environment = this._thumbEnv; s.environmentIntensity = 0.4;
       s.add(new THREE.HemisphereLight(0xdde6ff, 0x3a3226, 1.3));
       const d = new THREE.DirectionalLight(0xfff0d8, 2.6); d.position.set(5, 7, 6); s.add(d);
       const rim = new THREE.DirectionalLight(0xbcd0ff, 1.0); rim.position.set(-6, 3, -5); s.add(rim);

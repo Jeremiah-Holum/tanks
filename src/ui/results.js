@@ -1,6 +1,7 @@
 // Post-battle results: banner, personal stats, XP / credits breakdown, mastery & medals, team score.
 import { h, clear, fmt, signed, roman, ICON, svg, classIcon, flag, masteryIcon, medalIcon } from './dom.js';
-import { TANKS, CLASS_LABEL } from '../meta/roster.js';
+import { TANKS, CLASS_LABEL, childrenOf } from '../meta/roster.js';
+import { researchInfo } from '../meta/economy.js';
 import { masteryThresholds, MASTERY_NAMES } from '../meta/economy.js';
 
 const LINE_LABEL = { participation: 'Participation', damage: 'Damage dealt', assist: 'Assisted damage', kills: 'Vehicles destroyed',
@@ -87,7 +88,8 @@ function summary(S, r, def) {
         nextM ? h('small', `${MASTERY_NAMES[r.mastery + 1]}: ${fmt(nextM)} base XP`) : null)),
     h('h3.sf-h', 'Medals'),
     r.medals.length ? h('div.rs-medals', r.medals.map((m) => h('div.rs-medal', { title: m.desc }, medalIcon(m.id, 58), h('b', m.name), h('small', m.desc))))
-      : h('div.rs-nomedal', 'No medals this battle. Top Gun needs 6 kills; Steel Wall, 1.5× your HP blocked.'));
+      : h('div.rs-nomedal', 'No medals this battle. Top Gun needs 6 kills; Steel Wall, 1.5× your HP blocked.'),
+    progress(S, r));
   return h('div.rs-summary', personal, earn, ach);
 }
 
@@ -100,4 +102,18 @@ function teamScore(r) {
       h('span.t', classIcon(x.cls, 12), h('i', roman(x.tier)), x.short),
       h('span.d', fmt(x.dmg)), h('span.k', x.kills), h('span.x', fmt(x.xp)))));
   return h('div.rs-teams', table(r.teams[0], 'Your team', 'ally'), table(r.teams[1], 'Enemy team', 'enemy'));
+}
+
+// Research progress towards the next vehicles in this tank's line.
+function progress(S, r) {
+  const p = S.profile;
+  const next = childrenOf(r.tankId).filter((d) => !p.researched.includes(d.id)).slice(0, 2);
+  if (!next.length) return null;
+  return h('div.rs-next', h('h3.sf-h', 'Research progress'), next.map((d) => {
+    const ri = researchInfo(p, d.id), have = Math.min(d.xp, (p.tanks[r.tankId]?.xp || 0) + p.freeXp), f = have / Math.max(1, d.xp);
+    return h('div.rs-nrow' + (ri.ok ? '.ok' : ''),
+      h('div.rs-ntop', h('span.tier', roman(d.tier)), classIcon(d.cls, 12), h('b', d.name),
+        h('span.rs-nval', ri.ok ? 'Ready to research!' : `${fmt(have)} / ${fmt(d.xp)} XP`)),
+      h('div.rs-nbar', h('i', { style: { width: (f * 100).toFixed(1) + '%' } })));
+  }));
 }

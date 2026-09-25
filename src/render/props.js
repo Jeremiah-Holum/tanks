@@ -113,6 +113,10 @@ function broadleaf(seed, spec, far) {
       const p0 = V3(lean.x * y0 / H, y0, lean.z * y0 / H);
       const len = R * (0.6 + r() * 0.45), up = spec.narrow ? 1.6 : 0.7 + r() * 0.5;
       const p1 = p0.clone().add(V3(Math.cos(a) * len, len * up, Math.sin(a) * len));
+      { // keep branch tips inside the crown so no bare twigs poke out of the foliage
+        const q = V3(p1.x / semi.x, (p1.y - C.y) / semi.y, p1.z / semi.z), l = q.length();
+        if (l > 0.75) p1.set(q.x / l * 0.75 * semi.x, C.y + q.y / l * 0.75 * semi.y, q.z / l * 0.75 * semi.z);
+      }
       vb.tube(p0, p1, spec.trunkR * 0.42, spec.trunkR * 0.12, 5, spec.bark, 0.5, 0.7, wf(p0), wf(p1));
       if (spec.bare) { // twigs for winter trees
         const p2 = p1.clone().add(V3(Math.cos(a + 0.7) * len * 0.5, len * 0.4, Math.sin(a + 0.7) * len * 0.5));
@@ -127,6 +131,11 @@ function broadleaf(seed, spec, far) {
       vb.card(C, V3(-n.z, 0, n.x).multiplyScalar(R * 1.05), V3(0, sy * 1.05, 0), spec.cell, crownN, () => 0.8, wf);
     }
     for (const [h, s] of [[0.45, 0.9], [0.1, 1.0]]) vb.card(C.clone().add(V3(0, sy * h, 0)), V3(R * s, 0, 0), V3(0, 0, R * s), spec.cell, () => V3(0, 1, 0), () => 0.9, wf);
+    for (let k = 0; k < 4; k++) { // tilted cards fill the silhouette from every side
+      const a = (k / 4) * Math.PI * 2 + 0.4, n = V3(Math.cos(a), 0.9, Math.sin(a)).normalize();
+      const [U, Vv] = cardAxes(n, R * 0.8, sy * 0.8, k);
+      vb.card(C.clone().add(V3(Math.cos(a) * R * 0.3, sy * 0.1, Math.sin(a) * R * 0.3)), U, Vv, spec.cell, crownN, () => 0.85, wf);
+    }
   } else {
     const lobes = [];
     for (let k = 0; k < spec.lobes; k++) {
@@ -282,6 +291,28 @@ class GB {
       this.poly(pts, uvs, cell, null, rough);
     }
   }
+  // surface of revolution with smooth normals. prof: [[r, y], ...] bottom → top
+  lathe(cx, cz, prof, sides, cell, { tile = TILE_M[cell], rough = 0.95, ao = true } = {}) {
+    const rect = ATLAS[cell], rows = prof.length, b = this.p.length / 3;
+    let acc = 0; const vs = [0];
+    for (let k = 1; k < rows; k++) { acc += Math.hypot(prof[k][0] - prof[k - 1][0], prof[k][1] - prof[k - 1][1]); vs.push(acc); }
+    const circ = 2 * Math.PI * Math.max(...prof.map((q) => q[0]));
+    for (let k = 0; k < rows; k++) {
+      const [r, y] = prof[k], pa = prof[Math.max(0, k - 1)], pb = prof[Math.min(rows - 1, k + 1)];
+      const dr = pb[0] - pa[0], dy = pb[1] - pa[1], L = Math.hypot(dr, dy) || 1, nr = dy / L, ny = -dr / L;
+      const shade = ao ? 0.7 + 0.3 * Math.min(1, y / 1.2) : 1;
+      for (let j = 0; j <= sides; j++) {
+        const a = (j / sides) * Math.PI * 2, ca = Math.cos(a), sa = -Math.sin(a);
+        const w = new THREE.Vector3(cx + ca * r, y, cz + sa * r).applyMatrix4(this.m), n = new THREE.Vector3(ca * nr, ny, sa * nr).applyMatrix3(this.nm).normalize();
+        this.p.push(w.x, w.y, w.z); this.n.push(n.x, n.y, n.z); this.uv.push((j / sides) * circ / tile, vs[k] / tile);
+        this.c.push(shade * this.tint[0], shade * this.tint[1], shade * this.tint[2]); this.r.push(...rect); this.rough.push(rough);
+      }
+    }
+    for (let k = 0; k < rows - 1; k++) for (let j = 0; j < sides; j++) {
+      const a0 = b + k * (sides + 1) + j, a1 = a0 + 1, c0 = a0 + sides + 1, c1 = c0 + 1;
+      this.i.push(a0, a1, c1, a0, c1, c0);
+    }
+  }
   geometry() {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(this.p, 3));
@@ -324,10 +355,14 @@ function gableHouse(g, r, { ox = 0, sx, sz, H, wall = 'plaster', roof = 'roofTil
   g.poly([V3(X1, ye, -sz - ov), V3(X0, ye, -sz - ov), V3(X0, H + th, 0), V3(X1, H + th, 0)], [[X1 / tr, 0], [X0 / tr, 0], [X0 / tr, rl / tr], [X1 / tr, rl / tr]], roof, [0.85, 0.85, 1, 1], 0.7);
   g.poly([V3(X1, ye - th, sz + ov), V3(X0, ye - th, sz + ov), V3(X0, H, 0), V3(X1, H, 0)], [[0, 0], [1, 0], [1, 1], [0, 1]], 'timber', [0.4, 0.4, 0.4, 0.4]);
   g.poly([V3(X0, ye - th, -sz - ov), V3(X1, ye - th, -sz - ov), V3(X1, H, 0), V3(X0, H, 0)], [[0, 0], [1, 0], [1, 1], [0, 1]], 'timber', [0.4, 0.4, 0.4, 0.4]);
-  for (const s of [1, -1]) { // fascia boards along the eaves and the gable verges
+  for (const s of [1, -1]) { // fascia boards along the eaves and barge boards on the gable verges
     g.wall(X0, s * (sz + ov), X1, s * (sz + ov), ye - th, ye, 'timber', { ao: false });
-    const xe = s > 0 ? X1 : X0;
-    g.poly([V3(xe, ye - th, s * (sz + ov)), V3(xe, ye - th, -s * (sz + ov)), V3(xe, H, 0)].map((p, j) => p), [[0, 0], [1, 0], [0.5, 1]], 'timber', [0.5, 0.5, 0.5]);
+    const xe = s > 0 ? X1 : X0, bw = 0.22;
+    for (const zs of [1, -1]) {
+      const za = zs * (sz + ov), p0 = V3(xe, ye - th, za), p1 = V3(xe, H - th * 0.5, 0), p2 = V3(xe, H + th, 0), p3 = V3(xe, ye + bw * 0.4, za);
+      const pts = s * zs > 0 ? [p0, p1, p2, p3] : [p0, p3, p2, p1];
+      g.poly(pts, [[0, 0], [1, 0], [1, 1], [0, 1]], 'timber', [0.6, 0.6, 0.6, 0.6]);
+    }
   }
   // timber framing
   if (timber) {
@@ -487,10 +522,14 @@ function solidGeometry(o, hAt) {
       break;
     }
     case 'haystack': {
-      const H = 2 * sy;
+      // traditional round stacks: a bulging body and a rounded or pointed thatched top
+      const H = 2 * sy, R = sx;
       g.tint = [1, 0.97, 0.9];
-      if (v % 2 === 0) { g.cyl(0, 0, -0.3, H * 0.55, sx * 0.92, sx, 12, 'straw', { cap: false, rough: 1 }); g.cyl(0, 0, H * 0.55, H, sx, 0.15, 12, 'straw', { rough: 1 }); }
-      else { g.cyl(0, 0, -0.3, H * 0.7, sx, sx * 0.97, 12, 'straw', { cap: false, rough: 1 }); g.cyl(0, 0, H * 0.7, H * 0.92, sx * 0.97, sx * 0.6, 12, 'straw', { cap: false }); g.cyl(0, 0, H * 0.92, H, sx * 0.6, 0.1, 12, 'straw'); }
+      const prof = v % 2 === 0
+        ? [[R * 0.82, -0.4], [R * 0.9, 0.2], [R * 0.99, H * 0.25], [R, H * 0.42], [R * 0.95, H * 0.58], [R * 0.8, H * 0.72], [R * 0.58, H * 0.85], [R * 0.3, H * 0.95], [0.02, H]]
+        : [[R * 0.75, -0.4], [R * 0.85, 0.3], [R * 0.97, H * 0.3], [R * 0.9, H * 0.5], [R * 0.62, H * 0.7], [R * 0.34, H * 0.86], [R * 0.08, H * 0.98], [0.02, H]];
+      g.lathe(0, 0, prof, 20, 'straw');
+      if (v % 2 === 1) g.cyl(0, 0, H * 0.9, H + 0.6, 0.05, 0.04, 5, 'timber', { cap: false });
       g.tint = [1, 1, 1];
       break;
     }
@@ -754,6 +793,14 @@ export class Props {
     const recs = []; // { obj, parts: [{mesh:'veg'|'solid', id, geoNear, geoFar, base: Matrix4, pos}] }
     const vegInst = [];
     const S = map.size, r = rng(map.seed || 5);
+    // forest detection: trees with 3+ neighbours within 9 m get fuller crowns and undergrowth
+    const grid = new Map(), gk = (x, z) => ((x / 10) | 0) + ',' + ((z / 10) | 0);
+    for (const o of map.objects) if (o.kind === 'tree' || o.kind === 'pine') { const k = gk(o.x, o.z); if (!grid.has(k)) grid.set(k, []); grid.get(k).push(o); }
+    const neighbours = (o) => {
+      let n = 0; const ci = (o.x / 10) | 0, cj = (o.z / 10) | 0;
+      for (let j = cj - 1; j <= cj + 1; j++) for (let i = ci - 1; i <= ci + 1; i++) for (const q of grid.get(i + ',' + j) || []) if (q !== o && (q.x - o.x) ** 2 + (q.z - o.z) ** 2 < 81) n++;
+      return n;
+    };
     for (const o of map.objects) {
       if (!VEG_KINDS[o.kind]) continue;
       const [sx, sy, sz] = o.s, v = (o.variant | 0) % 4;
@@ -765,23 +812,31 @@ export class Props {
           vegInst.push({ obj: o, kind: 'hedge', v: 0, x: wx, y: terrain.heightAt(wx, wz) - 0.1, z: wz, yaw: o.yaw + (k % 2) * Math.PI, sc: [L * 1.08, 2 * sy, sz] });
         }
       } else if (o.kind === 'bush') vegInst.push({ obj: o, kind: 'bush', v, x: o.x, y: o.y - 0.15, z: o.z, yaw: o.yaw, sc: [sx, 2 * sy, sz] });
-      else vegInst.push({ obj: o, kind: o.kind, v, x: o.x, y: o.y - 0.05, z: o.z, yaw: o.yaw, sc: [sx, 2 * sy, sz] });
+      else {
+        const forest = neighbours(o) >= 3, k = forest ? 1.22 : 1;
+        vegInst.push({ obj: o, kind: o.kind, v, x: o.x, y: o.y - 0.05, z: o.z, yaw: o.yaw, sc: [sx * k, 2 * sy * (forest ? 1.06 : 1), sz * k] });
+        if (forest && r() < 0.75) { // low undergrowth (visual only: too low to hide a tank)
+          const a = r() * 6.28, d = 1.5 + r() * 3, x = o.x + Math.cos(a) * d, z = o.z + Math.sin(a) * d, w = 0.9 + r() * 0.7;
+          vegInst.push({ obj: null, kind: 'bush', v: [0, 1, 3][(r() * 3) | 0], x, y: terrain.heightAt(x, z) - 0.1, z, yaw: r() * 6.28, sc: [w, 0.55 + r() * 0.35, w * (0.8 + r() * 0.4)] });
+        }
+      }
     }
     // forests and tree lines outside the playable square (far LOD only)
     const outer = [];
     const nOut = this.q.farTrees | 0;
     if (nOut > 0) {
-      let tries = 0;
-      while (outer.length < nOut && tries++ < nOut * 4) {
-        const side = (r() * 4) | 0, along = -300 + r() * (S + 600), out = 25 + Math.pow(r(), 1.6) * 1100;
+      // dense woods (overlapping crowns ~7 m apart) and a few tree lines
+      let guard = 0;
+      while (outer.length < nOut && guard++ < 400) {
+        const side = (r() * 4) | 0, along = -400 + r() * (S + 800), out = 20 + Math.pow(r(), 1.4) * 1300;
         const [cx, cz] = side === 0 ? [along, -out] : side === 1 ? [along, S + out] : side === 2 ? [-out, along] : [S + out, along];
-        const nClump = 8 + ((r() * 26) | 0), rad = 25 + r() * 70;
-        const pine = bare || r() < 0.45;
-        for (let k = 0; k < nClump && outer.length < nOut; k++) {
-          const a = r() * 6.28, d = Math.sqrt(r()) * rad, x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d;
-          if (x > -8 && x < S + 8 && z > -8 && z < S + 8) continue;
-          const h = pine ? 14 + r() * 8 : 8 + r() * 5, w = pine ? 3 + r() : 3 + r() * 1.5;
-          outer.push({ obj: null, kind: pine ? 'pine' : 'tree', v: (r() * 4) | 0, x, y: terrain.heightAt(x, z) - 0.3, z, yaw: r() * 6.28, sc: [w, h, w], farOnly: true });
+        const rad = 30 + r() * 110, pine = bare || r() < 0.4, n = Math.min(nOut - outer.length, Math.round((Math.PI * rad * rad) / 55));
+        for (let k = 0; k < n; k++) {
+          const a = r() * 6.28, d = Math.sqrt(r()) * rad * (0.8 + 0.3 * Math.sin(a * 3 + cx));
+          const x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d;
+          if (x > -6 && x < S + 6 && z > -6 && z < S + 6) continue;
+          const h = pine ? 15 + r() * 8 : 10 + r() * 6, w = pine ? 3.4 + r() : 4.2 + r() * 1.8;
+          outer.push({ obj: null, kind: pine && r() < 0.9 ? 'pine' : 'tree', v: (r() * 4) | 0, x, y: terrain.heightAt(x, z) - 0.3, z, yaw: r() * 6.28, sc: [w, h, w], farOnly: true });
         }
       }
     }

@@ -93,14 +93,17 @@ void terrainShade() {
   // outside the playable square: the edge extruded, fading into a procedural patchwork
   vec2 cl = clamp(xz, 0.0, uMapSize); float dOut = length(xz - cl);
   if (dOut > 0.0) {
-    vec2 fc = floor((xz + (nz.rg - 0.5) * 60.0) / vec2(170.0, 120.0));
+    vec2 wq = mat2(0.94, 0.34, -0.34, 0.94) * xz + (texture2D(tNoise, xz / 900.0).rg - 0.5) * 160.0 + (nz.rg - 0.5) * 30.0;
+    vec2 fc = floor(wq / vec2(190.0, 130.0));
     float hc = hash12(fc), hc2 = hash12(fc + 7.3);
-    float isF = step(0.5, hc) * step(hc, 0.9);
+    float isF = step(0.42, hc) * step(hc, 0.88);
     vec4 PA = vec4(1.0 - isF, 0.0, 0.0, 0.0);
     vec4 PB = vec4(0.0, 0.0, isF, 0.0);
     float t = smoothstep(40.0, 260.0, dOut);
     A = mix(A, PA, t); B = mix(B, PB, t);
-    F = mix(F, vec4(0.5 + 0.5 * cos(hc2 * 6.28), 0.5 + 0.5 * sin(hc2 * 6.28), hc, hc2), t);
+    float ang = 0.35 + step(0.5, hc2) * 1.5708;
+    float oc = hc2 < 0.3 ? 2.0 : hc2 < 0.5 ? 4.0 : hc2 < 0.7 ? 3.0 : hc2 < 0.85 ? 1.0 : 0.0; // mostly green crops far out
+    F = mix(F, vec4(0.5 + 0.5 * cos(ang), 0.5 + 0.5 * sin(ang), oc / 4.0, hash12(fc + 3.1)), step(0.5, t));
   }
   float w[8]; w[0] = A.r; w[1] = A.g; w[2] = A.b; w[3] = A.a; w[4] = B.r; w[5] = B.g; w[6] = B.b; w[7] = B.a;
   // the scenery ring outside the play area: rocky ground only where it is actually steep
@@ -118,21 +121,30 @@ void terrainShade() {
   vec2 uvN = xz / 4.0, uvF = mat2(0.8, -0.6, 0.6, 0.8) * xz / 15.7 + 0.37;
   vec2 fuv = frot * xz / 4.0;
   float far = smoothstep(25.0, 140.0, dist);
+  // far away every layer fades to its average colour times un-tiled procedural variation,
+  // so no tile repeat survives into the distance
+  float fade = smoothstep(45.0, 240.0, dist);
+  float nv = texture2D(tNoise, mat2(0.8, 0.6, -0.6, 0.8) * xz / 29.0).g * 0.6 + texture2D(tNoise, mat2(0.5, -0.87, 0.87, 0.5) * xz / 11.0).b * 0.4;
   vec4 col[8]; float hb[8]; float mx = 0.0;
   for (int i = 0; i < 8; i++) {
     col[i] = vec4(0.0); hb[i] = 0.0;
     if (w[i] > 0.01) {
-      vec2 u1 = i == 6 ? fuv : uvN;
-      vec4 a = texture(tAlb, vec3(u1, float(i)));
-      vec4 b = texture(tAlb, vec3(i == 6 ? fuv * 0.31 + 0.2 : uvF, float(i)));
-      col[i] = vec4(mix(a.rgb, b.rgb, mix(0.3, 0.62, far)), mix(a.a, b.a, 0.4));
+      vec4 a, b;
+      if (i == 6) { a = texture(tAlb, vec3(fuv, 6.0), 0.5); b = a; }
+      else { a = texture(tAlb, vec3(uvN, float(i))); b = texture(tAlb, vec3(uvF, float(i))); }
+      vec3 avg = textureLod(tAlb, vec3(0.5, 0.5, float(i)), 10.0).rgb;
+      vec3 det = mix(a.rgb, b.rgb, mix(0.3, 0.62, far));
+      col[i] = vec4(mix(det, avg * (0.78 + 0.44 * nv), fade * 0.85), mix(mix(a.a, b.a, 0.4), 0.5, fade));
       if (i == 6) { // crop rows: soil in the furrows, the field's crop on the ridges
         int ci = int(F.b * 4.0 + 0.5);
-        float ridge = smoothstep(0.3, 0.72, a.a);
-        vec3 lum = vec3(dot(a.rgb, vec3(0.3, 0.59, 0.11)) / 0.18);
+        float ridge = mix(smoothstep(0.25, 0.75, a.a), 0.62, smoothstep(20.0, 110.0, dist));
+        float lum = clamp(dot(col[i].rgb, vec3(0.3, 0.59, 0.11)) / max(dot(avg, vec3(0.3, 0.59, 0.11)), 1e-3), 0.6, 1.4);
         float fill = uCropCov[ci];
-        vec3 crop = mix(uSoil, uCrop[ci] * clamp(lum, 0.55, 1.5) * mix(0.72, 1.0, ridge), max(ridge, step(0.8, fill) * fill));
-        col[i].rgb = mix(col[i].rgb, mix(crop, crop * b.rgb / max(dot(b.rgb, vec3(0.33)), 0.02) * 0.2, 0.25 * far), uCropMix);
+        float dense = step(0.8, fill);
+        float rowVar = 0.93 + 0.14 * texture2D(tNoise, vec2(dot(fuv, vec2(1.0, 0.0)) / 6.0, dot(fuv, vec2(0.0, 1.0)) / 90.0)).b;
+        vec3 crop = mix(uSoil * lum, uCrop[ci] * lum * rowVar * mix(mix(0.72, 0.9, dense), 1.0, ridge), max(ridge, dense * fill));
+        crop *= 0.92 + 0.16 * nv;
+        col[i].rgb = mix(col[i].rgb, crop, uCropMix);
       }
       hb[i] = w[i] * (0.35 + col[i].a);
       mx = max(mx, hb[i]);
@@ -509,13 +521,13 @@ export class Terrain {
     const m = new THREE.MeshStandardMaterial({ map: tex, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.95 });
     const U = { uOrigin: { value: new THREE.Vector2() }, uSpacing: { value: gq.spacing }, uRadius: { value: gq.radius }, uDensity: { value: dens },
       uHeight: { value: this.heightTex }, uHRes: { value: this.map.res }, uSize: { value: this.map.size }, tSplatA: { value: this.splatA }, tSplatB: { value: this.splatB },
-      uTime: { value: 0 }, tNoise: { value: noiseTexture() } };
+      uTime: { value: 0 }, tNoise: { value: noiseTexture() }, tField: { value: this.fieldTex }, uCropMix: { value: this.theme.cropMix ?? 1 } };
     m.onBeforeCompile = (sh) => {
       Object.assign(sh.uniforms, U);
       patchFarShadow(sh, this.U);
       sh.vertexShader = sh.vertexShader.replace('#include <common>', `#include <common>
         attribute vec2 aCell; uniform vec2 uOrigin; uniform float uSpacing, uRadius, uDensity, uHRes, uSize, uTime;
-        uniform highp sampler2D uHeight; uniform sampler2D tSplatA; uniform sampler2D tSplatB; uniform sampler2D tNoise;
+        uniform highp sampler2D uHeight; uniform sampler2D tSplatA; uniform sampler2D tSplatB; uniform sampler2D tNoise; uniform sampler2D tField; uniform float uCropMix;
         varying vec3 vShade;
         float gh(vec2 p) {
           vec2 g = clamp(p / uSize, 0.0, 1.0) * (uHRes - 1.0); vec2 i = floor(g); vec2 f = g - i;
@@ -534,7 +546,13 @@ export class Terrain {
           vec2 uvm = wp / uSize;
           vec4 SA = texture2D(tSplatA, uvm), SB = texture2D(tSplatB, uvm);
           float patchN = texture2D(tNoise, wp / 23.0).g;
-          float dens = (SA.r * 1.0 + SA.g * 0.2) * (1.0 - SB.r) * smoothstep(0.25, 0.6, patchN + 0.2) * uDensity;
+          float dens = smoothstep(0.55, 0.9, SA.r) * (1.0 - SB.r) * smoothstep(0.25, 0.6, patchN + 0.2) * uDensity;
+          // cereal stalks on wheat / barley / stubble fields
+          vec4 FC = texture2D(tField, uvm);
+          int crop = int(FC.b * 4.0 + 0.5);
+          float cropH = crop == 0 ? 1.55 : crop == 1 ? 1.25 : crop == 3 ? 0.4 : 0.0;
+          float onField = smoothstep(0.6, 0.9, SB.b) * step(0.1, cropH) * uCropMix;
+          dens = max(dens, onField);
           float inMap = step(0.0, wp.x) * step(0.0, wp.y) * step(wp.x, uSize) * step(wp.y, uSize);
           float keep = step(hh.z, dens) * inMap;
           float fade = 1.0 - smoothstep(uRadius * 0.55, uRadius * 0.98, dist);
@@ -543,7 +561,7 @@ export class Terrain {
           vec3 transformed = position;
           transformed.xz = mat2(cos(ang), -sin(ang), sin(ang), cos(ang)) * transformed.xz * (0.8 + 0.5 * hh.y);
           float tall = texture2D(tNoise, wp / 9.0 + 0.3).b;
-          transformed.y *= sc * (0.22 + 0.5 * patchN * patchN + 0.25 * tall);
+          transformed.y *= sc * mix(0.22 + 0.5 * patchN * patchN + 0.25 * tall, cropH * (0.8 + 0.2 * tall), onField);
           transformed.xz *= 0.75;
           transformed.xz *= step(0.001, sc);
           float sway = sin(uTime * 1.9 + wp.x * 0.35 + wp.y * 0.21) + 0.4 * sin(uTime * 4.3 + wp.x * 1.3);
@@ -551,15 +569,14 @@ export class Terrain {
           transformed += vec3(wp.x, gh(wp) - 0.03, wp.y);
           float m1 = texture2D(tNoise, mat2(0.87, 0.5, -0.5, 0.87) * wp / 520.0).r, m2 = texture2D(tNoise, mat2(0.6, -0.8, 0.8, 0.6) * wp / 190.0 + 0.5).g;
           vShade = vec3(0.8 + 0.4 * m1) * mix(vec3(1.0), vec3(1.16, 1.08, 0.72), smoothstep(0.42, 0.78, m2) * 0.7) * (0.9 + 0.2 * position.y);
-          vUv = vec2(uv.x * 0.5 + step(0.93, fract(hh.y * 7.1)) * 0.5, uv.y);
-          vMapUv = vUv;`)
+          vMapUv = vec2((uv.x + (onField > 0.5 ? 2.0 : step(0.93, fract(hh.y * 7.1)))) / 3.0, uv.y);
+          if (onField > 0.5) vShade = (crop == 1 ? vec3(1.05, 1.05, 0.85) : crop == 3 ? vec3(1.1, 1.0, 0.85) : vec3(1.0)) * (0.85 + 0.3 * fract(hh.z * 31.0));`)
         .replace('#include <uv_vertex>', '');
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', '#include <common>\nvarying vec3 vShade;')
         .replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('normal *= faceDirection;', ''))
         .replace('#include <map_fragment>', '#include <map_fragment>\ndiffuseColor.rgb *= vShade;');
       // vUv isn't declared for a plain map material in all builds: declare what we use
-      if (!/varying vec2 vUv;/.test(sh.vertexShader)) sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec2 vUv;');
     };
     m.customProgramCacheKey = () => 'grass';
     const mesh = new THREE.Mesh(geo, m);

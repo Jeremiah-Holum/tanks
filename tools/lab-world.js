@@ -32,8 +32,43 @@ function testMap() {
     theme: { name: 'summer' }, play: { min: 50, max: 950 } };
 }
 
+// Gallery: every prop kind and variant in rows on gentle ground (for detail work).
+function galleryMap() {
+  const m = testMap();
+  const res = m.res, cell = m.cell;
+  for (let j = 0; j < res; j++) for (let i = 0; i < res; i++) {
+    const x = i * cell, z = j * cell;
+    m.heights[j * res + i] = 10 + 1.5 * Math.sin(x / 90) * Math.cos(z / 110);
+    m.ground[j * res + i] = x > 540 && x < 620 && z > 420 && z < 520 ? 8 : Math.abs(z - 470) < 4 ? 2 : 0;
+  }
+  m.fields = [{ x: 580, z: 470, w: 80, d: 100, yaw: 0, crop: 'wheat', poly: [[540, 420], [620, 420], [620, 520], [540, 520]] }];
+  const H = (x, z) => m.heights[Math.round(z / cell) * res + Math.round(x / cell)];
+  const objs = []; let id = 0;
+  const add = (kind, x, z, s, variant = 0, yaw = 0) => objs.push({ id: id++, kind, x, y: H(x, z) - 0.15, z, yaw, s, variant });
+  for (let v = 0; v < 4; v++) add('tree', 440 + v * 12, 500, [3, 4.5, 3], v);
+  for (let v = 0; v < 4; v++) add('pine', 440 + v * 12, 515, [3.2, 9, 3.2], v);
+  for (let v = 0; v < 4; v++) add('bush', 440 + v * 8, 488, [2, 0.9, 1.9], v);
+  add('hedge', 480, 482, [7, 1.2, 1.3], 0, 0.2);
+  add('haystack', 505, 488, [2.6, 1.8, 2.6], 0); add('haystack', 515, 488, [2.6, 1.8, 2.6], 1);
+  const B = [['house', [5.6, 4.3, 4.8], 4], ['barn', [6.5, 4, 5], 3], ['shed', [4, 2.3, 3], 3], ['station', [9, 4.5, 5], 1]];
+  let x = 420;
+  for (const [k, s, n] of B) for (let v = 0; v < n; v++) { add(k, x + s[0], 445, s, v, 0.1); x += 2 * s[0] + 5; }
+  add('church', 470, 410, [22, 13, 9], 0, 0);
+  add('ruin', 520, 410, [6, 2.5, 4], 0, 0.3); add('ruin', 540, 410, [6, 2.5, 4], 1, -0.2);
+  add('wall', 450, 472, [7, 0.7, 0.3], 0, 0); add('fence', 470, 472, [6.8, 0.6, 0.1], 0, 0); add('sandbags', 490, 472, [4, 0.6, 0.6], 0, 0);
+  add('wreck', 505, 462, [1.6, 1.2, 3], 0, 0.5); add('logs', 520, 462, [4, 0.8, 1.5], 0, 0); add('tank_trap', 530, 462, [1, 0.9, 1], 0, 0);
+  add('windmill', 420, 520, [3.6, 8, 3.6], 0, 0.4); add('silo', 405, 505, [3, 7, 3], 0, 0);
+  for (let v = 0; v < 4; v++) add('rock', 440 + v * 9, 530, [2.2, 1.4, 1.8], v, v);
+  // a small wood for forest density
+  let s = 3; const r = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+  for (let k = 0; k < 60; k++) { const a = r() * 6.28, d = Math.sqrt(r()) * 30; add(r() < 0.5 ? 'tree' : 'pine', 380 + Math.cos(a) * d, 470 + Math.sin(a) * d, r() < 0.5 ? [3, 4.5, 3] : [3.2, 9, 3.2], (r() * 4) | 0, r() * 6); }
+  m.objects = objs; m.id = 'gallery';
+  return m;
+}
+
 async function getMap(id) {
   if (id === 'test') return testMap();
+  if (id === 'gallery') return galleryMap();
   try { const m = await import('../src/sim/map/index.js'); return m.loadMap(id); }
   catch (e) { console.warn('LAB map module unavailable, using test map:', e.message); return testMap(); }
 }
@@ -57,6 +92,15 @@ const t0 = performance.now();
 view.loadMap(map, { time: P.has('time') ? +P.get('time') : undefined });
 const loadMs = performance.now() - t0;
 const world = await makeWorld(map);
+// debug switches: dbg=noshadow,nofog,nograss,noveg,nosolid,noterrain
+for (const d of (P.get('dbg') || '').split(',').filter(Boolean)) {
+  if (d === 'noshadow') view.env.sun.castShadow = false;
+  if (d === 'nofog') view.env.U.uFogDensity.value = 0;
+  if (d === 'nograss' && view.terrain.grass) view.terrain.grass.mesh.visible = false;
+  if (d === 'noveg' && view.props.veg) view.props.veg.visible = false;
+  if (d === 'nosolid' && view.props.solid) view.props.solid.visible = false;
+  if (d === 'nofarshadow') view.debugNoFar = true;
+}
 await view.ready;
 
 const cam = { pos: { x: 0, y: 0, z: 0 }, look: { x: 0, y: 0, z: 1 }, fov: 55 };

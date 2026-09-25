@@ -137,16 +137,18 @@ function layerPixel(k, u, v, N, pal, rgb) {
       break;
     }
     case 'field': {
-      const rows = 16;
-      const warp = N.fbm(u, v, 4, 2) * 0.05;
-      const r = 0.5 + 0.5 * Math.cos((u + warp) * rows * Math.PI * 2);       // 1 on the ridge
-      const big = N.fbm(u, v, 3, 4), fine = N.vn(u * 200, v * 200, 200), fine2 = N.vn(u * 64, v * 128, 64);
-      const soil = mix3(pal.field[0], pal.field[1], big);
+      // 6 ridges per 4 m tile (0.67 m rows), soft profile, clods and colour noise
+      const rows = 6;
+      const warp = N.fbm(u, v, 4, 2) * 0.025;
+      const r = Math.pow(0.5 + 0.5 * Math.cos((u + warp) * rows * Math.PI * 2), 1.5);
+      const big = N.fbm(u, v, 3, 4), fine = N.vn(u * 160, v * 160, 160), fine2 = N.fbm(u, v * 0.5, 24, 3);
+      const clod = N.worley(u, v, 48); const cl = sstep(0.35, 0.1, clod.f1) * (clod.id - 0.5);
+      const soil = mix3(pal.field[0], pal.field[1], sstep(0.2, 0.8, big));
       const crop = mix3(pal.field[2], pal.field[3], sstep(0.3, 0.7, N.fbm(u, v, 6, 3)));
-      const m = sstep(0.35, 0.75, r * (0.7 + 0.5 * fine2) * pal.fieldCover + (pal.fieldCover - 0.5) * 0.4);
+      const m = sstep(0.25, 0.85, r * (0.75 + 0.4 * fine2) * pal.fieldCover + (pal.fieldCover - 0.5) * 0.35);
       c = mix3(soil, crop, m);
-      const s = 0.8 + 0.4 * fine; c = [c[0] * s, c[1] * s, c[2] * s];
-      h = r * 0.8 + fine * 0.2;
+      const s = (0.86 + 0.24 * fine) * (1 + cl * 0.25); c = [c[0] * s, c[1] * s, c[2] * s];
+      h = r * 0.7 + fine * 0.15 + fine2 * 0.15;
       break;
     }
     default: { // snow
@@ -341,8 +343,9 @@ export const FOL_CELL = (k) => { const cx = k % 2, cy = (k / 2) | 0; return [cx 
 
 // Grass card atlas 512x256: [left] plain grass blades, [right] grass with wild flowers.
 export function grassAtlas(pal, key) {
+  // 768x256: [0] grass blades, [1] grass with wild flowers, [2] cereal stalks with ears (tinted per crop)
   return once('grass:' + key, () => {
-    const W = 512, Hh = 256;
+    const W = 768, Hh = 256;
     const [c, g] = mk(W, Hh);
     let seed = 4242;
     const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
@@ -364,6 +367,19 @@ export function grassAtlas(pal, key) {
         for (let p = 0; p < 5; p++) { g.fillStyle = rgbs(fc, 0.9 + rnd() * 0.2); g.beginPath(); g.arc(x + Math.cos(p * 1.26) * 3.5, y + Math.sin(p * 1.26) * 3.5, 3, 0, 7); g.fill(); }
         g.fillStyle = 'rgb(220,180,40)'; g.beginPath(); g.arc(x, y, 3, 0, 7); g.fill();
       }
+    }
+    // cereal: neutral straw-gold stalks with ears; the shader tints wheat / barley / stubble
+    for (let k = 0; k < 95; k++) {
+      const x = 512 + 8 + rnd() * 240, h = 170 + rnd() * 80, lean = (rnd() - 0.5) * 30;
+      const k2 = 0.8 + rnd() * 0.4;
+      g.strokeStyle = `rgba(${196 * k2 | 0},${170 * k2 | 0},${96 * k2 | 0},1)`; g.lineWidth = 2.2;
+      g.beginPath(); g.moveTo(x, Hh); g.quadraticCurveTo(x + lean * 0.3, Hh - h * 0.5, x + lean, Hh - h); g.stroke();
+      g.fillStyle = `rgba(${214 * k2 | 0},${184 * k2 | 0},${104 * k2 | 0},1)`;
+      g.save(); g.translate(x + lean, Hh - h); g.rotate(lean / 120);
+      g.beginPath(); g.ellipse(0, -12, 4, 15, 0, 0, 7); g.fill();
+      g.strokeStyle = `rgba(${220 * k2 | 0},${196 * k2 | 0},${130 * k2 | 0},0.9)`; g.lineWidth = 1;
+      for (let a = -2; a <= 2; a++) { g.beginPath(); g.moveTo(0, -20); g.lineTo(a * 4, -44 - rnd() * 8); g.stroke(); }
+      g.restore();
     }
     const t = canvasTex(c, { aniso: 4 });
     t.wrapS = THREE.ClampToEdgeWrapping; return t;

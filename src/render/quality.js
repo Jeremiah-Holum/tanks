@@ -9,7 +9,7 @@ export const QUALITY = {
     shadowMap: 1024, shadowRange: 110, shadowRadius: 1.5,
     grass: null,             // { radius, spacing }
     treeLod: 110,            // near-LOD distance for trees and bushes (m)
-    wind: false, bloom: false, ao: false, aa: 'fxaa', clouds: true, farTrees: 400,
+    wind: false, bloom: false, ao: false, aa: 'fxaa', clouds: true, farTrees: 900,
     detailNormals: false,
   },
   medium: {
@@ -17,7 +17,7 @@ export const QUALITY = {
     terrainStep: 2, outerTerrain: 1,
     shadowMap: 2048, shadowRange: 150, shadowRadius: 2.5,
     grass: { radius: 38, spacing: 0.55 },
-    treeLod: 170, wind: true, bloom: true, ao: false, aa: 'fxaa', clouds: true, farTrees: 1200,
+    treeLod: 170, wind: true, bloom: true, ao: false, aa: 'fxaa', clouds: true, farTrees: 2600,
     detailNormals: true,
   },
   high: {
@@ -25,7 +25,7 @@ export const QUALITY = {
     terrainStep: 2, outerTerrain: 1.4,
     shadowMap: 4096, shadowRange: 220, shadowRadius: 3,
     grass: { radius: 60, spacing: 0.45 },
-    treeLod: 260, wind: true, bloom: true, ao: true, aa: 'smaa', clouds: true, farTrees: 2400,
+    treeLod: 260, wind: true, bloom: true, ao: true, aa: 'smaa', clouds: true, farTrees: 4200,
     detailNormals: true,
   },
 };

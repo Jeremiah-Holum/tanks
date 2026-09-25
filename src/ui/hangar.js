@@ -152,6 +152,7 @@ function renderCarousel(S, el, onPick) {
     const img = h('img.car-img', { alt: '' });
     S.thumb(def).then((url) => { if (url) { img.src = url; img.classList.add('ok'); } });
     return h('button.car-card' + (id === p.selected ? '.on' : ''), {
+      'data-id': id,
       title: def.name,
       onclick: () => { if (id !== p.selected) { selectTank(p, id); S.save(); onPick(); } },
       ondblclick: () => S.showDetails(id),
@@ -166,5 +167,5 @@ function renderCarousel(S, el, onPick) {
   const strip = h('div.car-strip', cards);
   const scroll = (d) => () => strip.scrollBy({ left: d * 400, behavior: 'smooth' });
   clear(el).append(h('button.car-nav', { onclick: scroll(-1) }, svg(ICON.arrowL)), strip, h('button.car-nav', { onclick: scroll(1) }, svg(ICON.arrowR)));
-  requestAnimationFrame(() => el.querySelector('.car-card.on')?.scrollIntoView({ block: 'nearest', inline: 'center' }));
+  requestAnimationFrame(() => el.querySelector('.car-card.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
 }

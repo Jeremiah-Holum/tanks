@@ -86,4 +86,7 @@ else if (screen === 'results') {
   screens.finishBattle(world, world.tanks.find((t) => t.player).id, battle);
 }
 await document.fonts.ready;
-setTimeout(() => { window.__lab.ready = true; }, +(q.get('wait') || 2500));
+// wait for the 3D thumbnails that the screen asked for, then a beat for transitions
+await new Promise((r) => setTimeout(r, 600));
+await Promise.all([...screens.thumbs.values()]);
+setTimeout(() => { window.__lab.ready = true; }, +(q.get('wait') || 900));

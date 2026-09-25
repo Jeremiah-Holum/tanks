@@ -155,7 +155,7 @@ float tkNoise(vec3 x){ vec3 i = floor(x), f = fract(x); f = f*f*(3.0-2.0*f);
 float tkFbm(vec3 p){ float a = 0.5, s = 0.0; for (int i = 0; i < 4; i++) { s += a*tkNoise(p); p = p*2.03 + 1.7; a *= 0.5; } return s/0.9375; }
 `;
 const VPARS = /* glsl */`
-attribute vec4 aSurf; attribute vec4 aExt; attribute float aSpin;
+attribute vec4 aSurf; attribute vec4 aExt; attribute float aSpin; attribute vec3 aNext; attribute vec3 aNextN;
 uniform float uTravel;
 varying vec4 vSurf; varying vec4 vExt; varying vec3 vObj; varying vec3 vONrm; varying vec2 vTUv;
 `;
@@ -163,6 +163,9 @@ const VNORMAL = /* glsl */`
 vec3 objectNormal = vec3( normal );
 float tkA = uTravel * aSpin, tkC = cos(tkA), tkS = sin(tkA);
 if (aSpin > 0.0) objectNormal.yz = vec2(objectNormal.y*tkC - objectNormal.z*tkS, objectNormal.y*tkS + objectNormal.z*tkC);
+// track link teeth: morph towards the previous link's copy by the fraction of a pitch travelled
+float tkF = aSpin < 0.0 ? fract(uTravel / aExt.z) : 0.0;
+if (aSpin < 0.0) objectNormal = normalize(mix(objectNormal, aNextN, tkF));
 #ifdef USE_TANGENT
 vec3 objectTangent = vec3( tangent.xyz );
 #endif
@@ -170,10 +173,11 @@ vec3 objectTangent = vec3( tangent.xyz );
 const VBEGIN = /* glsl */`
 vec3 transformed = vec3( position );
 if (aSpin > 0.0) { vec2 q = transformed.yz - aExt.zw; transformed.yz = aExt.zw + vec2(q.x*tkC - q.y*tkS, q.x*tkS + q.y*tkC); }
+if (aSpin < 0.0) transformed = mix(position, aNext, tkF);
 vSurf = aSurf; vExt = aExt; vObj = position; vONrm = normal; vTUv = uv;
 `;
 const FPARS = /* glsl */`
-uniform vec3 uPaint, uCamoA, uCamoB, uMud, uDust;
+uniform vec3 uPaint, uCamoA, uCamoB, uMud, uDust, uSeed;
 uniform sampler2D uDecal, uTrack;
 uniform float uTravel;
 varying vec4 vSurf; varying vec4 vExt; varying vec3 vObj; varying vec3 vONrm; varying vec2 vTUv;
@@ -187,8 +191,8 @@ vec3 col = vColor.rgb;
 if (paintM > 0.5) {
   vec3 pc = uPaint;
 #ifdef CAMO
-  float c1 = tkFbm(P*vec3(0.8,1.15,0.8) + vec3(3.1,0.0,1.7));
-  float c2 = tkFbm(P*vec3(0.95,1.3,0.95) + vec3(11.0,5.0,7.0));
+  float c1 = tkFbm(P*vec3(0.8,1.15,0.8) + uSeed);
+  float c2 = tkFbm(P*vec3(0.95,1.3,0.95) + uSeed.zxy + vec3(11.0,5.0,7.0));
   pc = mix(pc, uCamoA, smoothstep(0.545, 0.565, c1));
   pc = mix(pc, uCamoB, smoothstep(0.565, 0.585, c2) * (1.0 - smoothstep(0.52, 0.545, c1)));
 #endif
@@ -209,7 +213,7 @@ if (kind > 0.5 && kind < 1.5) {           // markings (atlas)
 }
 // worn edges: lighter dusty paint, chips down to dark steel
 float edge = vSurf.w;
-float chip = paintM * smoothstep(0.86, 0.9, n4*0.5 + tkNoise(P*61.0)*0.3 + n2*0.2 + edge*0.38 - 0.02);
+float chip = paintM * smoothstep(0.88, 0.92, n4*0.5 + tkNoise(P*61.0)*0.3 + n2*0.2 + edge*0.2);
 col = mix(col, col*1.28 + 0.01, paintM*edge*0.5);
 col = mix(col, vec3(0.085, 0.075, 0.065), chip*0.85);
 tMetal = mix(tMetal, 0.6, chip); tRough = mix(tRough, 0.5, chip);
@@ -259,8 +263,9 @@ function attachShader(m) {
 }
 const MATS = new Map();
 // Shared material for a paint scheme (+ charred variant for wrecks).
-export function tankMaterial(p, charred = false) {
-  const key = `${p.base}:${p.camoA ?? ''}:${p.camoB ?? ''}:${charred ? 1 : 0}`;
+export function tankMaterial(p, charred = false, seed = 0) {
+  if (p.camoA == null) seed = 0;
+  const key = `${p.base}:${p.camoA ?? ''}:${p.camoB ?? ''}:${charred ? 1 : 0}:${seed}`;
   let m = MATS.get(key);
   if (m) return m;
   m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.65, metalness: 0.15 });
@@ -270,6 +275,7 @@ export function tankMaterial(p, charred = false) {
   m.userData.uni = {
     uPaint: { value: lin(p.base) }, uCamoA: { value: lin(p.camoA ?? p.base) }, uCamoB: { value: lin(p.camoB ?? p.base) },
     uMud: { value: lin(0x3e3528) }, uDust: { value: lin(0x9c8e74) },
+    uSeed: { value: new THREE.Vector3(3.1 + (seed % 97) * 1.37, (seed % 89) * 0.71, 1.7 + (seed % 83) * 1.13) },
     uDecal: { value: decalTexture() }, uTrack: { value: trackTexture() },
   };
   attachShader(m);
@@ -302,6 +308,8 @@ const ST = {
   glass: { c: lin(0x8fa2a8), metal: 0.9, rough: 0.12, paint: 0, dirt: false },
   bore: { c: lin(0x070707), metal: 0.2, rough: 0.85, paint: 0, dirt: false },
   interior: { c: lin(0xb9b6a4), metal: 0.1, rough: 0.8, paint: 0 },
+  brass: { c: lin(0xa88442), metal: 0.85, rough: 0.35, paint: 0, dirt: false },
+  radio: { c: lin(0x4d5244), metal: 0.2, rough: 0.6, paint: 0 },
   link: { c: lin(0x3d3934), metal: 0.5, rough: 0.6, paint: 0, dirtK: 0.4 },
   decal: { c: WHITE, metal: 0.1, rough: 0.6, paint: 0, kind: 1 },
 };
@@ -316,8 +324,9 @@ const V = {
 const _v3 = new THREE.Vector3(), _n3 = new THREE.Vector3(), _nm = new THREE.Matrix3();
 
 class GB {
-  constructor(yOff = 0, dirtH = 1) {
+  constructor(yOff = 0, dirtH = 1, morph = false) {
     this.P = []; this.N = []; this.C = []; this.S = []; this.E = []; this.W = []; this.U = []; this.I = [];
+    this.morph = morph; this.X = []; this.Y = []; this.nx = null;
     this.yOff = yOff; this.dirtH = dirtH; this.st = ST.paint;
   }
   get count() { return this.P.length / 3; }
@@ -330,6 +339,7 @@ class GB {
     this.E.push(dirt, s.kind || 0, s.e2 ?? 0, s.e3 ?? 0);
     this.W.push(s.spin || 0);
     this.U.push(u, w);
+    if (this.morph) { const q = this.nx; if (q) this.X.push(q[0], q[1], q[2], q[3], q[4], q[5]); else this.X.push(x, y, z, nx, ny, nz); }
     return this.count - 1;
   }
   // triangle, wound so that its face normal agrees with n
@@ -430,6 +440,12 @@ class GB {
     g.setAttribute('aExt', new THREE.Float32BufferAttribute(this.E, 4));
     g.setAttribute('aSpin', new THREE.Float32BufferAttribute(this.W, 1));
     g.setAttribute('uv', new THREE.Float32BufferAttribute(this.U, 2));
+    if (this.morph) {
+      const X = new Float32Array(this.X);
+      const ib = new THREE.InterleavedBuffer(X, 6);
+      g.setAttribute('aNext', new THREE.InterleavedBufferAttribute(ib, 3, 0));
+      g.setAttribute('aNextN', new THREE.InterleavedBufferAttribute(ib, 3, 3));
+    }
     g.setIndex(this.I);
     g.computeBoundingSphere(); g.computeBoundingBox();
     return g;
@@ -491,7 +507,7 @@ function dims(def) {
   const tFrontZ = (y) => zOn(tp[0], y), tRearZ = (y) => zOn(tp[1], y);
   const tSideX = (y) => (tp[2].d - tp[2].n[1] * y) / tp[2].n[0];
   return {
-    h, t, tr, arm, pc, top, trackTop, fullW: h.W + 2 * tr.w, xT: h.W / 2 + tr.w / 2,
+    h, t, tr, arm, pc, top, trackTop, fullW: h.sponson === false ? h.W : h.W + 2 * tr.w, xT: h.W / 2 + tr.w / 2, sponson: h.sponson !== false,
     noseY: h.clr + h.H * (1 - h.upper.frac), frontZ, rearZ, sideX, tFrontZ, tRearZ, tSideX,
     upperFront: up[0], turretPos: arm.turretPos, nation: def.nation,
     fixed: t.shape === 'casemate', open: t.shape === 'open' || !!t.open, cast: t.shape === 'cast',
@@ -500,7 +516,7 @@ function dims(def) {
 }
 
 // ------------------------------------------------------------------ running gear layout
-const TT = 0.06; // track thickness
+const TT = 0.075; // track thickness
 function gearLayout(def, D) {
   const h = def.hull, tr = h.track, style = tr.style || 'torsion';
   const big = style === 'christie' || style === 'interleaved';
@@ -630,6 +646,48 @@ function trackBand(gb, path, closed, x0, x1, pitch, variant, side, lod) {
   }
 }
 
+// Cleats on the outside of every link (+ guide horns inside on steel tracks). Geometry is static;
+// the shader slides each link towards the previous link's copy by fract(travel / pitch).
+function trackTeeth(gb, path, x0, x1, pitch, horns) {
+  const { pts, total } = resample(path, 0.02, true);
+  const N = Math.max(8, Math.round(total / pitch)), p = total / N;
+  const at = (s) => {
+    s = ((s % total) + total) % total;
+    let lo = 0, hi = pts.length - 1;
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (pts[m][2] <= s) lo = m; else hi = m; }
+    const a = pts[lo], b = pts[hi], t = (s - a[2]) / ((b[2] - a[2]) || 1);
+    let tz = b[0] - a[0], ty = b[1] - a[1]; const l = Math.hypot(tz, ty) || 1; tz /= l; ty /= l;
+    return { z: a[0] + (b[0] - a[0]) * t, y: a[1] + (b[1] - a[1]) * t, tz, ty };
+  };
+  const xm = (x0 + x1) / 2, w = x1 - x0;
+  const boxes = (k) => {
+    const f = at(k * p), Oz = f.ty, Oy = -f.tz; // outward = (ty, −tz) in (z, y)
+    const res = [];
+    const mk = (cx, off, sx, sAlong, sOut) => {
+      const c = [cx, f.y + Oy * off, f.z + Oz * off];
+      const ax = [[1, 0, 0], [0, f.ty, f.tz], [0, Oy, Oz]], hs = [sx / 2, sAlong / 2, sOut / 2];
+      for (let a = 0; a < 3; a++) for (const sg of [-1, 1]) {
+        const n = ax[a].map((v) => v * sg), u = ax[(a + 1) % 3], v = ax[(a + 2) % 3], hu = hs[(a + 1) % 3], hv = hs[(a + 2) % 3];
+        const fc = V.add(c, V.mul(n, hs[a]));
+        res.push({ n, q: [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([i, j]) => V.add(fc, V.add(V.mul(u, i * hu), V.mul(v, j * hv)))) });
+      }
+    };
+    mk(xm, TT / 2 + 0.012, w * 0.92, p * 0.3, 0.03);
+    if (horns) mk(xm, -TT / 2 - 0.03, Math.min(0.1, w * 0.25), p * 0.42, 0.065);
+    return res;
+  };
+  const all = []; for (let k = 0; k < N; k++) all.push(boxes(k));
+  for (let k = 0; k < N; k++) {
+    const cur = all[k], prev = all[(k + N - 1) % N];
+    cur.forEach((face, fi) => {
+      const pf = prev[fi];
+      const ids = face.q.map((q, j) => { gb.nx = [...pf.q[j], ...pf.n]; return gb.v(q[0], q[1], q[2], face.n[0], face.n[1], face.n[2]); });
+      gb.quad(ids[0], ids[1], ids[2], ids[3], face.n);
+    });
+  }
+  gb.nx = null;
+}
+
 // ------------------------------------------------------------------ wheels
 const spinSt = (st, y, z, r) => ({ ...st, spin: 1 / r, e2: y, e3: z });
 // A road wheel (rubber tyre on a dished disc), sprocket, idler or return roller, spinning about
@@ -658,11 +716,11 @@ function wheel(gb, kind, xc, y, z, R, w, side, lod, nation) {
       [0, o + 0.07, S], [R * 0.13, o + 0.07, S], [R * 0.17, o + 0.03, P], [R * 0.55, o + 0.0, P], [R * 0.7, o - 0.02, P],
       [R * 0.8, o - 0.02, S], [R * 0.86, o - 0.02, S], [R * 0.86, -o, null],
     ], seg, m);
-    const nt = Math.round(R * 42);
+    const nt = Math.round(R * 40);
     gb.st = S;
     for (let k = 0; k < nt; k++) {
       const a = k / nt * Math.PI * 2;
-      gb.geo(unitBox(), M(xc, y + Math.cos(a) * R * 0.92, z + Math.sin(a) * R * 0.92, -a, 0, 0, w * 0.9, 0.1, 0.075));
+      for (const s of [-1, 1]) gb.geo(unitBox(), M(xc + s * w * 0.28, y + Math.cos(a) * R * 0.95, z + Math.sin(a) * R * 0.95, -a, 0, 0, w * 0.3, 0.14, 0.085));
     }
   } else { // idler: steel spoked disc, no tyre
     gb.lathe([
@@ -673,9 +731,29 @@ function wheel(gb, kind, xc, y, z, R, w, side, lod, nation) {
 }
 
 // ------------------------------------------------------------------ static details
-function fenders(gb, D, G) {
+function fenders(gb, D, G, lod) {
   const { tr, trackTop, xT } = D;
   gb.st = ST.paint;
+  if (!D.sponson) { // exposed tracks: full-length track guards on brackets, bent down at both ends
+    const y = Math.max(trackTop, G.yTop + TT + 0.04), z0 = -G.Lt / 2 - 0.02, z1 = G.Lt / 2 + 0.04, w = tr.w + 0.06;
+    for (const side of [1, -1]) {
+      const x = side * (xT + 0.01);
+      gb.st = ST.paint;
+      gb.box(M(x, y + 0.008, (z0 + z1) / 2, 0, 0, 0, w, 0.016, z1 - z0));
+      gb.box(M(x + side * w / 2, y - 0.02, (z0 + z1) / 2, 0, 0, 0, 0.014, 0.06, z1 - z0)); // rolled outer lip
+      gb.box(M(x, y - 0.07, z1 + 0.07, -1.0, 0, 0, w, 0.014, 0.2));
+      gb.box(M(x, y - 0.06, z0 - 0.06, 1.0, 0, 0, w, 0.014, 0.18));
+      if (!lod) {
+        gb.st = ST.steel;
+        const nb = 4;
+        for (let k = 0; k < nb; k++) { const z = z0 + (z1 - z0) * (k + 0.5) / nb; gb.box(M(side * (D.h.W / 2 + 0.05), y - 0.05, z, 0, 0, side * 0.5, 0.1, 0.1, 0.04)); }
+        // stowage on the guards: a box on the left, tools on the right
+        gb.st = ST.paint; if (side > 0) gb.box(M(x, y + 0.13, z0 + (z1 - z0) * 0.3, 0, 0, 0, tr.w * 0.8, 0.24, 0.5));
+        else { gb.st = ST.wood; gb.cyl(M(x, y + 0.035, (z0 + z1) / 2 - 0.2, Math.PI / 2, 0, 0, 0.018, 1.0, 0.018), null, 6); gb.st = ST.steel; gb.box(M(x, y + 0.03, (z0 + z1) / 2 + 0.4, 0, 0, 0, 0.16, 0.012, 0.22)); }
+      }
+    }
+    return;
+  }
   for (const side of [1, -1]) {
     const x = side * xT, w = tr.w + 0.05;
     const zf = D.frontZ(trackTop + 0.01), zEnd = G.Lt / 2 + 0.06;
@@ -1055,7 +1133,7 @@ function castLoft(gb, planes, H, zc, r, rt, M_ = 36) {
 }
 
 // Open-topped turret: inner walls, floor and a rim instead of a roof.
-function openTurret(gb, faces, D) {
+function openTurret(gb, faces, D, cal) {
   const H = D.t.H;
   gb.st = ST.interior;
   for (const f of faces) {
@@ -1073,7 +1151,19 @@ function openTurret(gb, faces, D) {
   }
   const roof = faces.find((f) => f.plane.plate === 'turret.open');
   if (roof) gb.plate(roof.verts.map((v) => [v[0] * 0.95, 0.1, v[2] * 0.95 + (D.t.zOff || 0) * 0.05]), [0, 1, 0], 0, 0, false);
-  gb.st = ST.dark; gb.box(M(0, 0.45, (D.t.zOff || 0) - 0.1, 0, 0, 0, 0.5, 0.7, 0.9));
+  // crew-less fighting compartment: ammo racks along the walls, radio on the rear wall, seats
+  const zF = D.tFrontZ(0.4), zR = D.tRearZ(0.4), rs = clamp(cal / 2000 * 1.3, 0.02, 0.07);
+  for (const s of [1, -1]) {
+    const x = s * (D.tSideX(0.35) - 0.03 - 0.12), z0 = zR + 0.25, z1 = Math.max(z0 + 0.3, zF - 0.55);
+    gb.st = ST.interior; gb.box(M(x, 0.33, (z0 + z1) / 2, 0, 0, 0, 0.22, 0.46, z1 - z0));
+    gb.st = ST.brass;
+    const n = Math.max(2, Math.floor((z1 - z0) / (rs * 2.6)));
+    for (let k = 0; k < n; k++) gb.cyl(M(x, 0.6, z0 + (z1 - z0) * (k + 0.5) / n, 0, 0, 0, rs, 0.12, rs), null, 8);
+  }
+  gb.st = ST.radio; gb.box(M(D.tSideX(0.6) * 0.35, 0.62, zR + 0.2, 0, 0, 0, 0.42, 0.3, 0.24));
+  gb.st = ST.dark; for (let k = 0; k < 3; k++) gb.cyl(M(D.tSideX(0.6) * 0.35 - 0.12 + k * 0.12, 0.66, zR + 0.325, Math.PI / 2, 0, 0, 0.025, 0.01, 0.025), null, 8);
+  gb.st = ST.dark; gb.box(M(-D.tSideX(0.3) * 0.4, 0.4, zR + 0.55, 0, 0, 0, 0.3, 0.06, 0.3));
+  gb.box(M(-D.tSideX(0.3) * 0.4, 0.6, zR + 0.4, -0.2, 0, 0, 0.3, 0.35, 0.05));
 }
 
 // ------------------------------------------------------------------ markings
@@ -1194,7 +1284,7 @@ function buildGeometry(def, lod, gunIndex) {
   hullGb.st = ST.paint;
   for (const f of solidFaces(D.pc.hullLower.planes)) { if (f.plane.n[1] > 0.99) continue; hullGb.plate(f.verts, f.plane.n, e, 0.55, rings); }
   for (const f of upperFaces) hullGb.plate(f.verts, f.plane.n, e, 0.55, rings);
-  fenders(hullGb, D, G);
+  fenders(hullGb, D, G, lod);
   if (def.look?.skirts) skirts(hullGb, D, G);
   if (!lod) { spareLinks(hullGb, D); hullDetails(hullGb, D, G, def, info); }
   else {
@@ -1205,9 +1295,14 @@ function buildGeometry(def, lod, gunIndex) {
   // running gear per side
   const sides = {};
   for (const side of [1, -1]) {
-    const tg = lod ? hullGb : new GB(0, D.dirtH), wg = lod ? hullGb : new GB(0, D.dirtH);
-    const xs = D.xT;
-    trackBand(tg, G.loop, true, side > 0 ? xs - D.tr.w / 2 : -xs - D.tr.w / 2, side > 0 ? xs + D.tr.w / 2 : -xs + D.tr.w / 2, G.pitch, G.variant, side, lod);
+    const tg = lod ? hullGb : new GB(0, D.dirtH, true), wg = lod ? hullGb : new GB(0, D.dirtH);
+    const xs = D.xT, x0 = side > 0 ? xs - D.tr.w / 2 : -xs - D.tr.w / 2, x1 = x0 + D.tr.w;
+    trackBand(tg, G.loop, true, x0, x1, G.pitch, G.variant, side, lod);
+    if (!lod) {
+      const { total } = resample(G.loop, 0.05, true), pitch = total / Math.max(1, Math.round(total / G.pitch));
+      tg.st = { ...ST.link, c: lin(0x46413a), spin: -1, e2: pitch, dirtK: 0.5 };
+      trackTeeth(tg, G.loop, x0, x1, pitch, G.variant !== 0);
+    }
     for (const w of G.wheels) {
       if (lod && G.style === 'hvss' && w.x < 0) continue; // twin wheels → one wide wheel far away
       if (lod && G.style === 'hvss') wheel(wg, 'road', side * xs, w.y, w.z, w.r, D.tr.w * 0.75, side, lod, D.nation);
@@ -1240,7 +1335,8 @@ function buildGeometry(def, lod, gunIndex) {
     if (pl === 'turret.floor' || (D.open && pl === 'turret.open')) continue;
     turGb.plate(f.verts, f.plane.n, te, tilt, rings);
   }
-  if (D.open && !lod) openTurret(turGb, tFaces, D);
+  const gunDef = (def.guns ? def.guns[gunIndex] || def.guns[0] : def.gun) || { cal: 75, len: 3 };
+  if (D.open && !lod) openTurret(turGb, tFaces, D, gunDef.cal);
   if (!lod) turretDetails(turGb, D, def);
   else cupola(turGb, D, 1);
   turretMarkings(turGb, tFaces, D);
@@ -1257,6 +1353,12 @@ function buildGeometry(def, lod, gunIndex) {
   const piv = D.arm.gun.pivot;
   const gg = new GB(yT + piv[1], D.dirtH);
   barrel(gg, gun, D.nation, lod);
+  if (!lod && D.open) { // breech block and recoil cylinders, visible from above
+    const rb = gun.cal / 2000;
+    gg.st = ST.steel; gg.box(M(0, 0, -0.5, 0, 0, 0, rb * 7 + 0.08, rb * 6 + 0.08, 0.7));
+    gg.st = ST.paint; for (const s of [1, -1]) gg.cyl(M(s * (rb * 2.5 + 0.05), rb * 2 + 0.03, -0.2, Math.PI / 2, 0, 0, 0.04, 0.7, 0.04), null, 8);
+    gg.st = ST.steel; gg.box(M(rb * 5 + 0.1, -0.05, -0.55, 0, 0, 0, 0.04, 0.3, 0.3));
+  }
   if (!lod) { // collar that pitches with the gun inside the mantlet
     const rc = clamp(gun.cal / 2000 * 3.2 + 0.05, 0.1, 0.24);
     gg.st = D.cast ? ST.cast : ST.paint;
@@ -1284,7 +1386,8 @@ export function buildTankModel(def, opts = {}) {
   const G = buildGeometry(def, lod, gunIndex);
   const D = G.D;
   const paint = resolvePaint(def, opts.paint);
-  const base = tankMaterial(paint), charred = tankMaterial(paint, true);
+  let seed = 7; for (const ch of def.id) seed = (seed * 31 + ch.charCodeAt(0)) % 9973;
+  const base = tankMaterial(paint, false, seed), charred = tankMaterial(paint, true, seed);
   const group = new THREE.Group(); group.name = 'tank:' + def.id;
   const body = new THREE.Group(); group.add(body);
   const mk = (geo, mat, parent, name) => { const m = new THREE.Mesh(geo, mat); m.name = name; m.castShadow = true; m.receiveShadow = true; parent.add(m); return m; };

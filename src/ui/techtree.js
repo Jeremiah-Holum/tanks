@@ -59,6 +59,7 @@ export function buildTree(S, nation) {
     h('span.lg.owned', 'In garage'), h('span.lg.researched', 'Researched'), h('span.lg.ready', 'Can research'), h('span.lg.locked', 'Locked'))), body, tip);
 
   function render() {
+    tip.classList.remove('on');
     for (const b of tabs.children) b.classList.toggle('on', b.textContent === NATIONS[nation].label);
     el.dataset.nation = nation;
     const L = layoutTree(nation);
@@ -97,6 +98,7 @@ function node(S, d, box, tip, rerender) {
   const img = h('img.tn-img', { alt: '' });
   S.thumb(d).then((u) => { if (u) { img.src = u; img.classList.add('ok'); } });
   const el = h('button.tn.' + st + (d.id === p.selected ? '.sel' : ''), {
+    'data-id': d.id,
     style: { left: box.left + 'px', top: box.top + 'px', width: box.w + 'px', height: box.h + 'px' },
     onclick: () => act(S, d, st, rerender),
     onmouseenter: () => showTip(S, tip, d, st, el),
@@ -150,7 +152,7 @@ function showTip(S, tip, d, st, anchor) {
     h('div.tip-head', flag(d.nation), h('span.tn-tier', roman(d.tier)), classIcon(d.cls, 13), h('b', d.name)),
     h('div.tip-cls', CLASS_LABEL[d.cls]),
     h('div.tip-stats', h('span', `${s.hp} HP`), h('span', `${s.pen} mm`), h('span', `${s.dmg} dmg`), h('span', `${d.speed} km/h`)),
-    lines);
+    ...lines);
   const a = anchor.getBoundingClientRect(), W = window.innerWidth;
   tip.style.left = Math.min(W - 270, a.right + 8) + 'px';
   tip.style.top = Math.max(60, a.top - 6) + 'px';

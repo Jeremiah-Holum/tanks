@@ -11,6 +11,7 @@ const args = process.argv.slice(2);
 const opt = (k, d) => { const i = args.indexOf(k); if (i < 0) return d; const v = args[i + 1]; args.splice(i, 2); return v; };
 const [W, H] = opt('--size', '1280x720').split('x').map(Number);
 const out = opt('--out', 'shots/ui');
+const flow = args.includes('--flow'); if (flow) args.splice(args.indexOf('--flow'), 1);
 const PORT = process.env.SF_PORT || 8477;
 const list = args.length ? args : ['hangar', 'tree', 'details', 'loading', 'results', 'record', 'settings'];
 mkdirSync(out, { recursive: true });
@@ -33,7 +34,8 @@ try {
       await r.fulfill({ status: 200, body: readFileSync(f), headers: { 'content-type': css ? 'text/css' : 'font/woff2', 'access-control-allow-origin': '*' } });
     } catch { await r.abort(); }
   });
-  for (const item of list) {
+  if (flow) await runFlow(page);
+  else for (const item of list) {
     const [screen, extra] = item.split(':');
     const t0 = Date.now();
     await page.goto(`http://127.0.0.1:${PORT}/tools/ui-lab.html?screen=${screen}${extra ? '&' + extra : ''}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -43,4 +45,49 @@ try {
     console.log(name, `${Date.now() - t0} ms`);
   }
 } finally { await browser.close(); }
+
+// --flow: click through research → buy → garage → battle → settings on a fresh profile and assert the state.
+async function runFlow(page) {
+  const check = (c, m) => { console.log((c ? '  ok   ' : '  FAIL ') + m); if (!c) errors++; };
+  await page.goto(`http://127.0.0.1:${PORT}/tools/ui-lab.html?screen=tree&nation=usa&fresh`, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => window.__lab && window.__lab.ready, null, { timeout: 120000 });
+  await page.evaluate(() => { const S = window.__lab.screens; S.profile.tanks.usa_t1.xp = 400; S.showTree('usa'); });
+  await page.waitForTimeout(400);
+  await page.hover('.tn[data-id="usa_m3stuart"]'); await page.waitForTimeout(250);
+  await page.screenshot({ path: `${out}/flow-tree-tooltip.png` });
+  await page.click('.tn[data-id="usa_m2lt"]');
+  await page.waitForSelector('.sf-modal.confirm'); await page.waitForTimeout(300);
+  await page.screenshot({ path: `${out}/flow-research-dialog.png` });
+  await page.click('.sf-modal .sf-btn.primary');
+  await page.waitForTimeout(300);
+  check(await page.evaluate(() => window.__lab.screens.profile.researched.includes('usa_m2lt')), 'research via tree dialog');
+  await page.click('.tn[data-id="usa_m2lt"]');
+  await page.waitForSelector('.sf-modal.confirm'); await page.waitForTimeout(300);
+  await page.screenshot({ path: `${out}/flow-buy-dialog.png` });
+  await page.click('.sf-modal .sf-btn.primary');
+  await page.waitForTimeout(300);
+  const st = await page.evaluate(() => { const p = window.__lab.screens.profile; return { owned: p.tanks.usa_m2lt.owned, credits: p.credits, sel: p.selected }; });
+  check(st.owned && st.sel === 'usa_m2lt', `buy via tree dialog (credits left ${st.credits})`);
+  await page.click('.tn[data-id="usa_m2lt"]');
+  await page.waitForSelector('.hangar');
+  await page.waitForTimeout(1500);
+  check(await page.evaluate(() => document.querySelector('.car-card.on')?.dataset.id === 'usa_m2lt'), 'owned node opens the garage with it selected');
+  await page.click('.hg-mode:nth-child(2)');
+  check(await page.evaluate(() => window.__lab.screens.battleSize === 7), 'skirmish 7v7 selected');
+  await page.click('.shell:nth-child(1) .stepper button:first-child');
+  const ammo = await page.evaluate(() => window.__lab.screens.profile.tanks.usa_m2lt.ammo.slice());
+  check(ammo.reduce((a, b) => a + b, 0) < 999, `ammo stepper works (${ammo.join('/')})`);
+  await page.click('.sf-iconbtn[title="Settings"]');
+  await page.click('.st-tab:nth-child(3)');
+  await page.waitForTimeout(200);
+  await page.screenshot({ path: `${out}/flow-settings-audio.png` });
+  await page.click('.st-toggle');
+  await page.click('.sf-modal .sf-btn.primary');
+  check(await page.evaluate(() => window.__lab.screens.profile.settings.voice === false), 'settings apply (voice off)');
+  await page.click('.sf-battle');
+  await page.waitForSelector('.loading');
+  const b = await page.evaluate(() => ({ n: document.querySelectorAll('.ld-team.ally .ld-row').length, me: document.querySelector('.ld-row.me .ld-tank')?.textContent }));
+  check(b.n === 7 && /M2/.test(b.me || ''), `BATTLE! builds a 7v7 and shows the loading screen (${b.n} rows, player in ${b.me})`);
+  await page.screenshot({ path: `${out}/flow-loading-7v7.png` });
+}
 console.log(errors ? `${errors} page errors` : 'no page errors');

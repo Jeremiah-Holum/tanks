@@ -91,9 +91,8 @@ const GROUND_RGB = [[92, 116, 58], [122, 102, 70], [150, 138, 112], [196, 176, 1
 export function renderMinimap(m, playerTeam = 0, px = 256) {
   const c = document.createElement('canvas'); c.width = c.height = px; c.className = 'ld-minimap';
   const ctx = c.getContext('2d'), img = ctx.createImageData(px, px), res = m.res, hts = m.heights;
-  const flip = playerTeam === 1 ? false : true; // own base at the bottom of the picture
-  const base0 = m.bases?.find((b) => b.team === playerTeam);
-  const upsideDown = base0 ? (base0.z < m.size / 2) === flip : false;
+  const own = m.bases?.find((b) => b.team === playerTeam);
+  const upsideDown = own ? own.z < m.size / 2 : false; // rotate 180° so our base is at the bottom
   for (let y = 0; y < px; y++) for (let x = 0; x < px; x++) {
     let i = Math.min(res - 2, Math.floor(x / px * (res - 1))), j = Math.min(res - 2, Math.floor(y / px * (res - 1)));
     if (upsideDown) { i = res - 2 - i; j = res - 2 - j; }
