@@ -10,7 +10,7 @@ export const size = (cal) => clamp(((cal || 75) - 15) / 120);
 // field reverb send (bigger guns send more).
 export function cannon(K, out, t, cal, o = {}) {
   const k = size(cal), g = o.gain ?? 1, brake = !!o.brake;
-  K.noise(out, t, { type: 'highpass', f: 2400 - 1000 * k, q: 0.5, dur: 0.03 + 0.05 * k, gain: g * (0.45 + (brake ? 0.25 : 0)) });
+  K.noise(out, t, { type: 'highpass', f: 2400 - 1000 * k, q: 0.5, dur: 0.03 + 0.05 * k, gain: g * (0.25 + 0.25 * k + (brake ? 0.25 : 0)) });
   K.noise(out, t, { type: 'lowpass', f: 5200 - 2800 * k, f1: 260 - 150 * k, fdur: 0.05 + 0.35 * k, q: 1.1, dur: 0.16 + 1.1 * k, gain: g * 0.7, attack: 0.001 });
   K.tone(out, t, { f: 150 - 90 * k, f1: 32 - 8 * k, fdur: 0.05 + 0.25 * k, dur: 0.1 + 0.55 * k, gain: g * (0.2 + 0.6 * k), shape: 3 });
   if (cal >= 30) K.noise(out, t + 0.015, { buf: 'brown', type: 'lowpass', f: 230 - 100 * k, dur: 0.4 + 2.4 * k, attack: 0.03 + 0.05 * k, gain: g * (0.15 + 0.5 * k * k) });
@@ -53,7 +53,11 @@ export function impact(K, out, t, surface, cal, o = {}) {
     K.tone(out, t, { f: 220, f1: 70, dur: 0.18, gain: g * 0.35 });
     for (let i = 0; i < 4; i++) K.tone(out, t + 0.08 + K.R() * 0.4, { f: 450 + K.R() * 500, f1: 1100 + K.R() * 600, dur: 0.05, gain: g * 0.05 });
     K.noise(out, t + 0.1, { type: 'highpass', f: 2800, dur: 1.2, attack: 0.15, gain: g * 0.1 });
-  } else if (/rock|stone|build|house|wall|brick|concrete|object|road|ruin|church|barn/.test(s)) {
+  } else if (/tree|pine|log|fence|shed|hay|hedge|bush/.test(s)) { // timber: splintering thunk
+    K.noise(out, t, { type: 'bandpass', f: 700, f1: 350, q: 1.2, dur: 0.25, gain: g * 0.5 });
+    K.ticks(out, t, { n: 6, span: 0.2, f: 1600, q: 2, gain: g * 0.3, dur: 0.02, skew: 1 });
+    K.tone(out, t, { f: 160, f1: 80, dur: 0.15, gain: g * 0.25 });
+  } else if (/rock|stone|build|house|wall|brick|concrete|object|road|ruin|church|barn|station|silo|windmill|bridge/.test(s)) {
     K.noise(out, t, { type: 'highpass', f: 1800, dur: 0.06, gain: g * 0.55 });
     K.noise(out, t, { type: 'bandpass', f: 900, f1: 300, q: 0.8, dur: 0.3, gain: g * 0.45 });
     K.tone(out, t, { f: 120, f1: 45, dur: 0.2, gain: g * 0.35 });

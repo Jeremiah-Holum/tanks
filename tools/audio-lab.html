@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Steel Front — audio lab</title>
+<style>
+  :root { --bg: #16191c; --panel: #20252a; --line: #343b42; --text: #d7dbe0; --dim: #8b949e; --amber: #e0a526; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.4 system-ui, sans-serif; padding: 12px; }
+  h1 { font-size: 16px; margin: 0 0 8px; color: var(--amber); letter-spacing: .08em; text-transform: uppercase; }
+  h2 { font-size: 12px; margin: 0 0 6px; color: var(--dim); text-transform: uppercase; letter-spacing: .08em; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px; }
+  button { background: #2b3238; color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 4px 8px; margin: 2px; cursor: pointer; font: inherit; }
+  button:hover { border-color: var(--amber); }
+  button.big { background: var(--amber); color: #111; font-weight: 600; padding: 6px 14px; }
+  label { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+  label span { width: 92px; color: var(--dim); }
+  label output { width: 64px; text-align: right; font-variant-numeric: tabular-nums; }
+  input[type=range] { flex: 1; min-width: 0; }
+  #stats { font: 12px monospace; color: var(--dim); white-space: pre-wrap; word-break: break-all; }
+  #log { font: 12px monospace; color: var(--dim); height: 160px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+  .row { margin: 4px 0; }
+</style>
+</head>
+<body>
+<h1>Steel Front · audio lab</h1>
+<p style="margin:0 0 10px;color:var(--dim)">Every sound is synthesised in <code>src/audio.js</code>. Press <b>Start audio</b> first (browsers need a click). The listener is the player's tank at the origin facing +z; the other tank sits at the distance and bearing below (bearing +90° is the listener's right).</p>
+<button class="big" id="unlock">Start audio</button>
+<div class="grid" style="margin-top:10px">
+  <section>
+    <h2>Mix</h2>
+    <label><span>master</span><input type="range" id="v-master" min="0" max="1" step="0.01" value="0.8"><output></output></label>
+    <label><span>sfx</span><input type="range" id="v-sfx" min="0" max="1" step="0.01" value="0.9"><output></output></label>
+    <label><span>music</span><input type="range" id="v-music" min="0" max="1" step="0.01" value="0.5"><output></output></label>
+    <label><span>voice</span><input type="range" id="v-voice" min="0" max="1" step="0.01" value="0.9"><output></output></label>
+    <label><span>crew voice</span><input type="checkbox" id="voiceOn" checked></label>
+    <div class="row"><button data-music="menu">Menu music</button><button data-music="battle">Battle ambience</button><button data-music="">Stop</button></div>
+  </section>
+  <section>
+    <h2>Source</h2>
+    <label><span>distance m</span><input type="range" id="dist" min="0" max="720" step="1" value="60"><output></output></label>
+    <label><span>bearing °</span><input type="range" id="bear" min="-180" max="180" step="5" value="30"><output></output></label>
+    <label><span>calibre mm</span><select id="cal"><option>20</option><option>37</option><option>50</option><option selected>75</option><option>88</option><option>105</option><option>122</option><option>152</option></select>
+      <label style="margin-left:10px"><input type="checkbox" id="brake"> muzzle brake</label></label>
+    <label><span>perspective</span><select id="persp"><option value="world">world (AI vs AI)</option><option value="shooter">player shoots</option><option value="target">player is hit</option></select></label>
+  </section>
+  <section>
+    <h2>Combat</h2>
+    <div class="row"><button data-ev="shot">Cannon shot</button><button data-ev="shotOwn">Own shot</button><button data-ev="volley">Volley ×5 (budget)</button></div>
+    <div class="row">Hit: <button data-hit="pen">pen</button><button data-hit="nopen">nopen</button><button data-hit="ricochet">ricochet</button><button data-hit="track">track</button><button data-hit="splash">splash</button><button data-hit="crit">crit</button></div>
+    <div class="row">Impact: <button data-imp="grass">ground</button><button data-imp="rock">rock</button><button data-imp="building">building</button><button data-imp="water">water</button><button data-imp="HE">HE</button><button data-ev="nearMiss">near miss</button></div>
+    <div class="row">Kill: <button data-kill="shot">shot</button><button data-kill="ammorack">ammo rack</button><button data-kill="fire">fire</button><button data-kill="ram">ram</button></div>
+    <div class="row"><button data-ev="fireOn">Fire on</button><button data-ev="fireOff">Fire off</button><button data-ev="ram">Ram</button><button data-ev="reloaded">Reloaded</button></div>
+  </section>
+  <section>
+    <h2>Own tank state</h2>
+    <div class="row">Module: <button data-mod="engine:damaged">engine dmg</button><button data-mod="engine:destroyed">engine dead</button><button data-mod="trackL:destroyed">track</button><button data-mod="gun:damaged">gun</button><button data-mod="ammoRack:damaged">ammo rack</button><button data-mod="fuel:damaged">fuel</button><button data-mod="turretRing:damaged">ring</button><button data-mod="engine:ok">repaired</button></div>
+    <div class="row">Crew: <button data-crew="commander">commander</button><button data-crew="gunner">gunner</button><button data-crew="driver">driver</button><button data-crew="radioman">radioman</button><button data-crew="loader">loader</button></div>
+    <div class="row">Consumable: <button data-cons="repair">repair</button><button data-cons="medkit">medkit</button><button data-cons="extinguisher">extinguisher</button></div>
+    <div class="row">Spot: <button data-ev="spotted">we're spotted</button><button data-ev="enemySpotted">enemy spotted</button></div>
+    <div class="row">Capture: <button data-cap="0">our base</button><button data-cap="1">enemy base</button><button data-ev="capReset">reset</button></div>
+    <div class="row">End: <button data-end="0">victory</button><button data-end="1">defeat</button><button data-end="-1">draw</button></div>
+  </section>
+  <section>
+    <h2>World &amp; UI</h2>
+    <div class="row"><button data-ev="treeFall">Tree falls</button><button data-ev="objectBreak">Object breaks</button></div>
+    <div class="row">UI: <button data-ui="hover">hover</button><button data-ui="click">click</button><button data-ui="toggle">toggle</button><button data-ui="back">back</button><button data-ui="error">error</button><button data-ui="purchase">purchase</button><button data-ui="research">research</button><button data-ui="notify">notify</button><button data-ui="battleStart">battle start</button></div>
+  </section>
+  <section>
+    <h2>Crew lines</h2>
+    <div id="lines"></div>
+  </section>
+  <section>
+    <h2>Engine (per-frame engine() calls)</h2>
+    <label><span>running</span><input type="checkbox" id="e-on"></label>
+    <label><span>class</span><select id="e-cls"><option value="light">light 15 t / 300 hp</option><option value="medium" selected>medium 30 t / 450 hp</option><option value="heavy">heavy 57 t / 700 hp</option></select></label>
+    <label><span>throttle</span><input type="range" id="e-thr" min="-1" max="1" step="0.05" value="0"><output></output></label>
+    <label><span>steer</span><input type="range" id="e-steer" min="-1" max="1" step="0.05" value="0"><output></output></label>
+    <label><span>turret °/s</span><input type="range" id="e-tur" min="-50" max="50" step="1" value="0"><output></output></label>
+    <label><span>engine</span><select id="e-mod"><option>ok</option><option>damaged</option><option>destroyed</option></select></label>
+    <label><span>AI tanks</span><input type="range" id="e-n" min="0" max="12" step="1" value="0"><output></output></label>
+    <div id="stats"></div>
+  </section>
+  <section><h2>Log</h2><div id="log"></div></section>
+</div>
+<script type="module">
+import { Audio, LINES } from '../src/audio.js';
+const A = window.__audio = new Audio();
+const $ = (id) => document.getElementById(id);
+const log = (s) => { const d = $('log'); d.textContent = s + '\n' + d.textContent.slice(0, 3000); };
+const CLS = { light: { mass: 15, power: 300, speed: 60 }, medium: { mass: 30, power: 450, speed: 48 }, heavy: { mass: 57, power: 700, speed: 38 } };
+const mk = (id, team, x, z) => ({ id, team, alive: true, pos: { x, y: 0, z }, yaw: 0, speed: 0, yawRate: 0, turretRate: 0, def: { ...CLS.medium }, gunDef: { cal: 75, reload: 6, muzzleBrake: false }, modules: { engine: { state: 'ok' } } });
+const player = mk(1, 0, 0, 0), enemy = mk(2, 1, 0, 60), other = mk(3, 1, 0, 0);
+const W = { tanks: [player, enemy, other], shells: [], map: { objects: [] } };
+const L = { pos: player.pos, fwd: { x: 0, y: 0, z: 1 }, playerId: 1 };
+const ai = [];
+const cal = () => +$('cal').value;
+function place() {
+  const d = +$('dist').value, b = +$('bear').value * Math.PI / 180;
+  // listener faces +z; its right is -x (hull frame: +x = left)
+  enemy.pos = { x: -Math.sin(b) * d, y: 0, z: Math.cos(b) * d };
+  player.gunDef.cal = enemy.gunDef.cal = cal(); player.gunDef.muzzleBrake = enemy.gunDef.muzzleBrake = $('brake').checked;
+}
+const ev = (e) => { place(); A.event(e, W, L); log(JSON.stringify(e)); };
+const shooterTarget = () => ({ world: [3, 2], shooter: [1, 2], target: [2, 1] })[$('persp').value];
+const shell = (type = 'AP', owner = 2) => ({ id: 99, type, cal: cal(), owner });
+
+$('unlock').onclick = () => { const ok = A.unlock(); $('unlock').textContent = ok ? 'Audio running' : 'No Web Audio'; };
+for (const k of ['master', 'sfx', 'music', 'voice']) { const i = $('v-' + k); const f = () => { i.nextElementSibling.value = i.value; A.setVolumes({ [k]: +i.value }); }; i.oninput = f; f(); }
+$('voiceOn').onchange = () => { A.voiceOn = $('voiceOn').checked; };
+for (const id of ['dist', 'bear', 'e-thr', 'e-steer', 'e-tur', 'e-n']) { const i = $(id); const f = () => { i.nextElementSibling.value = i.value; }; i.addEventListener('input', f); f(); }
+document.querySelectorAll('[data-music]').forEach((b) => b.onclick = () => { A.unlock(); A.music(b.dataset.music || false); });
+document.querySelectorAll('[data-ui]').forEach((b) => b.onclick = () => { A.unlock(); A.ui(b.dataset.ui); });
+document.querySelectorAll('[data-hit]').forEach((b) => b.onclick = () => { const [s, t] = shooterTarget(); ev({ type: 'hit', shooter: s, target: t, shell: shell('AP', s), shellType: 'AP', pos: t === 1 ? player.pos : enemy.pos, result: b.dataset.hit, dmg: 120 }); });
+document.querySelectorAll('[data-imp]').forEach((b) => b.onclick = () => { const he = b.dataset.imp === 'HE'; ev({ type: 'impact', shell: shell(he ? 'HE' : 'AP', 3), shellType: he ? 'HE' : 'AP', pos: enemy.pos, normal: { x: 0, y: 1, z: 0 }, surface: he ? 'grass' : b.dataset.imp }); });
+document.querySelectorAll('[data-kill]').forEach((b) => b.onclick = () => { const [s, t] = shooterTarget(); ev({ type: 'kill', killer: s, victim: t, cause: b.dataset.kill }); });
+document.querySelectorAll('[data-mod]').forEach((b) => b.onclick = () => { const [m, st] = b.dataset.mod.split(':'); ev({ type: 'module', tank: 1, module: m, state: st }); });
+document.querySelectorAll('[data-crew]').forEach((b) => b.onclick = () => ev({ type: 'crew', tank: 1, role: b.dataset.crew, alive: false }));
+document.querySelectorAll('[data-cons]').forEach((b) => b.onclick = () => ev({ type: 'consumable', tank: 1, kind: b.dataset.cons }));
+document.querySelectorAll('[data-cap]').forEach((b) => b.onclick = () => ev({ type: 'capture', team: +b.dataset.cap, points: 3 }));
+document.querySelectorAll('[data-end]').forEach((b) => b.onclick = () => ev({ type: 'end', result: { winner: +b.dataset.end, reason: 'lab' } }));
+const EV = {
+  shot: () => ev({ type: 'shot', tank: 2, cal: cal(), pos: enemy.pos, dir: { x: 0, y: 0, z: -1 } }),
+  shotOwn: () => ev({ type: 'shot', tank: 1, cal: cal(), pos: player.pos, dir: { x: 0, y: 0, z: 1 } }),
+  volley: () => { for (let i = 0; i < 5; i++) setTimeout(() => ev({ type: 'shot', tank: 2, cal: cal(), pos: { x: enemy.pos.x + i * 30, y: 0, z: enemy.pos.z + i * 40 } }), i * 90); },
+  nearMiss: () => ev({ type: 'impact', shell: shell('AP', 2), pos: { x: 6, y: 0, z: 8 }, surface: 'dirt' }),
+  fireOn: () => { const [, t] = shooterTarget(); ev({ type: 'fire', tank: t === 1 ? 1 : 2, on: true }); },
+  fireOff: () => { ev({ type: 'fire', tank: 1, on: false }); ev({ type: 'fire', tank: 2, on: false }); },
+  ram: () => ev({ type: 'ram', a: $('persp').value === 'world' ? 3 : 1, b: 2, dmg: 80 }),
+  reloaded: () => ev({ type: 'reloaded', tank: 1 }),
+  spotted: () => ev({ type: 'spot', team: 1, tank: 1, on: true }),
+  enemySpotted: () => ev({ type: 'spot', team: 0, tank: 2, on: true }),
+  capReset: () => { ev({ type: 'capture', team: 0, points: 0 }); ev({ type: 'capture', team: 1, points: 0 }); },
+  treeFall: () => ev({ type: 'treeFall', obj: { id: 5, x: enemy.pos.x, y: 0, z: enemy.pos.z }, dir: { x: 1, z: 0 } }),
+  objectBreak: () => ev({ type: 'objectBreak', obj: { id: 6, x: enemy.pos.x, y: 0, z: enemy.pos.z } }),
+};
+document.querySelectorAll('[data-ev]').forEach((b) => b.onclick = () => { A.unlock(); EV[b.dataset.ev](); });
+for (const [k, [text]] of Object.entries(LINES)) { const b = document.createElement('button'); b.textContent = text; b.onclick = () => { A.unlock(); A.crew.cool.clear(); A.say(k); }; $('lines').appendChild(b); }
+
+// engine loop: simple kinematics for the player, AI tanks circling at 40–250 m
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  if ($('e-on').checked) {
+    Object.assign(player.def, CLS[$('e-cls').value]);
+    player.modules.engine.state = $('e-mod').value;
+    const top = player.def.speed / 3.6, thr = +$('e-thr').value, st = +$('e-steer').value;
+    const acc = player.modules.engine.state === 'destroyed' ? 0 : thr * (player.def.power / player.def.mass) * 0.12;
+    player.speed += (acc - player.speed * 0.25 * (thr === 0 ? 3 : 1) * (Math.abs(player.speed) > top ? 4 : 0.2)) * dt;
+    player.speed = Math.max(-top * 0.4, Math.min(top, player.speed));
+    player.throttle = thr; player.yawRate = st * 0.6; player.turretRate = +$('e-tur').value * Math.PI / 180;
+    A.engine(player, L);
+    const n = +$('e-n').value;
+    while (ai.length < n) { const k = mk(100 + ai.length, 1, 0, 0); k.r = 40 + ai.length * 18; k.ph = ai.length; ai.push(k); }
+    for (let i = 0; i < n; i++) { const k = ai[i]; k.ph += dt * 8 / k.r; k.pos = { x: Math.cos(k.ph) * k.r, y: 0, z: Math.sin(k.ph) * k.r }; k.speed = 8; k.throttle = 0.7; A.engine(k, L); }
+    $('stats').textContent = `speed ${(player.speed * 3.6).toFixed(1)} km/h  rpm ${(A.engines?.byId?.get(1)?.rpm ?? 0).toFixed(2)}\n` + JSON.stringify(A.stats());
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

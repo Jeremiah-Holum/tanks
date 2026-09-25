@@ -211,6 +211,8 @@ point, targetId) → {plate, eff, chance}` (reticle colour) and `visibleTo(world
   `module{tank, module, state}` · `crew{tank, role, alive}` · `spot{team, tank, on}` ·
   `treeFall{obj, dir}` · `objectBreak{obj}` · `ram{a, b, dmg}` · `capture{team, points}` ·
   `consumable{tank, kind}` · `reloaded{tank}` · `end{result}`.
+  (PM rulings: `capture.team` is the team that OWNS the base being captured. Tank also exposes
+  `throttle` (−1..1, the last applied control) for engine audio. Magazine guns: see docs/notes/sim.md.)
 
 Performance budget: `stepBattle` under 2 ms average with 30 tanks in node (the AI is separate).
 Tests: `tools/rules-test.mjs` (rewrite it): armour cases (Tiger front vs 75 mm AP at 100 m

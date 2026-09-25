@@ -54,7 +54,7 @@ export class Audio {
     // master → compressor → tanh soft clip → out (guarantees |x| < 1)
     this.comp = c.createDynamicsCompressor();
     this.comp.threshold.value = -10; this.comp.knee.value = 6; this.comp.ratio.value = 8; this.comp.attack.value = 0.002; this.comp.release.value = 0.25;
-    this.clip = c.createWaveShaper(); this.clip.curve = K.curve(1.2); this.clip.oversample = '2x';
+    this.clip = c.createWaveShaper(); this.clip.curve = K.limitCurve(); this.clip.oversample = '2x';
     this.master = G(this.vol.master);
     if (this._raw) this.master.connect(c.destination); // measurement mode: no limiter (tools/audio-render.mjs)
     else { this.master.connect(this.comp); this.comp.connect(this.clip); this.clip.connect(c.destination); }
@@ -64,7 +64,7 @@ export class Audio {
     // reverbs: open field (long, echoey) for the world; steel box for inside the player's tank;
     // a hall for music (same IR, separate so it follows the music volume)
     const verb = (ir, ret, to) => { const cv = c.createConvolver(); cv.buffer = ir; const send = G(1); send.connect(cv); cv.connect(G(ret, to)); return send; };
-    this.fieldSend = verb(K.fieldIR, 0.55, this.sfx);
+    this.fieldSend = verb(K.fieldIR, 0.45, this.sfx);
     this.roomSend = verb(K.roomIR, 0.3, this.sfx);
     this.hallSend = verb(K.fieldIR, 0.4, this.musicBus);
     // inside-the-tank bus: slightly muffled, with the steel-box room
@@ -134,6 +134,8 @@ export class Audio {
   _isPlayer(x) { const id = idOf(x); return id != null && id === this.listener.playerId; }
   _tank(world, x) { if (x && typeof x === 'object') return x; return world && world.tanks ? world.tanks.find((t) => t.id === x) || null : null; }
   _shell(world, x) { if (x && typeof x === 'object') return x; return world && world.shells ? world.shells.find((s) => s.id === x) || null : null; }
+  // calibre: event → shell → the firing tank's gun → 75 mm
+  _cal(world, ev, sh, owner) { return ev.cal ?? sh?.cal ?? this._tank(world, owner)?.gunDef?.cal ?? 75; }
   _playerTeam(world) { const t = this._tank(world, this.listener.playerId); return t ? t.team : 0; }
   _obj(world, x) {
     if (x && typeof x === 'object') return x;
@@ -168,17 +170,19 @@ export class Audio {
         break;
       }
       case 'impact': {
-        const sh = this._shell(world, ev.shell), cal = sh?.cal ?? ev.cal ?? 75, st = ev.type ?? sh?.type;
-        const p = this._place(ev.pos, { ref: 10, roll: 0.8, wet: 0.3, len: 1.5 });
+        // tank hits also raise a 'hit' event, which carries the sound; wrecks clang here
+        if (ev.surface === 'tank') break;
+        const sh = this._shell(world, ev.shell), owner = sh?.owner ?? ev.owner, cal = this._cal(world, ev, sh, owner), st = ev.shellType ?? sh?.type;
+        const p = this._place(ev.pos, { ref: 15, roll: 0.6, wet: 0.3, len: 1.5 });
         if (!p) break;
         if (st === 'HE') S.explosion(K, p.node, p.t, 0.3 + 1.2 * S.size(cal), { gain: 0.8 });
         else S.impact(K, p.node, p.t, ev.surface, cal);
         // near miss: a shell landing close to us that we didn't fire
-        if (p.P.d < 30 && sh && !this._isPlayer(sh.owner)) { const q = this._place(ev.pos, { ref: 10, noDelay: true, gain: 0.8 }); if (q) S.snap(K, q.node, q.t); }
+        if (p.P.d < 30 && owner != null && !this._isPlayer(owner)) { const q = this._place(ev.pos, { ref: 10, noDelay: true, gain: 0.8 }); if (q) S.snap(K, q.node, q.t); }
         break;
       }
       case 'hit': {
-        const sh = this._shell(world, ev.shell), cal = sh?.cal ?? ev.cal ?? 75, st = sh?.type ?? ev.shellType, r = ev.result || 'pen';
+        const sh = this._shell(world, ev.shell), cal = this._cal(world, ev, sh, ev.shooter), st = ev.shellType ?? sh?.type, r = ev.result || 'pen';
         const tgt = this._tank(world, ev.target), pos = ev.pos || tgt?.pos;
         if (this._isPlayer(ev.target)) {
           const p = this._direct(this.inside, 3); S.hitInside(K, p.node, p.t, r, cal, { gain: 0.9 });
@@ -186,7 +190,7 @@ export class Audio {
         } else {
           // the shooter hears his own hit confirmed right away (no delay, floor on level)
           const mine = this._isPlayer(ev.shooter);
-          const p = this._place(pos, mine ? { ref: 10, roll: 0.6, minGain: 0.4, noDelay: true, lp: 12000, wet: 0.25, len: 1.5 } : { ref: 10, roll: 0.8, wet: 0.3, len: 1.5 });
+          const p = this._place(pos, mine ? { ref: 10, roll: 0.6, minGain: 0.75, noDelay: true, lp: 12000, wet: 0.25, len: 1.5 } : { ref: 10, roll: 0.8, wet: 0.3, len: 1.5 });
           if (!p) break;
           S.hitOutside(K, p.node, p.t, r, cal, { gain: mine ? 0.9 : 1 });
           if (st === 'HE' && r !== 'splash') S.explosion(K, p.node, p.t, 0.3 + S.size(cal), { gain: 0.6 });
@@ -224,7 +228,7 @@ export class Audio {
       }
       case 'treeFall': case 'objectBreak': {
         const o = this._obj(world, ev.obj), pos = o ? { x: o.x, y: o.y ?? 0, z: o.z } : ev.pos;
-        const p = this._place(pos, { ref: 8, roll: 1, wet: 0.3, len: 2 });
+        const p = this._place(pos, { ref: 12, roll: 0.8, wet: 0.3, len: 2, gain: 1.4 });
         if (p) (type === 'treeFall' ? S.treeFall : S.crash)(K, p.node, p.t);
         break;
       }
@@ -345,7 +349,7 @@ export class Audio {
 
   ui(kind) {
     if (!this.ready) return;
-    if (kind === 'hover') { const n = this.ctx.currentTime; if (n - (this._hoverAt || 0) < 0.04) return; this._hoverAt = n; }
+    if (kind === 'hover') { const n = this.ctx.currentTime; if (n - (this._hoverAt ?? -1) < 0.04) return; this._hoverAt = n; }
     const p = this._direct(this.uiBus, 2); S.ui(this.kit, p.node, p.t, kind);
   }
 

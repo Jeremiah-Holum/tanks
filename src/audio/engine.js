@@ -15,8 +15,19 @@ function pulseWave(ctx) {
   return ctx.createPeriodicWave(re, im);
 }
 
-// set an AudioParam smoothly, skipping tiny changes to keep the automation timeline short
-function smooth(p, v, now, tau = TAU) { if (Math.abs(p._v - v) < Math.abs(v) * 0.01 + 1e-4) return; p._v = v; p.setTargetAtTime(v, now, tau); }
+// Move an AudioParam towards v, smoothing in JS (time constant tau) and writing .value only
+// when it changed noticeably. Plain .value writes leave the param un-automated, so filters
+// don't recompute coefficients every sample (setTargetAtTime on a biquad frequency does).
+let DT = 1 / 60;
+function smooth(p, v, now, tau = TAU) {
+  if (p._f) { p.cancelScheduledValues(0); p._f = false; }
+  const s = p._s ?? p.value, n = s + (v - s) * (1 - Math.exp(-DT / tau));
+  p._s = Math.abs(n - v) < 1e-5 ? v : n;
+  if (Math.abs(p._s - p._w) < Math.abs(p._s) * 0.004 + 1e-5) return;
+  p._w = p._s; p.value = p._s;
+}
+// fade to silence on a timeline (voice released; no more per-frame updates will come)
+function fadeOut(p, now, tau) { p.cancelScheduledValues(now); p.setValueAtTime(p._w ?? p.value, now); p.setTargetAtTime(0, now, tau); p._s = p._w = 0; p._f = true; }
 
 class EngineVoice {
   constructor(A) {
@@ -48,7 +59,6 @@ class EngineVoice {
     white.connect(this.trkBp); this.trkBp.connect(this.trkAm); this.trkAm.connect(this.trkG); this.trkG.connect(this.out);
     // track squeal on pivots: a narrow resonant band that wanders
     this.sqBp = filt('bandpass', 2600, 14); this.sqG = gain(0);
-    this.sqLfo = osc('sine', 0.7); const lg = gain(180); this.sqLfo.connect(lg); lg.connect(this.sqBp.frequency);
     white.connect(this.sqBp); this.sqBp.connect(this.sqG); this.sqG.connect(this.out);
     // turret traverse: electric/hydraulic motor whine
     this.wA = osc('triangle', 380); this.wB = osc('sawtooth', 190);
@@ -57,7 +67,7 @@ class EngineVoice {
     this.rpm = 0.25; this.prevSpeed = 0; this.prevT = 0;
   }
   destroy() { for (const s of this.srcs) { try { s.stop(); } catch (e) {} } try { this.out.disconnect(); this.send.disconnect(); } catch (e) {} }
-  silence(now) { smooth(this.out.gain, 0, now, 0.15); this.id = null; this.freeAt = performance.now(); }
+  silence(now) { fadeOut(this.out.gain, now, 0.15); this.id = null; this.freeAt = performance.now(); }
 
   update(tank, pl, isPlayer, now) {
     const def = tank.def || {}, top = (def.speed || 40) / 3.6, v = Math.abs(tank.speed || 0), sf = clamp(v / top);
@@ -73,6 +83,8 @@ class EngineVoice {
     else { const gs = Math.min(4.999, sf * 5), inG = gs - Math.floor(gs); rpm = 0.42 + 0.5 * inG * (0.7 + 0.3 * thr) + 0.08 * thr; }
     if (!tank.alive || eng === 'destroyed') rpm = 0;
     this.rpm += (rpm - this.rpm) * clamp(dt * 6);
+    DT = clamp(dt, 0.004, 0.1);
+    this.sqPh = (this.sqPh || 0) + dt * 4.4;
     const load = clamp(0.25 + 0.75 * thr);
     const base = (power > 600 ? 13 : 16) + 12 * (1 - clamp(mass / 60));  // idle firing Hz: heavy/V12s lower
     const f = base * (1 + 2.3 * this.rpm) * (eng === 'damaged' ? 1 + 0.03 * Math.sin(now * 23) : 1);
@@ -86,6 +98,7 @@ class EngineVoice {
     smooth(this.pulse.frequency, 0.5 + v * 2.4, now, 0.05);
     smooth(this.trkG.gain, clamp(v / 5) * 0.16 + turning * 0.04, now);
     smooth(this.trkBp.frequency, 1000 + v * 70, now);
+    smooth(this.sqBp.frequency, 2600 + 180 * Math.sin(this.sqPh), now, 0.03);
     smooth(this.sqG.gain, turning * (1 - 0.6 * sf) * 0.035 * (tank.alive === false ? 0 : 1), now);
     // turret traverse whine
     const tr = Math.abs(tank.turretRate || 0);
@@ -97,7 +110,7 @@ class EngineVoice {
     const lvl = isPlayer ? 0.6 : P.gain * 0.9;
     smooth(this.out.gain, lvl, now, 0.1);
     smooth(this.lp.frequency, isPlayer ? 9000 : P.lp, now, 0.1);
-    if (this.pan) this.pan.pan.setTargetAtTime(isPlayer ? 0 : P.pan, now, 0.05);
+    if (this.pan) smooth(this.pan.pan, isPlayer ? 0 : P.pan, now, 0.05);
     smooth(this.send.gain, isPlayer ? 0.05 : P.wet * 0.5, now, 0.2);
   }
 }
@@ -154,7 +167,7 @@ class FireVoice {
     const A = this.A, now = A.ctx.currentTime, P = A._pos(pos, { ref: 5, roll: 1.2, range: 0.6 });
     smooth(this.out.gain, (isPlayer ? 0.3 : P.gain * 0.5) * level, now, 0.3);
     smooth(this.lp.frequency, isPlayer ? 6000 : P.lp, now, 0.2);
-    if (this.pan) this.pan.pan.setTargetAtTime(isPlayer ? 0 : P.pan, now, 0.1);
+    if (this.pan) smooth(this.pan.pan, isPlayer ? 0 : P.pan, now, 0.1);
   }
   destroy() { for (const s of this.srcs) { try { s.stop(); } catch (e) {} } try { this.lp.disconnect(); if (this.pan) this.pan.disconnect(); } catch (e) {} }
 }
@@ -171,12 +184,12 @@ export class FirePool {
   }
   // wreck keeps burning for `secs` more, quieter
   linger(id, secs, level = 0.6) { const v = this.voices.find((x) => x.id === id); if (v) { v.until = Math.min(v.until, this.A.ctx.currentTime + secs); v.level = level; v.place(v.pos, v.player, level); } }
-  stop(id) { const v = this.voices.find((x) => x.id === id); if (v) { smooth(v.out.gain, 0, this.A.ctx.currentTime, 0.4); v.id = null; } }
+  stop(id) { const v = this.voices.find((x) => x.id === id); if (v) { fadeOut(v.out.gain, this.A.ctx.currentTime, 0.4); v.id = null; } }
   refresh(tank, isPlayer) {
     const now = this.A.ctx.currentTime;
     for (const v of this.voices) {
       if (v.id === null) continue;
-      if (now > v.until) { smooth(v.out.gain, 0, now, 1); v.id = null; continue; }
+      if (now > v.until) { fadeOut(v.out.gain, now, 1); v.id = null; continue; }
       if (tank && v.id === tank.id) { v.pos = tank.pos; v.player = isPlayer; v.place(tank.pos, isPlayer, v.level); }
     }
   }

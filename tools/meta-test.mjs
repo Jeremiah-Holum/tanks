@@ -232,17 +232,20 @@ function simulate(line, seed) {
   for (const l of ls) {
     const runs = [1, 2, 3].map((s) => simulate(l, s));
     const at = (tier) => { const v = runs.map((r) => r.reached[tier]).filter(Boolean); return v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length) : null; };
-    const row = { line: l.map((id) => TANKS[id].short || id).join(' → '), t2: at(2), t3: at(3), t4: at(4), t5: at(5), t6: at(6), t7: at(7) };
+    const row = { line: l.map((id, i) => `${TANKS[id].short || id} ${ROMAN[TANKS[id].tier]}` + (i ? ` @${Math.round(runs.reduce((a, r) => a + (r.reached[TANKS[id].tier] || 0), 0) / runs.length)}` : '')).join(' → '), t5: at(5), t7: at(7) };
     rows.push(row);
     if (row.t5) t5.push(row.t5); if (row.t7) t7.push(row.t7);
   }
-  log('\nprogression (average player, 50% wins; battles until the tier is owned):');
-  for (const r of rows) log(`  ${String(r.t2).padStart(3)} ${String(r.t3).padStart(3)} ${String(r.t4).padStart(3)} ${String(r.t5).padStart(3)} ${String(r.t6 ?? '-').padStart(4)} ${String(r.t7 ?? '-').padStart(4)}   ${r.line}`);
+  log('\nprogression (average player, 50% wins; @N = battles played when that tank is bought):');
+  for (const r of rows) log('  ' + r.line);
   const mean = (a) => Math.round(a.reduce((x, y) => x + y, 0) / Math.max(1, a.length));
   log(`  mean battles to tier V: ${mean(t5)}, to tier VII: ${mean(t7)}`);
   ok(mean(t5) >= 25 && mean(t5) <= 40, `tier V in 25–40 battles (${mean(t5)})`);
   if (t7.length) ok(mean(t7) >= 80 && mean(t7) <= 120, `tier VII in 80–120 battles (${mean(t7)})`);
   log('\nper-tier rates: tier | expected XP/battle | expected net credits/battle | mastery 3rd/2nd/1st/Ace');
+  let mono = true;
+  for (let t = 2; t <= MAX_TIER; t++) if (!(eco.expectedXp(t) > eco.expectedXp(t - 1) && eco.expectedNetCredits(t) > eco.expectedNetCredits(t - 1))) mono = false;
+  ok(mono, 'XP and net credits per battle rise with every tier');
   for (let t = 1; t <= MAX_TIER; t++) log(`  ${ROMAN[t].padEnd(4)} ${String(Math.round(eco.expectedXp(t))).padStart(6)} ${String(Math.round(eco.expectedNetCredits(t))).padStart(8)}   ${eco.masteryThresholds(t).slice(1).join('/')}`);
 }
 

@@ -26,7 +26,9 @@ export function ashford(seed) {
 
   // ---------------- roads
   const main = B.road(B.symLine([[440, 30], [450, 150], [478, 290], [505, 400], [505, 500]]), 8);
-  const street = B.road([[330, 500], [420, 500], [480, 500], [560, 500], [660, 500]], 7, { curve: false });
+  B.road([[330, 500], [418, 500]], 7, { curve: false });
+  B.road([[505, 500], [660, 500]], 7, { curve: false });
+  B.roadBoth([[505, 448], [590, 448], [640, 472], [660, 500]], 5, { kind: 'track' });
   B.road([[70, 500], [200, 500], [330, 500]], 5, { kind: 'track', curve: false });
   B.road([[660, 500], [740, 500], [778, 500]], 5, { kind: 'track', curve: false });
   B.roadBoth([[120, 70], [170, 180], [215, 300], [270, 400], [330, 500]], 5, { kind: 'track' });
@@ -39,9 +41,11 @@ export function ashford(seed) {
   // hedgerow fields in the west (plan for team 0 and mirror)
   const crops = ['wheat', 'barley', 'fallow', 'wheat', 'cabbage', 'wheat'];
   const cells = [];
-  for (let z = 70; z < 470; z += 80) for (let x = 60; x < 330; x += 90) {
-    const w = 80 + r.range(-6, 6), d = 70 + r.range(-6, 6), cx = x + 45, cz = z + 40;
-    cells.push({ cx, cz, w, d, crop: r.pick(crops) });
+  const xs = [60]; while (xs[xs.length - 1] < 300) xs.push(xs[xs.length - 1] + r.range(70, 105)); xs[xs.length - 1] = 335;
+  const zs = [65]; while (zs[zs.length - 1] < 420) zs.push(zs[zs.length - 1] + r.range(60, 95)); zs[zs.length - 1] = 475;
+  for (let b = 0; b < zs.length - 1; b++) for (let a = 0; a < xs.length - 1; a++) {
+    const w = xs[a + 1] - xs[a], d = zs[b + 1] - zs[b];
+    cells.push({ cx: xs[a] + w / 2, cz: zs[b] + d / 2, w, d, crop: r.pick(crops), top: r() < 0.75, right: a < xs.length - 2 && r() < 0.8 });
   }
   B.both((T) => { for (const c of cells) { const [x, z] = T.p([c.cx, c.cz]); if (c.crop !== 'fallow') B.field(x, z, c.w - 6, c.d - 6, 0, c.crop); } });
   // a few fields east of the village
@@ -55,14 +59,20 @@ export function ashford(seed) {
   B.markRoads(1.5);
   B.both((T) => { const [x, z] = T.p([380, 118]); B.mark(x, z, 26, KEEP); });
   B.spawnZone(500, 128, 0);
+  B.basesAt(380, 118);
+  B.laneSym('west fields', [[380, 118], [220, 250], [190, 400], [200, 500]]);
+  B.laneSym('village', [[380, 118], [470, 290], [505, 400], [505, 500]]);
+  B.laneSym('windmill hill', [[380, 118], [620, 240], [760, 400], [800, 500]]);
 
   // ---------------- village
   B.obj('church', 452, 500, Math.PI, [22, 13, 9], 0);     // tower at the west end, 26 m
   B.markRect(452, 500, 0, 22, 9, 3, SOLID);
-  const mainPts = main.path.filter((p) => p[1] > 385 && p[1] < 497);
+  const mainPts = [[505, 392], [505, 497]];
   B.placePlan(B.streetPlan(mainPts, 1, { spacing: [13, 17], gap: 0.05 }), { garden: 0.6 });
   B.placePlan(B.streetPlan(mainPts, -1, { spacing: [13, 17], gap: 0.05 }), { garden: 0.6 });
-  const west = [[418, 500], [330, 500]], east = [[520, 500], [660, 500]];
+  const west = [[418, 500], [330, 500]], east = [[515, 500], [660, 500]];
+  B.placePlan(B.streetPlan([[505, 448], [590, 448], [640, 472]], -1, { spacing: [14, 20], gap: 0.15, setback: 6.5 }), { garden: 0.5 });
+  B.placePlan(B.streetPlan([[505, 448], [590, 448], [640, 472]], 1, { spacing: [14, 20], gap: 0.3, setback: 6.5, height: [5, 7] }), { garden: 0 });
   B.placePlan(B.streetPlan(west, 1, { spacing: [12, 16], gap: 0.1 }), { garden: 0.6 });   // south side (travel west → left = south)
   B.placePlan(B.streetPlan(east, -1, { spacing: [12, 16], gap: 0.1 }), { garden: 0.6 });
   // village outskirts: a second ring of cottages and barns along the back track
@@ -73,7 +83,7 @@ export function ashford(seed) {
   B.line('wall', [[420, 518], [490, 518]], 0.7, 1.4, { maxLen: 10, gapEvery: 40, gap: 6, check: false });
   // orchards south/north of the village
   B.both((T) => {
-    for (let x = 540; x <= 620; x += 11) for (let z = 420; z <= 460; z += 11) {
+    for (let x = 530; x <= 620; x += 11) for (let z = 385; z <= 420; z += 11) {
       const [a, b] = T.p([x + r.range(-1, 1), z + r.range(-1, 1)]); B.tree(a, b, 'tree', 0.7);
     }
   });
@@ -92,7 +102,9 @@ export function ashford(seed) {
   B.both((T) => {
     for (const c of cells) {
       const x0 = c.cx - c.w / 2, x1 = c.cx + c.w / 2, z1 = c.cz + c.d / 2, z0 = c.cz - c.d / 2;
-      const edges = [[[x0, z1], [x1, z1]], [[x1, z0], [x1, z1]]];
+      const edges = [];
+      if (c.top && z1 < 470) edges.push([[x0, z1], [x1, z1]]);
+      if (c.right) edges.push([[x1, z0], [x1, z1]]);
       for (const [a, b] of edges) {
         if (b[0] > 345) continue;
         B.line('hedge', [T.p(a), T.p(b)], 2.6, 2.3, { maxLen: 14, gapEvery: 36, gap: 10, level: VEG, jitter: 0.3 });
@@ -138,6 +150,12 @@ export function ashford(seed) {
     B.forest(...P(100, 110), 40, 9, ['tree'], { density: 0.7 });
     B.forest(...P(345, 380), 26, 8, ['tree'], { density: 0.8 });
     B.forest(...P(900, 440), 26, 9, ['tree', 'pine'], { density: 0.7 });
+    B.forest(...P(425, 330), 22, 8, ['tree'], { density: 0.85 });
+    B.forest(...P(600, 345), 16, 8, ['tree'], { density: 0.85 });
+    B.forest(...P(705, 420), 14, 8, ['tree'], { density: 0.9 });
+    B.line('wall', [P(640, 300), P(690, 330), P(730, 330)], 0.8, 1.3, { maxLen: 10, gapEvery: 30, gap: 8 });
+    B.line('wall', [P(380, 380), P(440, 395)], 0.8, 1.3, { maxLen: 10 });
+    B.line('hedge', [P(560, 240), P(600, 330)], 2.6, 2.3, { maxLen: 14, gapEvery: 40, gap: 10, level: VEG });
     // lone field trees along hedges
     for (let i = 0; i < 14; i++) { const [x, z] = P(r.range(70, 340), r.range(80, 480)); B.tree(x, z, 'tree', r.range(0.9, 1.3)); }
     // bushes: scattered clumps

@@ -40,8 +40,9 @@ export function buildNav(map) {
       if (gr === GROUND.DEEP) deep++;
       gc = Math.max(gc, GROUND_COST[gr]);
     }
-    const onBridge = bridgeAt(map, x, z) > -Infinity;
-    if (deep >= 2 || (deep && gAt(x, z) === GROUND.DEEP && !onBridge)) { cost[r * cols + c] = Infinity; continue; }
+    let onBridge = false;
+    for (const [ox, oz] of [[0, 0], [-2.5, -2.5], [2.5, -2.5], [-2.5, 2.5], [2.5, 2.5]]) if (bridgeAt(map, x + ox, z + oz) > -Infinity) onBridge = true;
+    if (!onBridge && (deep >= 2 || (deep && gAt(x, z) === GROUND.DEEP))) { cost[r * cols + c] = Infinity; continue; }
     if (deep) gc = 3;
     cost[r * cols + c] = onBridge ? 0.8 : gc + slopeCost(deg);
   }

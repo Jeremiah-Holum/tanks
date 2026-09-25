@@ -234,13 +234,14 @@ function canvasTex(c, { srgb = true, repeat = false, aniso = 4, mips = true } = 
 }
 const rgbs = (c, k = 1, a = 1) => `rgba(${Math.min(255, c[0] * k) | 0},${Math.min(255, c[1] * k) | 0},${Math.min(255, c[2] * k) | 0},${a})`;
 
-// Leaf-cluster atlas for one foliage palette: 4 cells in a 1024x1024 canvas, 512 each:
-// [0] broadleaf cluster, [1] small-leaf bush/birch cluster, [2] conifer needle spray, [3] bare twigs.
+// Foliage atlas for one palette: 1024x1536 canvas of 512² cells. Row 0: [0] broadleaf cluster,
+// [1] small-leaf bush/birch cluster; row 1: [2] conifer needle spray, [3] bare twigs;
+// row 2: [4] brown bark, [5] birch bark (vertically tileable). FOL_CELL(k) gives the uv rect.
 // Leaves are lit top-left → bottom-right so the cards read as volume. Alpha = coverage.
 export function foliageAtlas(pal, key) {
   return once('fol:' + key, () => {
     const S = 1024, C = 512;
-    const [c, g] = mk(S, S);
+    const [c, g] = mk(S, 1536);
     let seed = 777;
     const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
     const pick = (arr) => arr[(rnd() * arr.length) | 0];
@@ -296,10 +297,28 @@ export function foliageAtlas(pal, key) {
     };
     for (let k = 0; k < 7; k++) twig(0, 0, rnd() * 6.28, 110 + rnd() * 60, 5, 3);
     g.restore();
+    // bark row
+    const N = tileNoise(5), img = g.createImageData(1024, 512);
+    for (let y = 0; y < 512; y++) for (let x = 0; x < 1024; x++) {
+      const o = (y * 1024 + x) * 4, birch = x >= 512, u = (x % 512) / 512, v = y / 512;
+      if (!birch) {
+        const f = N.fbm(u, v * 0.25, 8, 4), r = Math.abs(Math.sin((u * 10 + f * 1.5) * Math.PI));
+        const k = 0.42 + 0.58 * Math.pow(r, 0.6) * (0.7 + 0.5 * N.vn(u * 64, v * 16, 64));
+        img.data[o] = pal.bark[0] * k; img.data[o + 1] = pal.bark[1] * k; img.data[o + 2] = pal.bark[2] * k;
+      } else {
+        const f = N.fbm(u, v, 6, 3), lent = N.vn(u * 8, v * 64, 8) > 0.74 && N.vn(u * 32, v * 8, 32) > 0.4;
+        const k = lent ? 0.22 : 0.8 + 0.2 * f;
+        img.data[o] = 228 * k; img.data[o + 1] = 224 * k; img.data[o + 2] = 214 * k;
+      }
+      img.data[o + 3] = 255;
+    }
+    g.putImageData(img, 0, 1024);
     const t = canvasTex(c, { aniso: 4 });
     return t;
   });
 }
+
+export const FOL_CELL = (k) => { const cx = k % 2, cy = (k / 2) | 0; return [cx * 0.5, 1 - (cy + 1) / 3, 0.5, 1 / 3]; };
 
 // Grass card atlas 512x256: [left] plain grass blades, [right] grass with wild flowers.
 export function grassAtlas(pal, key) {
@@ -361,9 +380,9 @@ export function barkTexture() {
 // ATLAS[name] = [u0, v0, du, dv] (uv space, v up as three uses it); the tile size in metres
 // each cell represents is TILE_M[name] (for world-scaled uvs in props.js).
 export const ATLAS_CELLS = ['plaster', 'plaster2', 'brick', 'stone', 'roofTile', 'roofSlate', 'planks', 'timber',
-  'window', 'door', 'ashlar', 'rubble', 'straw', 'rust', 'concrete', 'thatch'];
+  'window', 'door', 'ashlar', 'rubble', 'straw', 'rust', 'concrete', 'rockface'];
 export const TILE_M = { plaster: 4, plaster2: 4, brick: 2, stone: 2.5, roofTile: 2.5, roofSlate: 2.5, planks: 3, timber: 2,
-  window: 1, door: 1, ashlar: 3, rubble: 3, straw: 2, rust: 2, concrete: 3, thatch: 3 };
+  window: 1, door: 1, ashlar: 3, rubble: 3, straw: 2, rust: 2, concrete: 3, rockface: 3 };
 const PAD = 6;
 export const ATLAS = {};
 ATLAS_CELLS.forEach((n, k) => {
@@ -428,7 +447,11 @@ export function buildingAtlas() {
     cell(12, (u, v) => shade([196, 168, 96], 0.6 + 0.55 * N.vn(u * 90, v * 12, 90) * (0.7 + 0.3 * N.fbm(u, v, 8, 3))));
     cell(13, (u, v) => { const r = N.fbm(u, v, 6, 5); return shade(mix3([70, 70, 72], [128, 72, 40], sstep(0.4, 0.7, r)), 0.8 + 0.3 * N.vn(u * 64, v * 64, 64)); });
     cell(14, (u, v) => shade([160, 158, 150], 0.78 + 0.2 * N.fbm(u, v, 6, 5) + 0.06 * N.vn(u * 200, v * 200, 200)));
-    cell(15, (u, v) => shade([150, 128, 84], 0.55 + 0.5 * N.vn(u * 120, v * 8, 120) * (0.8 + 0.3 * N.fbm(u, v, 6, 3))));
+    cell(15, (u, v) => { // natural boulder surface
+      const big = N.fbm(u, v, 3, 5), w = N.worley(u, v, 5), crack = sstep(0.06, 0.0, w.f2 - w.f1);
+      const lich = sstep(0.6, 0.7, N.fbm(u + 0.4, v, 8, 3));
+      return shade(mix3(mix3([128, 124, 116], [98, 96, 92], big), [132, 138, 96], lich * 0.6), (0.78 + 0.35 * N.fbm(u, v, 12, 3)) * (1 - crack * 0.55));
+    });
     // window & door cells get vector art over a neutral base
     cell(8, () => [60, 56, 50]); cell(9, () => [80, 60, 42]);
     g.putImageData(img, 0, 0);

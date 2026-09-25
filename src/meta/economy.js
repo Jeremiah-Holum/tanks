@@ -9,7 +9,7 @@
 import { TANKS, TANK_LIST, MAX_TIER } from './roster.js';
 import { tankState, defaultAmmo, isResearched, isOwned, ownedIds, CONSUMABLES } from './profile.js';
 
-export const TARGET_BATTLES = [0, 1.5, 3.5, 6, 17, 30, 38, 45]; // battles at tier t to unlock tier t+1
+export const TARGET_BATTLES = [0, 1.5, 4, 8, 14, 26, 38, 45]; // battles at tier t to unlock tier t+1
 export const AVG_PERF = 1.93;          // performance units an average player earns (see perfUnits)
 export const WIN_XP = 1.5, WIN_CR = 1.25, FREE_XP = 0.05, FIRST_WIN_XP = 2;
 export const SELL_FACTOR = 0.5;
@@ -36,6 +36,12 @@ function tune() {
     const netWanted = nextPrice ? nextPrice / TARGET_BATTLES[t] * 1.05 : 0;
     const service = t === 1 ? 0 : avgServiceCost(t);
     CRT[t] = nextPrice ? (netWanted + service) / (AVG_PERF * (1 + WIN_CR) / 2) : CRT[t - 1] * 1.25;
+    // never feel poorer after tiering up: XP and net credits per battle rise at least 10 % per tier
+    if (t > 1) {
+      XPT[t] = Math.max(XPT[t], XPT[t - 1] * 1.1);
+      const minNet = expectedNetCredits(t - 1) * 1.1;
+      if (expectedNetCredits(t) < minNet) CRT[t] = (minNet + service) / (AVG_PERF * (1 + WIN_CR) / 2);
+    }
   }
 }
 

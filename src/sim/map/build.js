@@ -90,15 +90,15 @@ export class MapBuilder {
 
   // Ridge / embankment along a polyline: flat-ish top of half-width w, falloff over fall.
   ridge(poly, w, fall, h, hFn = null) {
-    const H = this.H;
+    const H = this.H, res = this.res, cell = this.cell;
     this.polyField(poly, w + fall, (k, d, s, L) => {
       const f = d <= w ? 1 : 0.5 + 0.5 * Math.cos(Math.PI * (d - w) / fall);
-      H[k] += (hFn ? hFn(s, L) : h) * f;
+      H[k] += (hFn ? hFn(s, L, (k % res) * cell, Math.floor(k / res) * cell) : h) * f;
     });
   }
   ridgeBoth(poly, w, fall, h, hFn) { this.both((T) => this.ridge(T.poly(poly), w, fall, h, hFn)); }
   // Carve a trench (gully) along a polyline, depth dFn(s,L) or constant.
-  trench(poly, w, fall, depth, dFn = null) { this.ridge(poly, w, fall, -depth, dFn ? (s, L) => -dFn(s, L) : null); }
+  trench(poly, w, fall, depth, dFn = null) { this.ridge(poly, w, fall, -depth, dFn ? (s, L, x, z) => -dFn(s, L, x, z) : null); }
 
   // Pull heights in a circle towards a level (default: the mean inside).
   flatten(x, z, r, blend, level = null, strength = 1) {
@@ -154,17 +154,23 @@ export class MapBuilder {
 
   // River: carve a channel. depthFn(s, L) → bed depth below the water level at the centre.
   river(ctrl, halfW, bankW, depthFn, { curve = true } = {}) {
+    // halfW / bankW / depthFn may be numbers or fn(x, z, s, L)
+    const F = (v) => (typeof v === 'function' ? v : () => v);
+    const hwF = F(halfW), bwF = F(bankW), dF = F(depthFn);
     const path = curve ? spline(ctrl, 8) : ctrl;
     const pts = resample(path, 5);
-    const lvl = this.water.level, H = this.H;
-    this.polyField(pts, halfW + bankW, (k, d, s, L) => {
-      const depth = depthFn(s, L);
+    const lvl = this.water.level, H = this.H, cell = this.cell, res = this.res;
+    let maxW = 0; for (const [x, z] of pts) maxW = Math.max(maxW, hwF(x, z) + bwF(x, z));
+    this.polyField(pts, maxW, (k, d, s, L) => {
+      const x = (k % res) * cell, z = Math.floor(k / res) * cell;
+      const hw = hwF(x, z), bw = bwF(x, z), depth = dF(x, z, s, L);
+      if (d > hw + bw) return;
       let target;
-      if (d <= halfW) { const u = d / halfW; target = lvl - 0.25 - (depth - 0.25) * (1 - u * u); }
-      else target = lerp(lvl - 0.25, H[k], smooth(halfW, halfW + bankW, d));
+      if (d <= hw) { const u = d / hw; target = lvl - 0.25 - (depth - 0.25) * (1 - u * u * u * u); }
+      else target = lerp(lvl - 0.25, H[k], smooth(hw, hw + bw, d));
       if (target < H[k]) H[k] = target;
     });
-    this.rivers.push({ path: pts.map(([x, z]) => [Math.round(x * 10) / 10, Math.round(z * 10) / 10]), halfW });
+    this.rivers.push({ path: simplify(pts, 0.8).map(([x, z]) => [Math.round(x * 10) / 10, Math.round(z * 10) / 10]), halfW: typeof halfW === 'number' ? halfW : null });
   }
 
   // Outer boundary: terrain rises beyond the playable square.
@@ -307,7 +313,7 @@ export class MapBuilder {
     return this.building(kind, mx, mz, my, w, d, h, variant, margin, true);
   }
   // Houses along one side (+1 left of travel, -1 right) of a polyline: returns a plan.
-  streetPlan(path, side, { from = 0, to = Infinity, spacing = [14, 20], depth = [8, 11], width = [9, 14], height = [6.5, 9], setback = 4.5, gap = 0.12, kinds = ['house'] } = {}) {
+  streetPlan(path, side, { from = 0, to = Infinity, spacing = [14, 20], depth = [8, 11], width = [9, 14], height = [6.5, 9], setback = 7.5, gap = 0.12, kinds = ['house'] } = {}) {
     const pts = resample(path, 1), r = this.rng, plan = [];
     let s = from + r.range(0, 4);
     const L = Math.min(to, pts.length - 2);
@@ -416,7 +422,10 @@ export class MapBuilder {
   }
 
   // ------------------------------------------------ battle layout
-  base(team, x, z) { this.bases.push({ team, x, z, r: 45 }); }
+  addBase(team, x, z) { this.bases.push({ team, x, z, r: 45 }); }
+  basesAt(x, z) { this.both((T) => { const [a, b] = T.p([x, z]); this.addBase(T.twin, a, b); }); }
+  // lane from team-0 base through team-0-side waypoints; the rest is mirrored automatically
+  laneSym(name, half) { this.lane(name, this.symLine(half)); }
   // spawn block centre for team 0; mirrored for team 1
   spawnZone(x, z, yaw, { cols = 5, rows = 3, dx = 14, dz = 15 } = {}) {
     this.spawnDefs = [{ x, z, yaw, cols, rows, dx, dz }];
@@ -428,13 +437,19 @@ export class MapBuilder {
 
   // Sniper / bush / scout points get bushes in front (towards yaw) or around.
   dressPoints(pts) {
+    // try the ideal spot, then slide sideways / nearer until a bush fits (roads, walls…)
+    const put = (x, z, fx, fz, lx, lz, sc) => {
+      for (const [a, b] of [[0, 0], [0, 3], [0, -3], [-2, 5], [-2, -5], [2, 7], [2, -7], [-4, 0]])
+        if (this.bush(x + fx * a + lx * b, z + fz * a + lz * b, sc, true)) return true;
+      return false;
+    };
     for (const p of pts) {
       const fx = Math.sin(p.yaw ?? 0), fz = Math.cos(p.yaw ?? 0), lx = fz, lz = -fx;
       if (p.kind === 'sniper' || p.kind === 'scout') {
         const ahead = p.kind === 'sniper' ? 9 : 5;
-        for (const o of [-3.5, 0, 3.5]) this.bush(p.x + fx * (ahead + this.rng() * 2) + lx * o, p.z + fz * (ahead + this.rng() * 2) + lz * o, 1.1, false);
+        for (const o of [-3.5, 0, 3.5]) { const a = ahead + this.rng() * 2; put(p.x + fx * a + lx * o, p.z + fz * a + lz * o, fx, fz, lx, lz, 1.1); }
       } else if (p.kind === 'bush') {
-        for (const [a, o] of [[0.5, 0], [2.5, -2.5], [2.5, 2.5], [-2, 3], [-2, -3]]) this.bush(p.x + fx * a + lx * o, p.z + fz * a + lz * o, 1.15, false);
+        for (const [a, o] of [[0.5, 0], [2.5, -2.5], [2.5, 2.5], [-2, 3], [-2, -3]]) put(p.x + fx * a + lx * o, p.z + fz * a + lz * o, fx, fz, lx, lz, 1.15);
       }
     }
   }

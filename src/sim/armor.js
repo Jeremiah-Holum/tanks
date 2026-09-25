@@ -111,6 +111,24 @@ function turretPieces(t) {
   return pieces;
 }
 
+// Commander's cupola (optional, def.look.cupola): an octagonal prism on the turret roof above
+// the commander, thinner than the turret face, a classic weak spot. Not in `pieces` (so older
+// renderers are unaffected): renderers should build it from armor.cupola.planes.
+function cupolaPiece(t) {
+  const r = Math.min(0.3, t.W * 0.16), hgt = 0.24;
+  const topHalfW = t.W / 2 - t.H * Math.tan((t.side.a || 0) * DEG);
+  const cx = Math.max(0, Math.min(t.W * 0.2, topHalfW - r - 0.05)), cz = (t.zOff || 0) - t.L * 0.2;
+  const tt = Math.max(Math.round((t.roof || 10) * 2), Math.round(t.side.t * 0.6));
+  const ps = [];
+  for (let k = 0; k < 8; k++) {
+    const f = (k + 0.5) * Math.PI / 4, nx = Math.cos(f), nz = Math.sin(f);
+    ps.push(plane(nx, 0, nz, cx + nx * r, 0, cz + nz * r, tt, 'cupola'));
+  }
+  ps.push(plane(0, 1, 0, 0, t.H + hgt, 0, Math.round((t.roof || 10) * 0.8), 'cupola'));
+  ps.push(plane(0, -1, 0, 0, t.H - 0.05, 0, 0, 'cupola.floor'));
+  return { name: 'cupola', frame: 'turret', kind: 'cupola', planes: ps, fixed: t.shape === 'casemate' };
+}
+
 // z of the turret front face at height y (the gun sits there)
 function frontZAt(t, y) {
   const af = t.front.a * DEG;
@@ -145,9 +163,12 @@ function modules(def) {
   if (ammo === 'bustle') out.push({ name: 'ammoRack', frame: 'turret', c: [0, t.H * 0.5, (t.zOff || 0) - t.L * 0.38], h: [t.W * 0.3, t.H * 0.22, t.L * 0.1] });
   else if (ammo === 'floor') out.push({ name: 'ammoRack', frame: 'hull', c: [0, clr + 0.15, tz], h: [W * 0.3, 0.12, L * 0.12] });
   else out.push({ name: 'ammoRack', frame: 'hull', c: [0, clr + H * 0.35, tz - 0.1], h: [W * 0.45, H * 0.2, L * 0.08] });
+  // Gun breech: behind the mantlet, inside the turret (casemate: inside the fighting compartment).
+  const gy = gunPivotY(t), bz = frontZAt(t, gy) - 0.45;
+  out.push({ name: 'gun', frame: 'turret', c: [0, gy, bz], h: [0.16, 0.16, 0.45] });
   // Crew
   const crew = def.crew || [];
-  const seat = (name, frame, x, y, z) => ({ name, frame, crew: true, c: [x, y, z], h: [0.22, 0.35, 0.22] });
+  const seat = (name, frame, x, y, z) => ({ name, frame, crew: true, c: [x, y, z], h: [0.28, 0.38, 0.28] });
   const fz = L / 2 - 0.9, s = W * 0.28;
   for (const c of crew) {
     if (c === 'driver') out.push(seat(c, 'hull', -s, clr + 0.45, fz)); // right side of hull (−x = right)
@@ -165,6 +186,7 @@ function modules(def) {
 //   modules: [{name, frame, c, h, crew?}],
 //   gun: { pivot:[x,y,z] (turret frame), len, r },
 //   turretPos: [x,y,z] (hull frame position of the turret ring centre),
+//   cupola: null | piece (turret frame; an extra armour piece on the roof, see cupolaPiece),
 // } — cached on def.
 export function buildArmor(def) {
   if (def._armor) return def._armor;
@@ -177,6 +199,7 @@ export function buildArmor(def) {
     modules: modules(def),
     gun: { pivot: [0, gy, gz], len: gun ? gun.len : 3, r: gun ? Math.max(0.04, gun.cal / 2000 * 1.8) : 0.06 },
     turretPos: [0, h.clr + h.H, t.z ?? 0],
+    cupola: def.look && def.look.cupola && t.shape !== 'open' && !t.open ? cupolaPiece(t) : null,
   };
   Object.defineProperty(def, '_armor', { value: a, enumerable: false });
   return a;

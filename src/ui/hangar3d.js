@@ -77,15 +77,15 @@ export class HangarScene {
     r.setPixelRatio(Math.min(1.5, window.devicePixelRatio || 1));
     r.outputColorSpace = THREE.SRGBColorSpace;
     r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.05;
-    r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
+    r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFShadowMap;
     const scene = this.scene = new THREE.Scene();
     scene.background = new THREE.Color(0x121412);
-    scene.fog = new THREE.Fog(0x141613, 16, 42);
+    scene.fog = new THREE.Fog(0x141613, 30, 70);
     const pm = new THREE.PMREMGenerator(r);
     this.env = pm.fromScene(new RoomEnvironment(), 0.04).texture; pm.dispose();
     scene.environment = this.env; scene.environmentIntensity = 0.35;
-    this.camera = new THREE.PerspectiveCamera(32, 1, 0.1, 120);
-    this.orbit = { az: -0.75, el: 0.2, dist: 11, tAz: -0.75, tEl: 0.2, tDist: 11, target: new THREE.Vector3(0, 1.1, 0) };
+    this.camera = new THREE.PerspectiveCamera(30, 1, 0.1, 150);
+    this.orbit = { az: -0.7, el: 0.16, dist: 16, tAz: -0.7, tEl: 0.16, tDist: 16, target: new THREE.Vector3(0, 1.1, 0) };
     this.spin = 0; this.idle = 0;
     this._build();
     this._bindInput();
@@ -93,14 +93,14 @@ export class HangarScene {
     this._ro = new ResizeObserver(() => this.resize()); this._ro.observe(container);
     this.running = false;
     this._loop = this._loop.bind(this);
-    this.clock = new THREE.Clock();
+    this._t = performance.now();
   }
 
   _build() {
     const s = this.scene;
     // floor
-    const floorTex = canvasTex(512, 512, concrete, [5, 5]);
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.82, metalness: 0.05 }));
+    const floorTex = canvasTex(512, 512, concrete, [7, 7]);
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.82, metalness: 0.05 }));
     floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; s.add(floor);
     // painted bay lines
     const lineMat = new THREE.MeshStandardMaterial({ color: 0xc7951f, roughness: 0.7 });
@@ -110,32 +110,32 @@ export class HangarScene {
     const wallMat = new THREE.MeshStandardMaterial({ map: wallTex, roughness: 0.6, metalness: 0.5, side: THREE.DoubleSide });
     const back = new THREE.Group();
     const seg = (w, h, x, y) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), wallMat); m.position.set(x, y, 0); back.add(m); };
-    seg(10, 12, -12, 6); seg(10, 12, 12, 6); seg(14, 5, 0, 9.5);
-    back.position.z = -14; s.add(back);
+    seg(18, 13, -16, 6.5); seg(18, 13, 16, 6.5); seg(14, 6, 0, 10);
+    back.position.z = -20; s.add(back);
     const door = new THREE.Mesh(new THREE.PlaneGeometry(14, 7), new THREE.MeshBasicMaterial({ map: canvasTex(512, 256, doorSky), fog: false }));
-    door.position.set(0, 3.5, -14.6); s.add(door);
-    for (const x of [-18, 18]) {
-      const side = new THREE.Mesh(new THREE.PlaneGeometry(40, 12), wallMat);
-      side.rotation.y = x < 0 ? Math.PI / 2 : -Math.PI / 2; side.position.set(x, 6, 4); s.add(side);
+    door.position.set(0, 3.5, -20.6); s.add(door);
+    for (const x of [-25, 25]) {
+      const side = new THREE.Mesh(new THREE.PlaneGeometry(60, 13), wallMat);
+      side.rotation.y = x < 0 ? Math.PI / 2 : -Math.PI / 2; side.position.set(x, 6.5, 8); s.add(side);
     }
     // steel columns and roof trusses
     const steel = new THREE.MeshStandardMaterial({ color: 0x3b403c, roughness: 0.5, metalness: 0.7 });
-    for (const x of [-7, 7]) for (const z of [-13.6, -4, 6]) {
-      const c = new THREE.Mesh(new THREE.BoxGeometry(0.45, 12, 0.45), steel); c.position.set(x * (z < -13 ? 1 : 1.9), 6, z); c.castShadow = true; s.add(c);
+    for (const x of [-7, 7]) for (const z of [-19.6, -8, 4, 16]) {
+      const c = new THREE.Mesh(new THREE.BoxGeometry(0.5, 13, 0.5), steel); c.position.set(x * (z < -19 ? 1 : 3.4), 6.5, z); c.castShadow = true; s.add(c);
     }
-    for (const z of [-10, -3, 4]) {
-      const b = new THREE.Mesh(new THREE.BoxGeometry(36, 0.5, 0.35), steel); b.position.set(0, 9.2, z); s.add(b);
-      const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.8, 0.35, 16, 1, true), steel); lamp.position.set(0, 8.4, z); s.add(lamp);
+    for (const z of [-14, -6, 2, 10]) {
+      const b = new THREE.Mesh(new THREE.BoxGeometry(50, 0.5, 0.35), steel); b.position.set(0, 10.2, z); s.add(b);
+      const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.8, 0.35, 16, 1, true), steel); lamp.position.set(0, 9.4, z); s.add(lamp);
       const bulb = new THREE.Mesh(new THREE.CircleGeometry(0.48, 16), new THREE.MeshBasicMaterial({ color: 0xffe2a8 }));
-      bulb.rotation.x = Math.PI / 2; bulb.position.set(0, 8.24, z); s.add(bulb);
+      bulb.rotation.x = Math.PI / 2; bulb.position.set(0, 9.24, z); s.add(bulb);
     }
     // crates and barrels for a lived-in look
     const crateMat = new THREE.MeshStandardMaterial({ color: 0x4d4a32, roughness: 0.85 });
     const barrelMat = new THREE.MeshStandardMaterial({ color: 0x3d4a2a, roughness: 0.6, metalness: 0.4 });
-    for (const [x, z, sy] of [[-9.5, -9, 1], [-10.6, -8.2, 0.8], [-9.8, -7.5, 0.7], [9.2, -10.5, 1.1]]) {
+    for (const [x, z, sy] of [[-12.5, -13, 1], [-13.6, -12.2, 0.8], [-12.8, -11.5, 0.7], [12.2, -14.5, 1.1], [-19, 2, 1.2], [-18.4, 3.3, 0.8]]) {
       const c = new THREE.Mesh(new THREE.BoxGeometry(1.2 * sy, 1.0 * sy, 1.2 * sy), crateMat); c.position.set(x, 0.5 * sy, z); c.rotation.y = x * 0.3; c.castShadow = c.receiveShadow = true; s.add(c);
     }
-    for (const [x, z] of [[10.5, -8], [11.2, -7.2], [10.3, -6.8]]) {
+    for (const [x, z] of [[13.5, -12], [14.2, -11.2], [13.3, -10.8], [19, 0], [19.6, 0.9]]) {
       const b = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.33, 0.95, 16), barrelMat); b.position.set(x, 0.475, z); b.castShadow = true; s.add(b);
     }
     // turntable
@@ -162,7 +162,7 @@ export class HangarScene {
     const rim = new THREE.DirectionalLight(0xffd9a0, 1.6); rim.position.set(-2, 5, -12); s.add(rim);
     const fill = new THREE.PointLight(0x8fb4ff, 30, 18, 1.8); fill.position.set(-7, 3.5, 5); s.add(fill);
     const warm = new THREE.PointLight(0xffb266, 22, 14, 1.8); warm.position.set(8, 2.5, -4); s.add(warm);
-    for (const z of [-10, -3, 4]) { const p = new THREE.PointLight(0xffe2a8, 14, 12, 2); p.position.set(0, 7.8, z); s.add(p); }
+    for (const z of [-14, -6, 2]) { const p = new THREE.PointLight(0xffe2a8, 16, 14, 2); p.position.set(0, 8.8, z); s.add(p); }
   }
 
   _bindInput() {
@@ -177,6 +177,13 @@ export class HangarScene {
     const up = () => { drag = null; c.classList.remove('dragging'); };
     c.addEventListener('pointerup', up); c.addEventListener('pointercancel', up);
     c.addEventListener('wheel', (e) => { e.preventDefault(); const o = this.orbit; o.tDist = Math.max(this.minDist, Math.min(this.maxDist, o.tDist * (1 + Math.sign(e.deltaY) * 0.1))); this.idle = 0; }, { passive: false });
+  }
+
+  // Move the canvas into another container (the scene outlives screen rebuilds).
+  attach(el) {
+    this._ro.disconnect();
+    this.container = el; el.prepend(this.canvas);
+    this._ro.observe(el); this.resize();
   }
 
   resize() {
@@ -203,17 +210,17 @@ export class HangarScene {
     // frame: distance from the tank's size
     const box = new THREE.Box3().setFromObject(group), size = box.getSize(new THREE.Vector3());
     const r = Math.max(size.x, size.z * 0.9, size.y * 1.6);
-    this.minDist = r * 1.3; this.maxDist = r * 3.4;
-    this.orbit.tDist = r * 2.05; this.orbit.target.set(0, Math.max(0.9, size.y * 0.5), 0);
+    this.minDist = r * 1.5; this.maxDist = Math.min(24, r * 4);
+    this.orbit.tDist = Math.min(22, r * 3.0); this.orbit.target.set(0, Math.max(0.8, size.y * 0.42), 0);
     if (opts.snap) this.orbit.dist = this.orbit.tDist;
     this.renderOnce();
   }
 
-  start() { if (this.running) return; this.running = true; this.clock.getDelta(); requestAnimationFrame(this._loop); }
+  start() { if (this.running) return; this.running = true; this._t = performance.now(); requestAnimationFrame(this._loop); }
   stop() { this.running = false; }
   _loop() {
     if (!this.running) return;
-    const dt = Math.min(0.05, this.clock.getDelta());
+    const now = performance.now(), dt = Math.min(0.05, (now - this._t) / 1000); this._t = now;
     this.idle += dt;
     if (this.idle > 4) this.table.rotation.y += dt * 0.12;
     this.renderOnce(dt);
@@ -249,7 +256,7 @@ export class HangarScene {
     s.add(group);
     const box = new THREE.Box3().setFromObject(group), size = box.getSize(new THREE.Vector3()), ctr = box.getCenter(new THREE.Vector3());
     const r = Math.max(size.x, size.y, size.z);
-    cam.position.set(ctr.x + r * 1.55, ctr.y + r * 0.55, ctr.z + r * 1.9); cam.lookAt(ctr.x, ctr.y - r * 0.02, ctr.z);
+    cam.position.set(ctr.x + r * 1.25, ctr.y + r * 0.45, ctr.z + r * 1.55); cam.lookAt(ctr.x, ctr.y - r * 0.02, ctr.z);
     const rr = this.renderer, prevClear = rr.getClearAlpha(), prevColor = rr.getClearColor(new THREE.Color());
     rr.setRenderTarget(this._rt); rr.setClearColor(0x000000, 0); rr.clear(); rr.render(s, cam);
     const W = w * 2, H = h * 2, buf = new Uint8Array(W * H * 4);

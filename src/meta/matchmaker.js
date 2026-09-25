@@ -3,7 +3,7 @@
 // fun names and a random map. Deterministic for a given opts.seed.
 //
 // buildBattle(profile, tankId, { size: 15|7, seed, mapId, mode }) → {
-//   mapId, map: null,            // INTEGRATION: battle.map = loadMap(battle.mapId, battle.seed) (or await withMap(battle))
+//   mapId, map: null,            // INTEGRATION: battle.map = loadMap(battle.mapId) (or await withMap(battle))
 //   seed, timeLimit, mode, teams: [[Entry], [Entry]],
 //   meta: { mapId, mapName, blurb, theme, size, template, tiers: [lo, hi], playerTeam, playerIndex, avgSkill: [a, b] }
 // }
@@ -134,7 +134,7 @@ export function buildBattle(profile, tankId, opts = {}) {
 // Convenience for INTEGRATION: loads the MapData into battle.map (dynamic import keeps node tests light).
 export async function withMap(battle) {
   const { loadMap } = await import('../sim/map/index.js');
-  battle.map = loadMap(battle.mapId, battle.seed);
+  battle.map = loadMap(battle.mapId); // maps are authored at their own seed
   return battle;
 }
 

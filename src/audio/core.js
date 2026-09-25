@@ -19,17 +19,17 @@ function fieldIR(ctx, len, R) {
     const d = b.getChannelData(ch);
     for (let k = 0; k < 16; k++) { const i = Math.floor((0.008 + R() * 0.24) * sr); d[i] += (R() < 0.5 ? -1 : 1) * 0.6 * (1 - i / sr / 0.3); }
     // hill / treeline echoes: short noise smears, each darker and quieter
-    const echoes = [[0.42 + R() * 0.08, 0.55], [0.95 + R() * 0.15, 0.36], [1.7 + R() * 0.2, 0.2], [2.5 + R() * 0.2, 0.1]];
+    const echoes = [[0.42 + R() * 0.08, 0.3], [0.95 + R() * 0.15, 0.2], [1.7 + R() * 0.2, 0.12], [2.5 + R() * 0.2, 0.06]];
     for (const [at, amp] of echoes) {
-      const i0 = Math.floor(at * sr), m = Math.floor((0.09 + at * 0.05) * sr); let lp = 0;
-      const a = 0.25 / (1 + at);
-      for (let i = 0; i < m && i0 + i < n; i++) { lp += a * ((R() * 2 - 1) - lp); d[i0 + i] += lp * amp * 6 * Math.sin(Math.PI * i / m); }
+      const i0 = Math.floor(at * sr), m = Math.floor((0.16 + at * 0.14) * sr); let lp = 0;
+      const a = 0.12 / (1 + at);
+      for (let i = 0; i < m && i0 + i < n; i++) { lp += a * ((R() * 2 - 1) - lp); const x = i / m; d[i0 + i] += lp * amp * 9 * Math.min(1, x * 6) * Math.pow(1 - x, 2); }
     }
     let lp = 0;
     for (let i = 0; i < n; i++) {
       const t = i / sr, a = clamp(0.9 - t * 0.35, 0.04, 0.9); // brightness falls with time
       lp += a * ((R() * 2 - 1) - lp);
-      d[i] += lp * 0.22 * Math.exp(-t / 0.75) * clamp(t / 0.02);
+      d[i] += lp * 0.26 * Math.exp(-t / 0.8) * clamp(t / 0.02);
     }
   }
   return b;
@@ -73,6 +73,12 @@ export class Kit {
     for (let i = 0; i < n; i++) { const x = i / (n - 1) * 2 - 1; a[i] = Math.tanh(k * x) / norm; }
     return (this.curves[k] = a);
   }
+  // unity-gain soft limiter: linear to 0.7, then a tanh knee that never reaches 1
+  limitCurve() {
+    const n = 2048, a = new Float32Array(n);
+    for (let i = 0; i < n; i++) { const x = i / (n - 1) * 2 - 1, m = Math.abs(x); a[i] = Math.sign(x) * (m < 0.7 ? m : 0.7 + 0.3 * Math.tanh((m - 0.7) / 0.3)); }
+    return a;
+  }
   // looping buffer source at a random offset, stopped after dur
   src(buf, t, dur, rate = 1) {
     const s = this.ctx.createBufferSource(); s.buffer = buf; s.loop = true; s.playbackRate.value = rate;
@@ -83,7 +89,7 @@ export class Kit {
   env(param, t, peak, attack, dur, hold = 0) {
     param.setValueAtTime(0, t); param.linearRampToValueAtTime(peak, t + attack);
     const td = t + attack + hold; if (hold) param.setValueAtTime(peak, td);
-    param.setTargetAtTime(0, td, Math.max(0.002, (dur - attack - hold) / 6));
+    param.setTargetAtTime(0, td, Math.max(0.002, (dur - attack - hold) / 7));
   }
   // Filtered noise burst. o: {dur, f, f1, fdur, type, q, gain, attack, hold, buf:'white'|'brown'|'crackle', rate}
   noise(out, t, o) {
