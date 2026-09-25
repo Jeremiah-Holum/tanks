@@ -3,6 +3,7 @@
 // pen rates, stuck tanks (alive, wanting to move, < 8 m progress over 60 s), AI and sim time per
 // tick, and how bot skill correlates with damage and survival.
 //   node tools/battle-sim.mjs [--n 4] [--maps ashford,kessel] [--workers 2] [--seed 1] [--limit 900] [--v]
+//     [--skills 0.8,0.3 (force team skills)] [--tune cover=0,danger=0.5 (src/sim/ai TUNE knobs, for A/B)]
 // --n = battles per map. Workers run battles in parallel (worker_threads); keep it ≤ 2 on a busy box.
 import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
 import { performance } from 'perf_hooks';
@@ -10,10 +11,11 @@ import { fileURLToPath } from 'url';
 
 const arg = (k, d) => { const i = process.argv.indexOf('--' + k); return i > 0 ? process.argv[i + 1] : d; };
 
-async function runBattle({ mapId, seed, limit, verbose, skills }) {
+async function runBattle({ mapId, seed, limit, verbose, skills, tune }) {
   const { loadMap } = await import('../src/sim/map/index.js');
   const { createBattle, stepBattle } = await import('../src/sim/battle.js');
-  const { createBrain } = await import('../src/sim/ai/index.js');
+  const { createBrain, TUNE } = await import('../src/sim/ai/index.js');
+  Object.assign(TUNE, tune || {});
   const { buildBattle } = await import('../src/meta/matchmaker.js');
   const { TANK_LIST } = await import('../src/meta/roster.js');
   const { makeRng } = await import('../src/meta/rng.js');
@@ -101,8 +103,9 @@ if (!isMainThread) {
   const maps = (arg('maps', MAPS.map((m) => m.id).join(','))).split(',');
   const verbose = process.argv.includes('--v');
   const skills = arg('skills', null) ? arg('skills').split(',').map(Number) : null;
+  const tune = Object.fromEntries((arg('tune', '') || '').split(',').filter(Boolean).map((kv) => { const [k, v] = kv.split('='); return [k, +v]; }));
   const jobs = [];
-  for (let i = 0; i < n; i++) for (const mapId of maps) jobs.push({ mapId, seed: seed0 + i * 101 + mapId.length * 7, limit, verbose, skills });
+  for (let i = 0; i < n; i++) for (const mapId of maps) jobs.push({ mapId, seed: seed0 + i * 101 + mapId.length * 7, limit, verbose, skills, tune });
   const results = [];
   const t0 = performance.now();
   await new Promise((resolve) => {
@@ -155,6 +158,10 @@ function report(R, secs) {
     return a / Math.sqrt(b * c || 1);
   };
   const sk = T.map((t) => t.skill);
+  const sd = (a) => { const m = mean(a); return Math.sqrt(mean(a.map((x) => (x - m) ** 2))); };
+  // within-class correlation (class and tier explain a lot of the raw variance)
+  const within = ['light', 'medium', 'heavy', 'td'].map((c) => { const L = T.filter((t) => t.cls === c); return L.length > 20 ? `${c} ${corr(L.map((t) => t.skill), L.map((t) => t.dmg / t.hp)).toFixed(2)}` : ''; }).filter(Boolean).join(', ');
+  console.log(`\nsd(dmg/hp) ${sd(T.map((t) => t.dmg / t.hp)).toFixed(2)}, sd(skill) ${sd(sk).toFixed(2)}; r(skill, dmg/hp) within class: ${within}`);
   console.log(`\nskill correlation: r(skill, dmg/hp) = ${corr(sk, T.map((t) => t.dmg / t.hp)).toFixed(2)}, r(skill, lifetime share) = ${corr(sk, T.map((t) => t.share)).toFixed(2)}, r(skill, survived) = ${corr(sk, T.map((t) => (t.alive ? 1 : 0))).toFixed(2)}, r(skill, hit%) = ${corr(sk.filter((_, i) => T[i].shots > 2), T.filter((t) => t.shots > 2).map((t) => t.hits / t.shots)).toFixed(2)}`);
   for (const [lo, hi, name] of [[0, 0.35, 'potato (<0.35)'], [0.35, 0.65, 'average'], [0.65, 1.01, 'unicum (>0.65)']]) {
     const L = T.filter((t) => t.skill >= lo && t.skill < hi);

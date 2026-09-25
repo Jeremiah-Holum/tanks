@@ -12,9 +12,14 @@ import { bestAim, candWorld, lineTo, gunFacing, alphaOf, chooseShell, chanceWith
 import { wrap, clamp, hyp, headingTo, shellSlots, snapPassable, passable, TAU } from './util.js';
 
 const CRUISE_LOOK = 11;                    // m, carrot distance (+ speed)
-const ENGAGE_RANGE = { light: 300, medium: 330, heavy: 240, td: 480 };   // stop and fight inside this
-const FIRE_RANGE = { light: 330, medium: 390, heavy: 320, td: 520 };     // don't bother shooting beyond
+const ENGAGE_RANGE = { light: 260, medium: 300, heavy: 240, td: 450 };   // stop and fight inside this
+const FIRE_RANGE = { light: 250, medium: 300, heavy: 270, td: 450 };     // don't bother shooting beyond (potatoes do)
 const _sol = {};
+
+// Global tuning multipliers (battle-sim --tune k=v for A/B tests): scale the probability that
+// a bot knows a tactic (cover, duck, peek, bush, angle, relocate, retreat, discipline, route)
+// and the danger-map routing weight (danger).
+export const TUNE = {};
 
 export function createBrain(world, tank) { return new Brain(world, tank); }
 
@@ -32,16 +37,30 @@ export class Brain {
     const p = 1 - s;
     this.react = 0.2 + 1.3 * p ** 1.3;                 // s before a fresh contact is engaged
     this.evalN = Math.round(10 + 20 * p);               // ticks between target evaluations
-    this.aimErrBase = 0.08 + 2.2 * p * p;               // m of aim error at ~200 m
+    this.aimErrBase = 0.08 + 3.6 * p * p;               // m of aim error at ~200 m
     this.patience = 0.3 + 2.4 * s;                      // × gun aim time we are willing to wait
-    this.patienceK = 0.35 + 0.65 * s;                   // 1 ≈ optimal trigger timing, < 1 trigger-happy
+    this.patienceK = 0.1 + 0.9 * s;                     // 1 ≈ optimal trigger timing, < 1 trigger-happy
     this.errFloor = 0.2 + 0.6 * p;                      // aim error left after tracking a target
     this.leadK = 0.25 + 0.75 * s;                       // fraction of the true lead applied
     this.goldBudget = s > 0.6 ? Math.round((s - 0.6) * 25) : 0;
     this.goldUsed = 0;
-    this.angleArmor = (this.cls === 'heavy' || (this.cls === 'medium' && tank.def.hull.upper.t >= 60)) && s > 0.4 ? (s > 0.7 ? 0.45 : 0.3) : 0;
+    // Tactics a bot "knows", rolled once with a probability that rises smoothly with skill (so
+    // there is a gradient, not a cliff): tr(lo, hi) = P(knows) ramps from 0 at lo to 1 at hi.
+    const tr = (k, lo, hi) => this.rng() < clamp((s - lo) / (hi - lo), 0, 1) * (TUNE[k] ?? 1);
+    this.knows = {
+      cover: tr('cover', 0.25, 0.85),       // break contact behind nearby cover when lit on the move
+      duck: tr('duck', 0.25, 0.8),          // back off when over-exposed / hit without an answer
+      peek: tr('peek', 0.3, 0.8) && tank.gunDef.reload >= 4.5,   // hide while reloading
+      bush: tr('bush', 0.35, 0.85),         // sit ~18 m behind the bush
+      angle: tr('angle', 0.2, 0.8),         // angle the hull to threats
+      relocate: tr('relocate', 0.25, 0.75), // move after being lit
+      retreat: tr('retreat', 0.15, 0.6),    // fall back when low
+      discipline: tr('discipline', 0.2, 0.7), // hold fire at range early / on hopeless shots
+      stopEnRoute: !tr('route', 0.1, 0.5),  // stops to trade anywhere on the way (bad)
+    };
+    this.angleArmor = (this.cls === 'heavy' || (this.cls === 'medium' && tank.def.hull.upper.t >= 60)) && this.knows.angle ? 0.25 + 0.25 * s : 0;
     this.angleSide = this.rng() < 0.5 ? 1 : -1;
-    this.peeker = s >= 0.5 && tank.gunDef.reload >= 5.5;
+    this.peeker = this.knows.peek;
     // --- state
     this.c = { throttle: 0, steer: 0, brake: false, aim: null, lockGun: false, fire: false, shell: tank.shell, use: null };
     this._aim = { x: 0, y: 0, z: 0 };
@@ -51,18 +70,20 @@ export class Brain {
     this.seen = new Map(); this.enemies = [];
     this.target = null; this.targetLos = false; this.targetD = 0; this.aimPt = null; this.aimAt = -9;
     this.aimSince = 0; this.laidSince = -1; this.err = { x: 0, y: 0, z: 0 }; this.errAt = -9;
-    this.nextShot = 0; this.checkAt = 0; this.curErr = 0; this.readyAt = 0;
+    this.nextShot = 0; this.checkAt = 0; this.blockedT = 0; this.noShoot = new Map(); this.curErr = 0; this.readyAt = 0;
     this.lastHitT = -99; this.hitDir = null; this.recentDmg = 0;
     this.stuckT = 0; this.reverseT = 0; this.revSteer = 0; this.unsticks = []; this.jitter = null;
     this.progT = 0; this.pushT = 0; this.stall = 0; this.lastRemain = Infinity; this.progYaw = 0; this.escape = null; this.pivoting = false; this.intent = 0;
     this.peek = 0; this.peekT = 0; this.peekDur = 0; this.peekWhy = ''; this.duckUntil = -1;
     this.scoutPhase = 0; this.scoutAt = -1; this.relocAt = -99; this.flexAt = 40 + this.rng() * 30;
-    this.brawlPushAt = 70 + this.rng() * 50;
+    this.brawlPushAt = (this.cls === 'heavy' ? 80 : 120) + this.rng() * 60;   // commit to the lane
     this.openingT = 75 + 40 * this.rng();
-    this.dangerW = s < 0.3 ? 0 : 0.6 + 1.6 * s;          // A* cost per enemy that can see a cell
+    this.stageUntil = this.cls === 'heavy' || this.cls === 'medium' ? 45 + 40 * this.rng() + 20 * p : 0;
+    this.stage = null;
+    this.dangerW = 2.4 * s ** 1.5 * (TUNE.danger ?? 1);  // A* cost per enemy that can see a cell
     this.yolo = this.rng() < 0.45 - s;                  // potatoes that charge alone
     this.yoloAt = 50 + this.rng() * 80;
-    this.retreated = false; this.defending = false; this.huntId = null; this.cleared = new Map(); this.capping = false; this.pushS = 0; this.pushGoal = null; this.cover = null; this.coverAt = -99;
+    this.retreated = false; this.defending = false; this.huntId = null; this.why = ''; this.cleared = new Map(); this.capping = false; this.pushS = 0; this.pushGoal = null; this.cover = null; this.coverAt = -99;
     this.useAt = {}; this.carrot = { x: 0, z: 0, remain: 0 };
     this.stats = { unsticks: 0, plans: 0 };
   }
@@ -71,7 +92,7 @@ export class Brain {
     if (this.post && this.post.point !== (post && post.point)) this.team.releasePoint(this.post.point);
     // skilled snipers sit ~18 m behind their bush: the sim drops a target's own bush (≤ 15 m)
     // from its camo after it fires, but foliage farther in front still hides the muzzle flash
-    if (post && this.skill > 0.55 && (post.kind === 'sniper' || post.kind === 'bush') && this.cls !== 'heavy') {
+    if (post && this.knows.bush && (post.kind === 'sniper' || post.kind === 'bush') && this.cls !== 'heavy') {
       const back = 17 + this.rng() * 4, x = post.x - Math.sin(post.yaw) * back, z = post.z - Math.cos(post.yaw) * back;
       if (passable(this.team.navS, x, z, 2.2)) post = { ...post, x, z, behind: true };
     }
@@ -120,7 +141,7 @@ export class Brain {
       if (!this.seen.has(e.id)) this.seen.set(e.id, now);
       const d = hyp(e.pos.x - t.pos.x, e.pos.z - t.pos.z);
       if (d > 600 || now - this.seen.get(e.id) < this.react) continue;
-      const los = lineTo(world, this, e);
+      const los = !(this.noShoot.get(e.id) > now) && lineTo(world, this, e);
       this.enemies.push({ e, d, los });
       if (!los) continue;
       // quick pen estimate: the plate at the hull centre (skilled bots also know better spots)
@@ -167,7 +188,7 @@ export class Brain {
     let goal = null, mode = 'post', hold = false;
     const tgt = this.targetLos ? this.target : null;
     // over-exposed (skilled bots): several guns on us, or losing hp fast → duck out for a bit
-    if (s > 0.45 && t.spotted && now > this.duckUntil + 4 && this.peek === 0) {
+    if (this.knows.duck && t.spotted && now > this.duckUntil + 4 && this.peek === 0) {
       let aimed = 0;
       for (const x of this.enemies) if (x.los && x.d < 450 && gunFacing(x.e, pos.x, pos.z) > 0.97) aimed++;
       const hot = aimed >= 3 || (aimed >= 2 && hpF < 0.7) || this.recentDmg > t.maxHp * 0.25;
@@ -180,7 +201,7 @@ export class Brain {
     }
     // lit in the open on the way to the post (skilled bots): break contact behind nearby cover
     if (this.cover && (now > this.cover.until || this.defending)) this.cover = null;
-    if (s > 0.45 && !this.cover && t.spotted && !this.arrived && now > this.coverAt + 8 && this.post && !this.defending
+    if (this.knows.cover && !this.cover && t.spotted && !this.arrived && now > this.coverAt + 8 && this.post && !this.defending
       && hyp(this.post.x - pos.x, this.post.z - pos.z) > 40 && (now - this.lastHitT < 2.5 || this.enemies.some((x) => x.los && x.d < 420 && gunFacing(x.e, pos.x, pos.z) > 0.97))) {
       this.coverAt = now;
       const cv = this.findCover(world);
@@ -197,7 +218,7 @@ export class Brain {
       }
     }
     // TDs (and passive lights) relocate when lit and shot at without a target to answer
-    if ((this.cls === 'td' || this.scoutPhase === 2) && s > 0.45 && t.spotted && now - this.lastHitT < 3 && !tgt && now - this.relocAt > 40 && T.push < 2) {
+    if ((this.cls === 'td' || this.scoutPhase === 2) && this.knows.relocate && t.spotted && now - this.lastHitT < 3 && !tgt && now - this.relocAt > 40 && T.push < 2) {
       const p = T.relocatePost(this); if (p) { this.setPost(p); this.relocAt = now; this.arrived = false; }
     }
     // flex mediums: move to the lane that needs them
@@ -217,14 +238,14 @@ export class Brain {
       mode = 'defend';
       goal = this.jitterGoal(b.x, b.z, 18);
       if (tgt && (db < b.r + 60 || this.targetD < 150)) hold = true;
-    } else if (hpF < 0.25 && s >= 0.3 && T.push < 2 && !this.retreated && this.enemies.some((x) => x.los && x.d < 380)) {
+    } else if (hpF < 0.25 && this.knows.retreat && T.push < 2 && !this.retreated && this.enemies.some((x) => x.los && x.d < 380)) {
       // low hp: fall back towards our side of the lane and play support from there
       this.retreated = true;
       this.setPost(T.relocatePost(this) || T.lanePost(g, Math.max(0.08, prog - 0.25), 'fallback'));
       this.arrived = false; goal = this.post; mode = 'retreat';
     } else {
       const pushing = T.push >= 2 || (T.push === 1 && (this.cls === 'heavy' || this.cls === 'medium'))
-        || (this.cls === 'heavy' && now > this.brawlPushAt && T.laneA[g] >= T.laneE[g] && !this.retreated)
+        || ((this.cls === 'heavy' || this.cls === 'medium') && now > this.brawlPushAt && T.laneA[g] >= T.laneE[g] + (this.cls === 'medium' ? 1 : 0) && !this.retreated)
         || (this.yolo && now > this.yoloAt && this.cls !== 'td');
       if (pushing && !(this.retreated && T.push < 2)) {
         mode = 'push';
@@ -241,8 +262,8 @@ export class Brain {
         if (!(T.push >= 1 || this.yolo)) this.capping = false;
         if (prog > 0.72 || (T.push >= 2 && prog > 0.6)) this.capping = true;
         if (tgt && this.targetD < range) hold = true;
-        else if (hunt && hunt.d > 40) goal = this.jitterGoal(hunt.x, hunt.z, 10, 'h' + hunt.id);
-        else if (this.capping) { goal = this.jitterGoal(T.eBase.x, T.eBase.z, 22, 'cap'); mode = 'cap'; }
+        else if (hunt) { goal = this.jitterGoal(hunt.x, hunt.z, 10, 'h' + hunt.id); this.why = 'hunt' + hunt.id + '@' + hunt.d.toFixed(0); }
+        else if (this.capping) { goal = this.jitterGoal(T.eBase.x, T.eBase.z, 22, 'cap'); mode = 'cap'; this.why = 'cap'; }
         else {
           // lane objectives only ever move forward
           if (!this.pushGoal || hyp(this.pushGoal.x - pos.x, this.pushGoal.z - pos.z) < 18 || this.pushGoal.geo !== g) {
@@ -250,15 +271,23 @@ export class Brain {
             if (this.pushGoal) this.pushS = this.pushGoal.s; else this.capping = true;
           }
           goal = this.pushGoal || this.jitterGoal(T.eBase.x, T.eBase.z, 22, 'cap');
+          this.why = 'pg' + (this.pushS || 0).toFixed(2);
         }
       } else {
         goal = this.post;
+        // opening: heavies and mediums deploy at a covered staging spot before moving up
+        if (now < this.stageUntil && this.post) {
+          if (!this.stage && now > 6) this.stage = T.stagePost(this.post.geo, this.rng);
+          if (this.stage) { goal = this.stage; mode = 'stage'; }
+        }
         // stop and fight when a target is in range (lights on a scouting run keep going)
         if (tgt && this.targetD < range && !(this.cls === 'light' && this.scoutPhase === 1 && !this.arrived && this.targetD > 120)) {
-          // skilled bots finish the last few metres into cover first
-          // skilled bots don't stop to trade in the open at range: they get to their post first
+          // at the post: fight. On the way: only close threats (potatoes stop to trade anywhere),
+          // skilled bots finish the last few metres into cover first.
           const toPost = this.post ? hyp(this.post.x - pos.x, this.post.z - pos.z) : 0;
-          hold = !(s > 0.5 && toPost < 70 && toPost > 8);
+          if (this.arrived || toPost < 8 || mode === 'stage') hold = true;
+          else if (this.knows.stopEnRoute) hold = true;
+          else hold = this.targetD < 150 - 60 * s || (now - this.lastHitT < 3 && toPost > 120 && s < 0.6);
         }
       }
     }
@@ -272,7 +301,7 @@ export class Brain {
       const key = mode + ':' + Math.round(goal.x / 10) + ',' + Math.round(goal.z / 10);
       if (key !== this.goalKey && (!this.goal || this.goalKey === '' || hyp(goal.x - this.goal.x, goal.z - this.goal.z) > 12)) {
         this.goalKey = key; this.needPlan = true; this.arrived = false;
-        if (this.log) { this.log.push(now.toFixed(0) + ':' + key); if (this.log.length > 12) this.log.shift(); }
+        if (this.log) { this.log.push(now.toFixed(0) + ':' + key + '(' + this.why + ')'); if (this.log.length > 12) this.log.shift(); }
       }
       this.goal = goal;
     }
@@ -296,7 +325,7 @@ export class Brain {
     }
     const goal = this.goal;
     if (!goal || this.hold || this.arrived) { this.holdStill(world); return; }
-    if (this.needPlan && planBudget(world)) {
+    if (this.needPlan && planBudget(world, t.team)) {
       const r = plan(T.planNav(this.dangerW), T.navS, t.pos.x, t.pos.z, goal.x, goal.z);
       this.stats.plans++;
       if (r) { this.follow.set(r.pts); T.notePath(r.raw); this.needPlan = false; this.planFail = 0; this.lastRemain = Infinity; }
@@ -536,11 +565,11 @@ export class Brain {
     if (t.reload > 0 || now < this.nextShot || t.ammo[t.shell] <= 0 || c.shell !== t.shell) return;
     // lights on passive spotting duty hold fire unless it's close, a kill, or late game
     if (this.cls === 'light' && this.scoutPhase > 0 && this.team.push < 1 && d > 200 && tg.hp > alphaOf(t) * 1.1 && now - this.lastHitT > 5) return;
-    if (d > FIRE_RANGE[this.cls] * (1 + 0.25 * (1 - s)) && now - this.lastHitT > 4) return;
+    if (d > FIRE_RANGE[this.cls] * (this.knows.discipline ? 1 : 1.6) && now - this.lastHitT > 4) return;
     // opening discipline: unspotted non-TDs keep their camo at range early on (potatoes don't)
-    if (now < this.openingT && !t.spotted && s >= 0.3 && this.cls !== 'td' && d > 220 && tg.hp > alphaOf(t) && now - this.lastHitT > 4) return;
+    if (now < this.openingT && !t.spotted && this.knows.discipline && this.cls !== 'td' && d > 220 && tg.hp > alphaOf(t) && now - this.lastHitT > 4) return;
     const sol = aimSolution(world, t, p, _sol);
-    if (!sol.reachable) return;
+    if (!sol.reachable) { this.blocked(world); return; }
     const angErr = Math.abs(wrap(sol.yaw - t.turretYaw)) + Math.abs(sol.pitch - t.gunPitch);
     const Rd = t.disp * d / 100;
     const laid = angErr * d < 0.35 + 0.4 * Rd;
@@ -559,7 +588,7 @@ export class Brain {
     // leaving: the team is about to lose sight of it (last sighting ageing), or it's moving fast
     const leaving = now - tg.lastSeen[t.team] > 1.4 || (Math.abs(tg.speed) > 5 && s > 0.4);
     // skilled bots don't waste shots (and camo) on hopeless long-range pokes
-    if (s > 0.5 && pFull * Math.max(0.05, this.aimPt.chance) < 0.12 * s && !leaving && now - this.lastHitT > 3) return;
+    if (this.knows.discipline && pFull * Math.max(0.05, this.aimPt.chance) < 0.12 * s && !leaving && now - this.lastHitT > 3) return;
     const ready = (pNext - pNow) / 0.3 * cycle * this.patienceK <= pNow;
     if (!(ready || waited || (leaving && pNow >= 0.5 * pFull))) return;
     // don't shoot friends or into a wall
@@ -569,13 +598,22 @@ export class Brain {
     if (hit.targetId) {
       const o = world.byId[hit.targetId];
       if (o && o.team === t.team && o.alive) return;
-    } else if (hit.dist < d - 10 && s > 0.2) return;
-    c.fire = true;
+    } else if (hit.dist < d - 10 && s > 0.2) { this.blocked(world, 0.08); return; }
+    c.fire = true; this.blockedT = 0;
     this.nextShot = now + 0.2;
     if (c.shell === this.slots.gold) this.goldUsed++;
     this.rollErr(now); this.aimSince = now; this.laidSince = -1;
     // next shell choice happens on the next pickAim; rechoose now if we were on gold / HE
     if (this.aimPt) this.wantShell = chooseShell(this, tg, this.aimPt, d);
+  }
+
+  // Loaded, on target, but the shot can't be made (gun depression, a crest or a wall in the
+  // way): after ~3 s give up on that target for a while so the bot moves instead of staring.
+  blocked(world, dt = DT) {
+    this.blockedT += dt;
+    if (this.blockedT < 3 || !this.target) return;
+    this.noShoot.set(this.target.id, world.time + 12);
+    this.blockedT = 0; this.target = null; this.targetLos = false; this.aimPt = null;
   }
 
   // ------------------------------------------------------------------ consumables

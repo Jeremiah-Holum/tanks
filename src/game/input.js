@@ -23,7 +23,9 @@ export class Input {
     on(window, 'blur', () => { this.keys.clear(); this.buttons = [false, false, false]; });
     on(window, 'mousemove', (e) => {
       if (!this.enabled) return;
-      this.dx += e.movementX || 0; this.dy += e.movementY || 0;
+      const mx = e.movementX || 0, my = e.movementY || 0;
+      if (Math.abs(mx) > 300 || Math.abs(my) > 300) return; // pointer-lock / first-event spikes
+      this.dx += mx; this.dy += my;
     });
     on(el, 'mousedown', (e) => {
       if (!this.enabled) return;

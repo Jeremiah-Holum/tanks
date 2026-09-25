@@ -9,23 +9,25 @@ const SHARED = new WeakMap();
 // Per-world shared AI state: both team brains and the per-tick path-planning budget.
 export function shared(world) {
   let S = SHARED.get(world);
-  if (!S) { S = { teams: [null, null], planStep: -1, plans: 0 }; SHARED.set(world, S); }
+  if (!S) { S = { teams: [null, null], planStep: -1, plans: [0, 0] }; SHARED.set(world, S); }
   return S;
 }
 export function teamBrain(world, team) {
   const S = shared(world);
   return S.teams[team] || (S.teams[team] = new TeamBrain(world, team));
 }
-// Path-planning budget: at most PLANS_PER_TICK A* searches per world tick.
+// Path-planning budget: at most PLANS_PER_TICK A* searches per team per tick (per team, so
+// the team whose bots are polled first can't starve the other).
 const PLANS_PER_TICK = 2;
-export function planBudget(world) {
+export function planBudget(world, team) {
   const S = shared(world);
-  if (S.planStep !== world.step) { S.planStep = world.step; S.plans = 0; }
-  if (S.plans >= PLANS_PER_TICK) return false;
-  S.plans++;
+  if (S.planStep !== world.step) { S.planStep = world.step; S.plans = [0, 0]; }
+  if (S.plans[team] >= PLANS_PER_TICK) return false;
+  S.plans[team]++;
   return true;
 }
 
+const PRIOR_W = 0.35;   // danger per enemy sniper spot that sees a cell (map knowledge)
 const CLS_W = { light: 0.7, medium: 1, heavy: 1.25, td: 1 };
 // tier matters a lot: each tier up roughly doubles combat value (hp · dpm)
 const value = (def, hpFrac) => CLS_W[def.cls] * Math.pow(1.7, def.tier - 5) * (0.35 + 0.65 * hpFrac);
@@ -130,6 +132,15 @@ export class TeamBrain {
     this.workStep = world.step;
     let job = null;
     for (const v of this.views.values()) if (!v.done) { job = v; break; }
+    if (!job && this.priorQ === undefined) {
+      // map knowledge: where the enemy's snipers usually sit (their sniper / bush / hull-down points)
+      this.priorQ = this.info.points.filter((p) => p.team === this.enemy && (p.kind === 'sniper' || p.kind === 'bush' || p.kind === 'hulldown'));
+    }
+    if (!job && this.priorQ.length) {
+      const p = this.priorQ.shift();
+      job = { id: 'p' + p.i, prior: true, x: p.x, z: p.z, y: heightAt(world.map, p.x, p.z) + 2.4, cells: new Uint8Array(this.dn * this.dn), k: 0, done: false };
+      this.views.set(job.id, job);
+    }
     if (!job) {
       // (re)start a view for the enemy whose record is missing or stale (moved > 20 m)
       for (const [id, k] of this.known) {
@@ -153,11 +164,16 @@ export class TeamBrain {
       P.x = x; P.z = z; P.y = heightAt(map, x, z) + 1.8;
       job.cells[job.k] = lineClear(map, E, P) ? 1 : 0;
     }
-    if (job.k >= n * n) { job.done = true; this.sumDanger(world); }
+    if (job.k >= n * n) {
+      job.done = true; this.sumDanger(world);
+      // the prior map is complete: bots still on their way re-route with it
+      if (job.prior && !this.priorQ.length) for (const b of this.brains) if (!b.arrived) b.needPlan = true;
+    }
   }
   sumDanger(world) {
     const d = this.danger; d.fill(0);
     for (const [id, v] of this.views) {
+      if (v.prior) { if (v.done) for (let i = 0; i < d.length; i++) if (v.cells[i]) d[i] += PRIOR_W; continue; }
       const k = this.known.get(id);
       if (!k || world.time - k.t > 25) { this.views.delete(id); continue; }
       if (!v.done) continue;
@@ -311,6 +327,20 @@ export class TeamBrain {
       laneLoad[post.geo] += b.cls === 'td' ? 0.6 : 1;
       b.setPost(post);
     }
+  }
+  // Opening staging spot on lane g: the least exposed passable spot (prior danger from enemy
+  // sniper points) around team-progress 0.2–0.3, so the team deploys before it commits.
+  stagePost(g, rng) {
+    const s0 = 0.2 + rng() * 0.1, c = this.laneAt(g, s0);
+    let best = null, bs = Infinity;
+    for (let i = 0; i < 24; i++) {
+      const a = i * Math.PI / 12, r = 15 + (i % 3) * 20, x = c.x + Math.cos(a) * r, z = c.z + Math.sin(a) * r;
+      if (!this.nav || !(this.info.nav.cost[Math.floor(z / this.nav.cell) * this.nav.cols + Math.floor(x / this.nav.cell)] < 2)) continue;
+      const sc = this.dangerAt2(x, z) * 3 + this.prog(x, z, g) * 2 + rng() * 0.3;
+      if (sc < bs) { bs = sc; best = { x, z }; }
+    }
+    const q = best || snapPassable(this.info.nav, c.x, c.z);
+    return { x: q.x, z: q.z, yaw: this.faceFrom(q.x, q.z, g), kind: 'stage', geo: g, point: null };
   }
   // A light that has scouted falls back to a passive bush in its lane.
   passivePost(b) {

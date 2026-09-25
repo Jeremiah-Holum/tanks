@@ -1,7 +1,7 @@
 // WoT-style camera: arcade (third person orbiting a pivot above the tank, collision-aware) and
 // sniper (at the gun, ×2/×4/×8). The mouse turns the look direction (yaw, pitch); the aim ray is
 // the screen centre, which in arcade passes through the pivot.
-//   cam.look(dx, dy, sens) · cam.zoomStep(+1|-1) · cam.toggleSniper() · cam.update(focus, dt)
+//   cam.turn(dx, dy, sens) · cam.zoomStep(+1|-1) · cam.toggleSniper() · cam.update(focus, dt)
 //   cam.pos / cam.dir / cam.fov / cam.sniper / cam.zoom
 import { raycastTerrain, raycastObjects } from '../sim/map/query.js';
 
@@ -27,7 +27,7 @@ export class GameCamera {
   _clampPitch() { const [a, b] = this.sniper ? PITCH_SNIPER : PITCH_ARCADE; this.pitch = Math.max(a, Math.min(b, this.pitch)); }
 
   // Mouse: radians per pixel scaled by sensitivity; in sniper by the zoom's fov too.
-  look(dx, dy, sens = 1, invertY = false) {
+  turn(dx, dy, sens = 1, invertY = false) {
     const k = 0.0022 * sens * (this.sniper ? Math.tan(this.fov * DEG / 2) / Math.tan(this.baseFov * DEG / 2) : 1);
     this.yaw -= dx * k;
     this.pitch += (invertY ? dy : -dy) * k;
