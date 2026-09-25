@@ -58,7 +58,8 @@ Owner of `src/main.js`, `src/game/*`, `src/ui/hud.js`, `src/ui/hud.css`, `index.
   Hit (HE), Target destroyed, Spotted, Damage blocked), merged with ×n and summed damage; floating damage
   numbers over hit enemies; toasts (module/crew/fire/consumables); sixth-sense lamp while `tank.spotted`
   (min 3 s; the voice line comes from audio's `spot` event).
-- Markers over visible enemies (red) and allies within 260 m (green): tank, hp bar + number, name < 160 m.
+- Markers over spotted enemies (red, tank + hp bar + hp, name < 160 m) and allies within 300 m (green, compact,
+  name < 100 m or under the crosshair), scaled with distance, overlaps stacked then faded.
 - Tab score panel (tier, class icon, vehicle, player, damage, kills; sorted by tier; unspotted dimmed).
 - Death: "Destroyed by X · tank · cause" banner, then spectating allies (LMB/RMB next/previous).
 - Esc menu: Resume / Settings (the Screens settings dialog shown over the battle: the root gets
@@ -79,7 +80,7 @@ setting or `?q=` disables it. `renderScale` (settings) multiplies the view's pix
 | param | effect |
 |---|---|
 | `q=low|medium|high` | fixed quality |
-| `fast=1` | test mode: battle 100 s, sim ×4, up to 150 steps / frame and 1 s per frame, player god mode |
+| `fast=1` | test mode: battle 100 s (unless `limit`), sim ×4 (unless `speed`), up to 150 steps / frame and 1 s per frame, player god mode |
 | `god=1`, `speed=n`, `limit=s` | god mode, sim speed, battle time limit |
 | `auto=1` | skip the hangar and start a battle at once (`tank=<id>`, `map=<id>`, `size=7|15`, `seed=n`) |
 | `map`, `size`, `seed` | also override BATTLE! from the hangar |
@@ -87,8 +88,13 @@ setting or `?q=` disables it. `renderScale` (settings) multiplies the view's pix
 | `autopilot=1` | the player's tank is driven by the AI |
 | `bots=simple` | use the test bot instead of the AI |
 | `countdown=s` | countdown length (0 = none) |
-| `perf=1` | per-phase timing strip (also the "Show FPS" setting) |
+| `perf=1`, `debug=1` | per-phase timing strip (also F3 in battle and the "Show FPS" setting) |
 | `scale=0.5..1` | render scale |
+
+## Controls
+WASD drive · mouse aim · LMB fire · RMB lock target / hold gun · wheel zoom → sniper ×2/×4/×8 · Shift sniper ·
+Space/X brake (Space skips the countdown) · 1/2/3 shells · R reload · 4/5/6 consumables · Tab score · M minimap ·
+F3 perf strip · Esc menu. Sensitivities and invert Y come from Settings.
 
 ## Tools
 - `tools/capped.sh -- node tools/verify.mjs low|medium` (one at a time): real input end to end, see the top of
@@ -98,10 +104,25 @@ setting or `?q=` disables it. `renderScale` (settings) multiplies the view's pix
   (tool params: `press=ShiftLeft,Wheel1`, `hold=Tab`, `yaw=deg`, `wait=ms`), into `shots/game/`.
 - `node tools/build.mjs` → `dist/` (game.js, ui.css, hud.css, index.html).
 
-## Verify results / perf
-(see the bottom of this file, updated after each run)
+## Verify results / perf (SwiftShader, 4 shared cores, 1024×576)
+- verify low, run 2: all input steps passed through Esc menu; the battle then ended by time-out; results → garage
+  passed (draw, 36 XP, 638 credits). The final run's result is at the end of this file.
+- The loop, per sim step with 30 tanks: sim 0.13–0.36 ms, AI 0.29–0.45 ms (whole team of bots) under SwiftShader
+  load. Node alone: sim 0.23 ms/tick, AI 0.2 ms/tick (tools/battle-sim.mjs). HUD 1.5–6 ms and view.frame CPU
+  9–13 ms per frame in headless Chrome; the frame time itself (170–250 ms at speed 1, low/medium) is the CPU
+  rasteriser. `view.stats()`: low 27–150 draw calls, 0.3–0.4 M tris; medium ~100 calls, 1.05 M tris.
+- FX and tank animations age with sim time (`dt × speed`), so the 8× test phase doesn't pile up particles.
 
-## Known issues
-- The Leichttraktor (and maybe other tier-I hulls) rendered without its hull in one verify run: reported to
-  RENDER-TANKS (the session builds models only through `TankRenderer.prewarm/sync`).
-- SwiftShader numbers are CPU-bound and inflate sim/AI time 3–5× (4 cores shared with the software GPU).
+## Known issues / unfinished (priority order)
+1. verify on **medium** has not been run to completion (budget). Run `tools/capped.sh -- node tools/verify.mjs medium`;
+   it may exceed capped.sh's 900 s limit under SwiftShader: lower `limit=` in the URL or the 8× phase length.
+2. Verify's end-of-battle leg is timing-sensitive: 240 s of sim at 8× must fit in the 900 s budget of capped.sh.
+3. Marker clutter: allies are compact and scaled, overlaps stack up to 4 levels and then fade; it can still be busy
+   at spawn. Consider hiding ally markers beyond ~150 m or behind terrain.
+4. A run where the dev server died mid-load left TankRenderer/FxRenderer unloaded (no tanks drawn, "player tank
+   invisible"). Loading now fails loudly (back to the hangar with a toast) if either renderer is missing.
+5. Tier-I Leichttraktor looked hull-less in some shots: RENDER-TANKS is checking (the session only uses
+   `prewarm/sync`).
+6. The dispersion circle has a 6 px floor added to the true angular radius (readability in arcade).
+7. No tree/prop occlusion test for markers; no shell fly-by; no replay of the damage log after death.
+8. The perf strip (F3, `?debug=1`, `?perf=1` or the Show FPS setting) is wide at 1024 px.

@@ -60,7 +60,7 @@ export function bestAim(world, b, tg) {
   muzzle(t, _m);
   const d = hyp(tg.pos.x - t.pos.x, tg.pos.z - t.pos.z);
   const R = t.gunDef.disp * d / 100;
-  const know = b.skill < 0.3 ? 0 : b.skill < 0.58 ? 1 : 2;
+  const know = b.skill < 0.3 ? 0 : b.skill < 0.5 ? 1 : 2;
   let best = null, chC = -1;
   const h = tg.def.hull, cx = tg.pos.x, cy = tg.pos.y + h.clr + h.H * 0.6, cz = tg.pos.z;
   const half = Math.max(1.2, Math.min(1.8, (h.W + h.H) * 0.4));    // rough radius of the silhouette

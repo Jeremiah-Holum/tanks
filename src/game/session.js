@@ -186,7 +186,8 @@ export class BattleSession {
     // --- camera for this frame (interpolated focus), render
     this._updateCamera(0);
     const r0 = performance.now();
-    this._render(dt);
+    // FX and tank animation age with sim time (so a sped-up test battle doesn't pile up particles)
+    this._render(running && this.speed !== 1 ? Math.min(0.5, dt * this.speed) : dt);
     const r1 = performance.now();
     // --- audio
     this._audio();

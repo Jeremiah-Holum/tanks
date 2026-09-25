@@ -37,7 +37,7 @@ export class Brain {
     const p = 1 - s;
     this.react = 0.2 + 1.3 * p ** 1.3;                 // s before a fresh contact is engaged
     this.evalN = Math.round(10 + 20 * p);               // ticks between target evaluations
-    this.aimErrBase = 0.08 + 3.6 * p ** 1.6;             // m of aim error at ~200 m
+    this.aimErrBase = 0.08 + 4.2 * p ** 1.6;             // m of aim error at ~200 m
     this.patience = 0.3 + 2.4 * s;                      // × gun aim time we are willing to wait
     this.patienceK = 0.1 + 0.6 * s;                     // 1 ≈ optimal trigger timing, < 1 trigger-happy
     this.errFloor = 0.2 + 0.6 * p;                      // aim error left after tracking a target
@@ -620,7 +620,8 @@ export class Brain {
     // lights on passive spotting duty hold fire unless it's close, a kill, or late game
     if (this.cls === 'light' && this.scoutPhase > 0 && this.team.push < 1 && d > 200 && tg.hp > alphaOf(t) * 1.1 && now - this.lastHitT > 5) return this.nf('light');
     // range discipline keeps camo: once we're lit anyway, shoot back (up to the view cap)
-    if (d > (t.spotted ? 445 : FIRE_RANGE[this.cls] * (this.knows.discipline ? 1 : 1.6)) && now - this.lastHitT > 4) return this.nf('range');
+    const hidden = this.post && this.post.behind && this.arrived;   // behind a bush: the shot doesn't give us away
+    if (d > (t.spotted || hidden ? 445 : FIRE_RANGE[this.cls] * (this.knows.discipline ? 1 : 1.6)) && now - this.lastHitT > 4) return this.nf('range');
     // opening discipline: unspotted non-TDs keep their camo at range early on (potatoes don't)
     if (now < this.openingT && !t.spotted && this.knows.discipline && this.cls !== 'td' && d > 220 && tg.hp > alphaOf(t) && now - this.lastHitT > 4) return this.nf('opening');
     const sol = aimSolution(world, t, p, _sol);
