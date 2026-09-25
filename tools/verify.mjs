@@ -3,7 +3,7 @@
 // turret (mouse), fire (LMB), switch shells (1/3), sniper mode (Shift + wheel), score panel (Tab),
 // minimap size (M), Esc menu → resume, then wait for the battle to end → results → garage.
 // ?fast=1 gives the player god mode and lets slow frames advance the sim further; the input tests
-// run at speed 1, then the rest of the battle (limit 400 s) runs at 12× through __sf.setSpeed.
+// run at speed 1, then the rest of the battle (limit 240 s) runs at 8× through __sf.setSpeed.
 // Fails on any console error or page error. Screenshots: shots/verify/<quality>/NN-step.png.
 //   tools/capped.sh -- node tools/verify.mjs [low|medium|high]
 // Run one quality at a time (one browser on the machine).
@@ -41,11 +41,11 @@ const until = async (fn, timeout = 60000, poll = 250) => {
 // relative mouse move in small steps (the game ignores single jumps > 300 px)
 let mx = W / 2, my = H / 2;
 const moveBy = async (dx, dy, steps = 8) => { for (let i = 0; i < steps; i++) { mx += dx / steps; my += dy / steps; await page.mouse.move(mx, my); await wait(30); } };
-const perfNote = (s) => s.perf && s.perf.fps ? `${s.perf.fps.toFixed(1)} fps, frame ${s.perf.frame.toFixed(0)} ms (sim ${s.perf.sim.toFixed(2)}, ai ${s.perf.ai.toFixed(2)}, render cpu ${s.perf.render.toFixed(1)}, hud ${s.perf.hud.toFixed(2)} ms), ${s.perf.calls} calls, ${(s.perf.tris / 1e6).toFixed(2)} M tris` : '';
+const perfNote = (s) => s.perf && s.perf.fps ? `${s.perf.fps.toFixed(1)} fps, frame ${s.perf.frame.toFixed(0)} ms (sim ${s.perf.sim.toFixed(2)}, ai ${s.perf.ai.toFixed(2)}, render cpu ${s.perf.render.toFixed(1)}, hud ${s.perf.hud.toFixed(2)}, audio ${(s.perf.audio || 0).toFixed(2)} ms), ${s.perf.calls} calls, ${(s.perf.tris / 1e6).toFixed(2)} M tris` : '';
 
 try {
   await check('boot → hangar', async () => {
-    await page.goto(`http://127.0.0.1:${PORT}/index.html?fast=1&speed=1&limit=400&q=${q}`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`http://127.0.0.1:${PORT}/index.html?fast=1&speed=1&limit=240&q=${q}`, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.hangar .sf-battle', { timeout: 120000 });
     await wait(1500);
     await shot('hangar');
@@ -134,9 +134,10 @@ try {
 
   await check('R reloads the selected shell type', async () => {
     await until(async () => (await st()).player.reload <= 0, 30000, 150);
+    const a = await st();
     await page.keyboard.press('KeyR');
-    const s = await until(async () => { const s = await st(); return s.player.reload > 0 ? s : null; }, 5000, 50);
-    return { ok: !!s && s.player.shell === 0, detail: s && `reload ${s.player.reload} s, shell ${s.player.shell}` };
+    const s = await until(async () => { const s = await st(); return s.player.reloads > a.player.reloads ? s : null; }, 15000, 100);
+    return { ok: !!s && s.player.shell === 0 && s.player.shots === a.player.shots, detail: s && `reload started without a shot, shell ${s.player.shell}` };
   });
 
   await check('Shift → sniper mode, wheel zooms ×4', async () => {
@@ -188,9 +189,9 @@ try {
 
   let mid = null, mid0 = 0;
   await check('battle plays out to the end (god mode, fast sim)', async () => {
-    // keep driving; the rest of the battle runs at 12× (?fast allows up to 150 steps per frame)
+    // keep driving; the rest of the battle runs at 8× (?fast allows up to 150 steps per frame)
     await page.keyboard.down('KeyW');
-    await page.evaluate(() => window.__sf.setSpeed(12));
+    await page.evaluate(() => window.__sf.setSpeed(8));
     let shotMid = false; mid0 = (await st()).time;
     const end = await until(async () => {
       const s = await st();

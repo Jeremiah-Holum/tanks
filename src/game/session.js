@@ -44,7 +44,7 @@ export class BattleSession {
     this.impact = null; this.pen = null;
     this._ctl = new Map();
     this._ip = new Map();          // tank id → Float64Array [px,py,pz,pyaw, cx,cy,cz,cyaw]
-    this._lockLost = false;
+    this._lockLost = false; this.reloads = 0; this._lastReload = 0;
     this.perfShow = !!settings.showFps || P.get('debug') === '1' || P.get('perf') === '1';   // F3 toggles
   }
 
@@ -64,6 +64,7 @@ export class BattleSession {
     view.loadMap(map);
     progress(0.58, 'Crews boarding…'); await nextFrame();
     await view.ready;
+    if (!view.tanks || !view.fx) throw new Error('the tank / FX renderer failed to load');
     let timeLimit = b.timeLimit || 900;
     if (P.get('limit')) timeLimit = +P.get('limit'); else if (this.fast) timeLimit = 100;
     const world = this.world = createBattle({ ...b, map, timeLimit });
@@ -168,6 +169,8 @@ export class BattleSession {
         ai += a1 - a0; sim += a2 - a1;
         for (const e of world.events) { this.events.push(e); if (e.type === 'kill' && world.firstKill == null && e.killer) world.firstKill = e.killer; }
         for (const t of world.tanks) this._snap(t, false);
+        if (me.reload > this._lastReload + 0.02) this.reloads++;   // counts every (re)load start, for tests
+        this._lastReload = me.reload;
         this.acc -= DT; steps++;
         if (world.result) break;
       }
@@ -187,11 +190,12 @@ export class BattleSession {
     const r1 = performance.now();
     // --- audio
     this._audio();
+    const a1 = performance.now();
     // --- HUD
     this.hud.update(this._hudState(dt));
     for (const e of this.events) this.hud.event(e, world);
     const h1 = performance.now();
-    this._perf(rawDt, sim, ai, r1 - r0, h1 - r1, steps, performance.now() - f0);
+    this._perf(rawDt, sim, ai, r1 - r0, h1 - a1, steps, performance.now() - f0, a1 - r1);
   }
 
   _handleInput(dt) {
@@ -442,21 +446,22 @@ export class BattleSession {
   _godOff() { const t = this.player; if (t.alive) t.hp = Math.min(t.hp, t.maxHp); t.modules.ammoRack.hp = Math.min(t.modules.ammoRack.hp, t.modules.ammoRack.max); this.god = false; }
 
   // ------------------------------------------------------------------ perf & auto-quality
-  _perf(dt, sim, ai, render, hud, steps, frame) {
+  _perf(dt, sim, ai, render, hud, steps, frame, audio) {
     const A = this._perfAcc;
+    A.audio = (A.audio || 0) + audio;
     A.n++; A.sim += sim; A.ai += ai; A.render += render; A.hud += hud; A.frame += dt * 1000; A.steps += steps; A.cpu = (A.cpu || 0) + frame;
     A.t = (A.t || 0) + dt;
     if (A.t >= 1) {
       const P = this.perf, n = A.n;
       // sim and AI per step (ms), the rest per frame
       P.fps = n / A.t; P.frame = A.frame / n; P.sim = A.steps ? A.sim / A.steps : 0; P.ai = A.steps ? A.ai / A.steps : 0;
-      P.render = A.render / n; P.hud = A.hud / n; P.cpu = A.cpu / n; P.steps = A.steps / n;
+      P.render = A.render / n; P.hud = A.hud / n; P.cpu = A.cpu / n; P.steps = A.steps / n; P.audio = A.audio / n;
       const st = this.view.stats(); P.calls = st.calls; P.tris = st.tris;
       P.frames += n;
       if (this.phase === 'play' || this.phase === 'dead') P.win.push(P.frame);
       if (P.win.length > 5) P.win.shift();
       this._autoQuality();
-      Object.assign(A, { n: 0, sim: 0, ai: 0, render: 0, hud: 0, frame: 0, steps: 0, cpu: 0, t: 0 });
+      Object.assign(A, { n: 0, sim: 0, ai: 0, render: 0, hud: 0, frame: 0, steps: 0, cpu: 0, t: 0, audio: 0 });
     }
   }
   _autoQuality() {

@@ -80,7 +80,7 @@ window.__sf = {
       state, screen: screens.current, phase: s?.phase || null,
       time: w ? +w.time.toFixed(2) : null, result: w?.result || null, quality: s?.quality,
       cam: s?.cam ? { sniper: s.cam.sniper, zoom: s.cam.zoom, dist: +s.cam.dist.toFixed(1), yaw: +s.cam.yaw.toFixed(3), pitch: +s.cam.pitch.toFixed(3) } : null,
-      player: me ? { alive: me.alive, hp: Math.round(me.hp), speed: +me.speed.toFixed(2), x: +me.pos.x.toFixed(1), z: +me.pos.z.toFixed(1), turretYaw: +me.turretYaw.toFixed(3), shell: me.shell, shots: me.stats.shots, ammo: me.ammo.slice(), reload: +me.reload.toFixed(2), spotted: me.spotted } : null,
+      player: me ? { alive: me.alive, hp: Math.round(me.hp), speed: +me.speed.toFixed(2), x: +me.pos.x.toFixed(1), z: +me.pos.z.toFixed(1), turretYaw: +me.turretYaw.toFixed(3), shell: me.shell, shots: me.stats.shots, ammo: me.ammo.slice(), reload: +me.reload.toFixed(2), reloads: s.reloads, spotted: me.spotted } : null,
       alive: w ? [0, 1].map((k) => w.tanks.filter((t) => t.team === k && t.alive).length) : null,
       menu: s?.menuOpen || false, score: s?.scoreOpen || false, lock: s?.lockTarget ?? null,
       perf: s ? { ...s.perf, win: undefined } : null, lastReport: this.lastReport ? { result: this.lastReport.result, xp: this.lastReport.xp?.total, credits: this.lastReport.credits?.net } : null,

@@ -187,7 +187,7 @@ export class Hud {
     cls(this.scoreEl, 'on', s.score); if (s.score && (this._scoreT = (this._scoreT || 0) - s.dt) <= 0) { this._scoreT = 0.5; this._scorePanel(w); }
     if (!s.score) this._scoreT = 0;
     cls(this.perfEl, 'on', !!s.perf && s.perfShow);
-    if (s.perf && s.perf.fps) txt(this.perfEl, `${s.perf.fps.toFixed(0)} fps · ${s.perf.frame.toFixed(1)} ms/frame · ${s.perf.steps.toFixed(1)} steps · per step: sim ${s.perf.sim.toFixed(2)} ai ${s.perf.ai.toFixed(2)} · per frame: render ${s.perf.render.toFixed(1)} · hud ${s.perf.hud.toFixed(2)} · ${s.perf.calls} calls · ${(s.perf.tris / 1e6).toFixed(2)} M tris · ${s.quality}`);
+    if (s.perf && s.perf.fps) txt(this.perfEl, `${s.perf.fps.toFixed(0)} fps · ${s.perf.frame.toFixed(1)} ms/frame · ${s.perf.steps.toFixed(1)} steps · per step: sim ${s.perf.sim.toFixed(2)} ai ${s.perf.ai.toFixed(2)} · per frame: render ${s.perf.render.toFixed(1)} · hud ${s.perf.hud.toFixed(2)} · audio ${(s.perf.audio || 0).toFixed(2)} · ${s.perf.calls} calls · ${(s.perf.tris / 1e6).toFixed(2)} M tris · ${s.quality}`);
     // hints
     let hint = '';
     if (s.phase === 'dead') hint = s.spec != null ? 'Spectating · LMB / RMB: next / previous ally · Esc: menu' : '';
