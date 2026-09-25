@@ -13,5 +13,8 @@
     "esbuild": "^0.28.2",
     "three": "^0.185.1"
   },
-  "type": "module"
+  "type": "module",
+  "devDependencies": {
+    "playwright": "1.56"
+  }
 }
