@@ -697,7 +697,7 @@ function wheel(gb, kind, xc, y, z, R, w, side, lod, nation) {
   const m = M(xc, y, z, 0, 0, 0, side, 1, 1);
   const o = w / 2;
   const P = spinSt(ST.paint, y, z, R), S = spinSt(ST.steel, y, z, R), Rb = spinSt(ST.rubber, y, z, R), Dk = spinSt(ST.dark, y, z, R);
-  const seg = lod ? 7 : kind === 'roller' ? 10 : 18;
+  const seg = lod ? 7 : kind === 'roller' ? 10 : w < 0.26 ? 13 : 18;
   if (lod) { gb.lathe([[0, o, P], [R, o, Rb], [R, -o, null]], seg, m); return; }
   if (kind === 'road' || kind === 'roller') {
     gb.lathe([
