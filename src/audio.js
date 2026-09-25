@@ -11,7 +11,8 @@ import { Crew, LINES } from './audio/speech.js';
 
 const SOUND = 343;          // m/s
 const MAX_DELAY = 0.6;      // cap on the speed-of-sound delay, s
-const MAX_ONESHOTS = 40;    // concurrent one-shot sounds before quiet ones are dropped
+const MAX_ONESHOTS = 40;
+const SFX = 0.62;           // sfx bus level (headroom for stacked one-shots; the compressor + limiter do the rest)    // concurrent one-shot sounds before quiet ones are dropped
 const ROLE_LINE = { commander: 'commander', gunner: 'gunner', driver: 'driver', radioman: 'radioman', radio: 'radioman', loader: 'loader' };
 const MODULE_LINE = { engine: ['engineDmg', 'engineDead'], gun: ['gunDmg', 'gunDead'], ammoRack: ['ammoDmg', 'ammoDmg'], fuel: ['fuelDmg', 'fuelDmg'], turretRing: ['ringDmg', 'ringDmg'], trackL: [null, 'trackDead'], trackR: [null, 'trackDead'] };
 
@@ -26,6 +27,9 @@ export class Audio {
     this.crew = new Crew(this);
     this.maxEngines = opts.maxEngines ?? 7;
     this._ends = []; this._cap = new Map(); this._raw = !!opts.raw;
+    // ?debug=audio: log every ui/event/say call plus loop gains and output band levels (window.__audioLog)
+    this._dbg = opts.debug ?? (typeof location !== 'undefined' && /[?&]debug=audio\b/.test(location.search || ''));
+    if (this._dbg) { this.log = []; if (typeof window !== 'undefined') window.__audioLog = this.log; }
     if (opts.context) this._init(opts.context, true);
   }
 
@@ -51,15 +55,21 @@ export class Audio {
     this.ctx = ctx; this.offline = offline;
     const c = ctx, K = this.kit = new Kit(c);
     const G = (v, to) => { const g = c.createGain(); g.gain.value = v; if (to) g.connect(to); return g; };
-    // master → compressor → tanh soft clip → out (guarantees |x| < 1)
-    this.comp = c.createDynamicsCompressor();
-    this.comp.threshold.value = -10; this.comp.knee.value = 6; this.comp.ratio.value = 8; this.comp.attack.value = 0.002; this.comp.release.value = 0.25;
+    // master → glue compressor → makeup → peak limiter → tanh soft clip → out (guarantees |x| < 1)
+    const comp = (th, knee, ratio, att, rel) => { const k = c.createDynamicsCompressor(); k.threshold.value = th; k.knee.value = knee; k.ratio.value = ratio; k.attack.value = att; k.release.value = rel; return k; };
+    this.comp = comp(-20, 10, 3, 0.006, 0.3);
+    this.limiter = comp(-6, 0, 20, 0.001, 0.12);
+    this.makeup = G(1.25);
     this.clip = c.createWaveShaper(); this.clip.curve = K.limitCurve(); this.clip.oversample = '2x';
     this.master = G(this.vol.master);
-    if (this._raw) this.master.connect(c.destination); // measurement mode: no limiter (tools/audio-render.mjs)
-    else { this.master.connect(this.comp); this.comp.connect(this.clip); this.clip.connect(c.destination); }
-    this.sfx = G(this.vol.sfx * 0.55, this.master);          // 0.55: headroom for stacked one-shots
-    this.musicBus = G(this.vol.music * 0.8, this.master);
+    this.master.connect(this.comp); this.comp.connect(this.makeup); this.makeup.connect(this.limiter);
+    if (this._raw) this.limiter.connect(c.destination); // measurement mode: no soft clipper (tools/audio-render.mjs)
+    else { this.limiter.connect(this.clip); this.clip.connect(c.destination); }
+    // duck: everything but the player's own gun and hits on the player dips briefly under them
+    this.duck = G(1, this.master);
+    this.sfx = G(this.vol.sfx * SFX, this.duck);
+    this.front = G(this.vol.sfx * SFX, this.master);           // own shot + inside the tank: not ducked
+    this.musicBus = G(this.vol.music * 0.8, this.duck);
     this.uiBus = G(0.8, this.sfx); this.amb = G(1, this.sfx);
     // reverbs: open field (long, echoey) for the world; steel box for inside the player's tank;
     // a hall for music (same IR, separate so it follows the music volume)
@@ -69,10 +79,11 @@ export class Audio {
     this.hallSend = verb(K.fieldIR, 0.4, this.musicBus);
     // inside-the-tank bus: slightly muffled, with the steel-box room
     this.inside = G(1); const inLp = c.createBiquadFilter(); inLp.type = 'lowpass'; inLp.frequency.value = 5500;
-    this.inside.connect(inLp); inLp.connect(this.sfx); this.inside.connect(G(0.6, this.roomSend));
+    this.inside.connect(inLp); inLp.connect(this.front); this.inside.connect(G(0.6, this.roomSend));
     this.engines = new EnginePool(this, this.maxEngines);
     this.fires = new FirePool(this);
     this.mus = new Music(this);
+    if (this._dbg && !offline) this._dbgInit();
     if (this._wantMusic) this.music(this._wantMusic);
   }
 
@@ -82,7 +93,8 @@ export class Audio {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
     this.master.gain.setTargetAtTime(this.vol.master, now, 0.03);
-    this.sfx.gain.setTargetAtTime(this.vol.sfx * 0.55, now, 0.03);
+    this.sfx.gain.setTargetAtTime(this.vol.sfx * SFX, now, 0.03);
+    this.front.gain.setTargetAtTime(this.vol.sfx * SFX, now, 0.03);
     this.musicBus.gain.setTargetAtTime(this.vol.music * 0.8, now, 0.03);
   }
 
@@ -124,6 +136,10 @@ export class Audio {
     if (wet > 0.01) { const s = c.createGain(); s.gain.value = wet; head.connect(s); s.connect(this.fieldSend); }
     return { node: g, t, P };
   }
+  // Sidechain-style dip of everything on the ducked buses (world sfx, music, ambience).
+  _duckFor(t, depth, hold, rel) {
+    const g = this.duck.gain; g.cancelScheduledValues(t); g.setValueAtTime(g.value, t); g.setTargetAtTime(depth, t, 0.008); g.setTargetAtTime(1, t + hold, rel / 3);
+  }
   // Non-positional one-shot straight into a bus.
   _direct(bus, len = 2) {
     const c = this.ctx, now = c.currentTime + 0.01; this._ends = this._ends.filter((e) => e > now); this._ends.push(now + len);
@@ -148,6 +164,7 @@ export class Audio {
     if (listener) this._setListener(listener);
     if (!ev) return;
     const type = ev.type || ev.kind || ev.e;
+    if (this._dbg) this._log('event', type, ev.result || ev.cause || ev.surface || '');
     // voice lines work even with no AudioContext (speechSynthesis is separate)
     try { if (type === 'capture') this._lastCap = this._capState(ev, world || {}); if (this.ready) this._sound(type, ev, world || {}); this._voice(type, ev, world || {}); }
     catch (e) { if (!this._warned) { this._warned = true; console.warn('audio event failed', type, e); } }
@@ -160,12 +177,13 @@ export class Audio {
         const tk = this._tank(world, ev.tank), sh = this._shell(world, ev.shell);
         const cal = ev.cal ?? sh?.cal ?? tk?.gunDef?.cal ?? 75, brake = !!tk?.gunDef?.muzzleBrake, k = S.size(cal);
         if (this._isPlayer(ev.tank)) {
-          const p = this._direct(this.sfx, 3); const s = this.ctx.createGain(); s.gain.value = 0.25 + 0.35 * k; s.connect(this.fieldSend);
-          const g = this.ctx.createGain(); g.gain.value = 1; g.connect(this.sfx); g.connect(s);
+          const p = this._direct(this.front, 4); const s = this.ctx.createGain(); s.gain.value = 0.25 + 0.35 * k; s.connect(this.fieldSend);
+          const g = this.ctx.createGain(); g.gain.value = 1; g.connect(this.front); g.connect(s);
           S.cannon(K, g, p.t, cal, { player: true, brake });
+          this._duckFor(p.t, 0.35 - 0.1 * k, 0.1 + 0.15 * k, 0.25 + 0.3 * k);
         } else {
-          const p = this._place(ev.pos || tk?.pos, { ref: 15, roll: 0.45, range: 1.4, wet: 0.35 + 0.5 * k, len: 1 + 2 * k, gain: 0.55 + 0.45 * k });
-          if (p) S.cannon(K, p.node, p.t, cal, { brake });
+          const p = this._place(ev.pos || tk?.pos, { ref: 15, roll: 0.45, range: 1.4, wet: 0.35 + 0.5 * k, len: 1 + 3 * k, gain: 0.55 + 0.45 * k });
+          if (p) S.cannon(K, p.node, p.t, cal, { brake, far: clamp((p.P.d - 80) / 500) });
         }
         break;
       }
@@ -186,6 +204,7 @@ export class Audio {
         const tgt = this._tank(world, ev.target), pos = ev.pos || tgt?.pos;
         if (this._isPlayer(ev.target)) {
           const p = this._direct(this.inside, 3); S.hitInside(K, p.node, p.t, r, cal, { gain: 0.9 });
+          this._duckFor(p.t, 0.45, 0.15, 0.8);
           if (st === 'HE') S.explosion(K, p.node, p.t, 0.4 + S.size(cal), { gain: 0.5 });
         } else {
           // the shooter hears his own hit confirmed right away (no delay, floor on level)
@@ -276,7 +295,7 @@ export class Audio {
   }
 
   _voice(type, ev, world) {
-    const say = (k) => this.crew.say(k);
+    const say = (k) => { if (this._dbg) this._log('say', k); this.crew.say(k); };
     switch (type) {
       case 'hit': {
         const r = ev.result;
@@ -348,6 +367,7 @@ export class Audio {
   }
 
   ui(kind) {
+    if (this._dbg) this._log('ui', kind);
     if (!this.ready) return;
     if (kind === 'hover') { const n = this.ctx.currentTime; if (n - (this._hoverAt ?? -1) < 0.04) return; this._hoverAt = n; }
     const p = this._direct(this.uiBus, 2); S.ui(this.kit, p.node, p.t, kind);
@@ -362,7 +382,25 @@ export class Audio {
   }
 
   // Crew voice line: a LINES key ('pen', 'spotted', …) or free text. Toggle with voiceOn.
-  say(line, prio) { return this.crew.say(line, prio); }
+  say(line, prio) { if (this._dbg) this._log('say', line); return this.crew.say(line, prio); }
+
+  // ---------- debug (?debug=audio) ----------
+  _log(kind, a, b) { const L = this.log; L.push({ t: +(this.ctx ? this.ctx.currentTime : 0).toFixed(3), kind, a, b }); if (L.length > 5000) L.splice(0, 1000); if (this._dbg === 'console') console.log('[audio]', kind, a, b ?? ''); }
+  // Every 250 ms: each active loop's gains and the output level in bands (<120 Hz, 120 Hz–2 kHz, >2 kHz)
+  // plus the loudest bin above 2 kHz, from an analyser on the final output.
+  _dbgInit() {
+    const c = this.ctx, an = this._an = c.createAnalyser(); an.fftSize = 4096; an.smoothingTimeConstant = 0;
+    this.clip.connect(an); const bins = new Float32Array(an.frequencyBinCount), hz = c.sampleRate / an.fftSize;
+    const db = (e) => +(10 * Math.log10(e + 1e-12)).toFixed(1);
+    this._dbgTimer = setInterval(() => {
+      if (c.state !== 'running') return;
+      an.getFloatFrequencyData(bins); let lo = 0, mid = 0, hi = 0, pk = -200, pf = 0;
+      for (let i = 1; i < bins.length; i++) { const e = Math.pow(10, bins[i] / 10), f = i * hz; if (f < 120) lo += e; else if (f < 2000) mid += e; else { hi += e; if (bins[i] > pk) { pk = bins[i]; pf = f; } } }
+      const loops = this.engines.voices.filter((v) => v.id !== null).map((v) => v.debug ? v.debug() : { id: v.id });
+      this.log.push({ t: +c.currentTime.toFixed(3), kind: 'levels', lo: db(lo), mid: db(mid), hi: db(hi), hiPeak: +pk.toFixed(1), hiPeakHz: Math.round(pf), loops });
+      if (this.log.length > 5000) this.log.splice(0, 1000);
+    }, 250);
+  }
 
   // Radio click before a crew line.
   _squelch() { if (this.ready && this.vol.voice > 0) { const p = this._direct(this.uiBus, 0.2); S.ui(this.kit, p.node, p.t, 'squelch'); } }

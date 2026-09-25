@@ -1,17 +1,54 @@
-// Continuous per-tank loops: engine + tracks + turret whine (EnginePool) and fire crackle
-// (FirePool). All nodes are built once per voice and only their params are automated per
-// frame, so nothing is created in the steady state. Voices idle for a while are torn down.
+// Continuous per-tank loops: engine + tracks (EnginePool) and fire crackle (FirePool). All nodes
+// are built once per voice and only their params are updated per frame, so nothing is created in
+// the steady state (bar the odd suspension thud / gear-shift clunk one-shot). Idle voices are torn down.
+//
+// Engine model: one oscillator runs at the crank-cycle frequency (rpm / 120) with a PeriodicWave
+// holding one full 4-stroke cycle of exhaust pulses: `cyl` damped pulses per cycle, each cylinder a
+// little different in strength and timing. So the firing frequency (rpm·cyl/120) and its harmonics
+// form the stack, and the per-cylinder differences give sub-harmonics: a lumpy rumble, not a tone.
+// → pre-drive (∝ load) → tanh → exhaust lowpass (opens with rpm·load) → muffler body boost.
+// Combustion "gravel": noise amplitude-modulated by the same pulse wave (∝ load; diesel knock).
+// Tracks: link clank + rattle (noise AM'd by pulse trains ∝ speed), pivot grind, suspension thuds.
 import { clamp } from './core.js';
 
 const TAU = 0.08;           // param smoothing time constant, s
 const STALE_MS = 300;       // a voice not updated for this long fades out and is freed
 const DESTROY_MS = 8000;    // a free voice idle this long is torn down (its sources stopped)
 const MAX_DIST = 320;       // engines beyond this aren't worth a voice
-const TURRET_WHINE = 0;    // turret traverse whine level (0 = off)
+// Turret traverse whine: removed. It was the owner's "high-pitched noise on mouse move": it treated
+// turretRate (deg/s in the sim) as rad/s, so a mouse sweep pushed it to 10–17 kHz. Kept at 0 (no nodes).
+const TURRET_WHINE = 0;
 
-// Narrow pulse train as a PeriodicWave: drives the track-link clatter amplitude.
+// Engine characters. idle/max rpm, cylinders, pulse decay (fraction of a firing interval), timing
+// jitter, per-cylinder level spread, exhaust lowpass base/span, gravel band and level, drive.
+const ENGINES = {
+  radial: { cyl: 9, idle: 700, max: 2400, tau: 0.22, jit: 0.05, spread: 0.3, lp: 320, lpSpan: 1100, grav: 700, gravQ: 0.8, gravL: 0.5, drive: 2.2, sub: 0.8 },   // US Continental R-975 petrol radial: blatty
+  maybach: { cyl: 12, idle: 750, max: 3000, tau: 0.3, jit: 0.025, spread: 0.18, lp: 280, lpSpan: 900, grav: 560, gravQ: 0.7, gravL: 0.35, drive: 1.8, sub: 0.6 }, // German Maybach V12 petrol: smoother, deeper roar
+  diesel: { cyl: 12, idle: 550, max: 2000, tau: 0.16, jit: 0.06, spread: 0.35, lp: 300, lpSpan: 1000, grav: 1100, gravQ: 0.9, gravL: 0.9, drive: 2.8, sub: 0.9 }, // Soviet V-2 diesel: gruff, knocking
+  small: { cyl: 6, idle: 800, max: 3200, tau: 0.25, jit: 0.05, spread: 0.3, lp: 380, lpSpan: 1200, grav: 800, gravQ: 0.8, gravL: 0.45, drive: 2, sub: 0.6 },     // light tanks: 6-cylinder
+};
+export function engineType(def = {}) {
+  if ((def.mass || 30) < 14) return 'small';
+  const n = String(def.nation || '').toLowerCase();
+  return /ussr|soviet|russia/.test(n) ? 'diesel' : /germ|ger/.test(n) ? 'maybach' : 'radial';
+}
+
+// One 4-stroke cycle of exhaust pulses as a PeriodicWave (fundamental = cycle rate = rpm/120).
+function cycleWave(ctx, E, seed, missing = -1) {
+  const M = 1024, x = new Float32Array(M); let s = seed >>> 0;
+  const R = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+  for (let i = 0; i < E.cyl; i++) {
+    const amp = (1 - E.spread / 2 + E.spread * R()) * (i === missing ? 0.12 : 1), at = (i + (R() - 0.5) * 2 * E.jit) / E.cyl, tau = E.tau / E.cyl, lam = 0.55 / E.cyl;
+    for (let j = 0; j < M; j++) { let ph = j / M - at; if (ph < 0) ph += 1; if (ph > 6 * tau) continue; x[j] += amp * Math.exp(-ph / tau) * Math.sin(2 * Math.PI * ph / lam); }
+  }
+  const N = Math.min(192, E.cyl * 16), re = new Float32Array(N), im = new Float32Array(N);
+  for (let n = 1; n < N; n++) { let a = 0, b = 0; for (let j = 0; j < M; j++) { const w = 2 * Math.PI * n * j / M; a += x[j] * Math.cos(w); b += x[j] * Math.sin(w); } re[n] = a * 2 / M; im[n] = b * 2 / M; }
+  return ctx.createPeriodicWave(re, im);
+}
+
+// Narrow pulse train as a PeriodicWave: drives the track clank / rattle amplitude.
 function pulseWave(ctx) {
-  const n = 24, re = new Float32Array(n), im = new Float32Array(n), d = 0.18;
+  const n = 24, re = new Float32Array(n), im = new Float32Array(n), d = 0.14;
   for (let i = 1; i < n; i++) re[i] = Math.sin(Math.PI * i * d) / (Math.PI * i) * 2;
   return ctx.createPeriodicWave(re, im);
 }
@@ -30,92 +67,111 @@ function smooth(p, v, now, tau = TAU) {
 // fade to silence on a timeline (voice released; no more per-frame updates will come)
 function fadeOut(p, now, tau) { p.cancelScheduledValues(now); p.setValueAtTime(p._w ?? p.value, now); p.setTargetAtTime(0, now, tau); p._s = p._w = 0; p._f = true; }
 
+// Shared looping noise sources (one white, one brown per context), fanned out to every voice.
+function shared(A) {
+  if (A._eng) return A._eng;
+  const K = A.kit, c = A.ctx;
+  return (A._eng = { white: K.src(K.white, c.currentTime, null, 1), brown: K.src(K.brown, c.currentTime, null, 1), waves: {}, pulse: pulseWave(c) });
+}
+
 class EngineVoice {
   constructor(A) {
-    const c = A.ctx, K = A.kit; this.A = A; this.id = null; this.last = 0; this.freeAt = 0; this.d = 0;
+    const c = A.ctx, sh = shared(A); this.A = A; this.id = null; this.last = 0; this.freeAt = 0; this.d = 0; this.type = null;
     this.srcs = [];
-    const osc = (type, f) => { const o = c.createOscillator(); o.type = type; o.frequency.value = f; o.start(); this.srcs.push(o); return o; };
-    const gain = (v) => { const g = c.createGain(); g.gain.value = v; g.gain._v = v; return g; };
-    const filt = (type, f, q) => { const b = c.createBiquadFilter(); b.type = type; b.frequency.value = f; b.frequency._v = f; b.Q.value = q; return b; };
-    // output chain: master gain → distance lowpass → panner → sfx (+ reverb send)
+    const osc = (f) => { const o = c.createOscillator(); o.frequency.value = f; o.start(); this.srcs.push(o); return o; };
+    const gain = (v) => { const g = c.createGain(); g.gain.value = v; return g; };
+    const filt = (type, f, q, db) => { const b = c.createBiquadFilter(); b.type = type; b.frequency.value = f; b.Q.value = q; if (db) b.gain.value = db; return b; };
+    const chain = (...n) => { for (let i = 0; i < n.length - 1; i++) n[i].connect(n[i + 1]); return n[n.length - 1]; };
+    // output: level → distance lowpass → panner → sfx (+ field reverb send)
     this.out = gain(0); this.lp = filt('lowpass', 20000, 0.5); this.pan = c.createStereoPanner ? c.createStereoPanner() : null;
     this.send = gain(0);
     this.out.connect(this.lp);
     if (this.pan) { this.lp.connect(this.pan); this.pan.connect(A.sfx); this.pan.connect(this.send); } else this.lp.connect(A.sfx);
     this.send.connect(A.fieldSend);
-    // engine: saw at firing frequency, square an octave down (the lope), saturated and lowpassed
-    this.oA = osc('sawtooth', 30); this.oB = osc('square', 15); this.oB.detune.value = 9; this.oC = osc('sawtooth', 30.4);
-    const mix = gain(1), ws = c.createWaveShaper(); ws.curve = K.curve(2.5);
-    this.engLp = filt('lowpass', 300, 1.2); this.engG = gain(0);
-    const gB = gain(0.6), gC = gain(0.5); this.oA.connect(mix); this.oB.connect(gB); gB.connect(mix); this.oC.connect(gC); gC.connect(mix);
-    mix.connect(ws); ws.connect(this.engLp); this.engLp.connect(this.engG); this.engG.connect(this.out);
-    // low rumble: brown noise through a lowpass
-    const brown = K.src(K.brown, c.currentTime, null, 1); this.srcs.push(brown);
-    this.rumLp = filt('lowpass', 110, 0.7); this.rumG = gain(0); brown.connect(this.rumLp); this.rumLp.connect(this.rumG); this.rumG.connect(this.out);
-    // tracks: white noise band, amplitude-modulated by a pulse train at the link rate
-    const white = K.src(K.white, c.currentTime, null, 1); this.srcs.push(white);
-    this.trkBp = filt('bandpass', 1400, 0.9); this.trkAm = gain(0.25); this.trkG = gain(0);
-    this.pulse = c.createOscillator(); this.pulse.setPeriodicWave(A._pulse || (A._pulse = pulseWave(c))); this.pulse.frequency.value = 1; this.pulse.start(); this.srcs.push(this.pulse);
-    const pG = gain(0.75); this.pulse.connect(pG); pG.connect(this.trkAm.gain);
-    white.connect(this.trkBp); this.trkBp.connect(this.trkAm); this.trkAm.connect(this.trkG); this.trkG.connect(this.out);
-    // track squeal on pivots: a narrow resonant band that wanders
-    this.sqBp = filt('bandpass', 2600, 14); this.sqG = gain(0);
-    white.connect(this.sqBp); this.sqBp.connect(this.sqG); this.sqG.connect(this.out);
-    // turret traverse: electric/hydraulic motor whine
-    this.wA = osc('triangle', 380); this.wB = osc('sawtooth', 190);
-    const wBp = filt('bandpass', 800, 2), wG2 = gain(0.3); this.whG = gain(0);
-    this.wA.connect(this.whG); this.wB.connect(wG2); wG2.connect(wBp); wBp.connect(this.whG); this.whG.connect(this.out);
-    this.rpm = 0.25; this.prevSpeed = 0; this.prevT = 0;
+    // exhaust: cycle wave → drive → tanh → exhaust lowpass → muffler body → level
+    this.ex = osc(10); this.drv = gain(1); const ws = c.createWaveShaper(); ws.curve = A.kit.curve(3); ws.oversample = '2x';
+    this.exLp = filt('lowpass', 300, 0.9); const body = filt('peaking', 95, 1, 6); this.engG = gain(0);
+    chain(this.ex, this.drv, ws, this.exLp, body, this.engG, this.out);
+    // combustion gravel / diesel knock: white noise band × the pulse wave
+    this.gravBp = filt('bandpass', 700, 0.8); const gAm = gain(0), gDepth = gain(1); this.gravG = gain(0);
+    chain(sh.white, this.gravBp, gAm, this.gravG, this.out); this.ex.connect(gDepth); gDepth.connect(gAm.gain);
+    // low rumble (block, intake, ground) and mechanical noise (gears, fans)
+    this.rumLp = filt('lowpass', 110, 0.7); this.rumG = gain(0); chain(sh.brown, this.rumLp, this.rumG, this.out);
+    this.mechBp = filt('bandpass', 600, 0.6); this.mechG = gain(0); chain(sh.white, this.mechBp, this.mechG, this.out);
+    // tracks: clank (links hitting sprocket/idler) and rattle (two pulse trains at a non-integer ratio)
+    this.pA = osc(1); this.pB = osc(1); this.pA.setPeriodicWave(sh.pulse); this.pB.setPeriodicWave(sh.pulse);
+    const clkBp = filt('bandpass', 420, 1.1), clkAm = gain(0.15), pAg = gain(0.85); this.clkG = gain(0);
+    chain(sh.white, clkBp, clkAm, this.clkG, this.out); this.pA.connect(pAg); pAg.connect(clkAm.gain);
+    const rtBp = filt('bandpass', 1000, 0.9), rtAm = gain(0.2), pBg = gain(0.8); this.rtG = gain(0);
+    chain(sh.white, rtBp, rtAm, this.rtG, this.out); this.pB.connect(pBg); pBg.connect(rtAm.gain); this.pA.connect(pBg);
+    // pivot grind: tracks scrubbing sideways (broad, low: no resonant squeal)
+    this.grBp = filt('lowpass', 280, 1.1); this.grG = gain(0); chain(sh.brown, this.grBp, this.grG, this.out);
+    this.rpm = 0; this.prevSpeed = 0; this.prevT = 0; this.gear = 0; this.shiftT = -1; this.thudT = 0; this.eng = 'ok';
   }
+  // pick the engine character (per tank) and its cycle wave
+  setType(tank) {
+    const type = engineType(tank.def), eng = tank.modules?.engine?.state === 'damaged' ? 'damaged' : 'ok', key = type + ':' + eng;
+    if (this.type === key) return; this.type = key; this.E = ENGINES[type];
+    const W = shared(this.A).waves; if (!W[key]) W[key] = cycleWave(this.A.ctx, this.E, type.length * 7919 + 17, eng === 'damaged' ? 3 : -1);
+    this.ex.setPeriodicWave(W[key]);
+    this.gravBp.frequency.value = this.E.grav; this.gravBp.Q.value = this.E.gravQ;
+  }
+  // ?debug=audio: every gain stage of this voice (keys ending in G) + the output level
+  debug() { const o = { id: this.id, pl: this.pl ? 1 : 0, type: this.type, rpm: +this.rpm.toFixed(2), out: +(this.out.gain._w ?? 0).toFixed(3) }; for (const k in this) if (/G$/.test(k) && this[k]?.gain) o[k] = +(this[k].gain._w ?? this[k].gain.value).toFixed(4); return o; }
   destroy() { for (const s of this.srcs) { try { s.stop(); } catch (e) {} } try { this.out.disconnect(); this.send.disconnect(); } catch (e) {} }
-  silence(now) { fadeOut(this.out.gain, now, 0.15); this.id = null; this.freeAt = performance.now(); }
+  silence(now) { fadeOut(this.out.gain, now, 0.15); this.id = null; this.type = null; this.freeAt = performance.now(); }
 
   update(tank, pl, isPlayer, now) {
-    const def = tank.def || {}, top = (def.speed || 40) / 3.6, v = Math.abs(tank.speed || 0), sf = clamp(v / top);
-    const dt = Math.max(1e-3, now - this.prevT), acc = (v - this.prevSpeed) / dt; this.prevT = now; this.prevSpeed = v;
-    const mass = def.mass || 30, power = def.power || 400;
-    // load: throttle if the sim exposes it, otherwise inferred from acceleration and speed
+    this.pl = isPlayer; this.setType(tank);
+    const E = this.E, K = this.A.kit, def = tank.def || {}, top = (def.speed || 40) / 3.6, v = Math.abs(tank.speed || 0), sf = clamp(v / top);
+    const dt = clamp(now - this.prevT, 1e-3, 0.1), acc = (v - this.prevSpeed) / Math.max(dt, 0.016); this.prevT = now; this.prevSpeed = v;
+    DT = clamp(dt, 0.004, 0.1);
+    const eng = tank.modules?.engine?.state, on = tank.alive !== false && eng !== 'destroyed' ? 1 : 0;
+    // load: the applied throttle if the sim exposes it, else inferred from acceleration
     const thr = Math.abs(tank.throttle ?? tank.controls?.throttle ?? (acc > 0.15 ? 1 : sf > 0.05 ? 0.55 : 0));
     const turning = clamp(Math.abs(tank.yawRate || 0) / 0.6);
-    const eng = tank.modules?.engine?.state;
-    // five-gear rpm model: rpm climbs through each gear band and drops at the shift
-    let rpm;
-    if (sf < 0.03) rpm = 0.22 + 0.45 * Math.max(thr, turning * 0.8);
-    else { const gs = Math.min(4.999, sf * 5), inG = gs - Math.floor(gs); rpm = 0.42 + 0.5 * inG * (0.7 + 0.3 * thr) + 0.08 * thr; }
-    if (!tank.alive || eng === 'destroyed') rpm = 0;
-    this.rpm += (rpm - this.rpm) * clamp(dt * 6);
-    DT = clamp(dt, 0.004, 0.1);
-    this.sqPh = (this.sqPh || 0) + dt * 4.4;
-    const load = clamp(0.25 + 0.75 * thr);
-    const base = (power > 600 ? 13 : 16) + 12 * (1 - clamp(mass / 60));  // idle firing Hz: heavy/V12s lower
-    const f = base * (1 + 2.3 * this.rpm) * (eng === 'damaged' ? 1 + 0.03 * Math.sin(now * 23) : 1);
-    smooth(this.oA.frequency, f, now, 0.05); smooth(this.oC.frequency, f * 1.013, now, 0.05); smooth(this.oB.frequency, f / 2, now, 0.05);
-    smooth(this.engLp.frequency, 160 + 1500 * this.rpm * (0.4 + 0.6 * load), now);
-    const on = tank.alive !== false && eng !== 'destroyed' ? 1 : 0;
-    smooth(this.engG.gain, on * (0.08 + 0.13 * load + 0.08 * this.rpm), now);
-    smooth(this.rumG.gain, on * (0.12 + 0.25 * sf + 0.1 * load) + 0.2 * sf, now);
-    smooth(this.rumLp.frequency, 90 + 80 * sf, now);
-    // tracks
-    smooth(this.pulse.frequency, 0.5 + v * 2.4, now, 0.05);
-    smooth(this.trkG.gain, clamp(v / 5) * 0.16 + turning * 0.04, now);
-    smooth(this.trkBp.frequency, 1000 + v * 70, now);
-    smooth(this.sqBp.frequency, 2600 + 180 * Math.sin(this.sqPh), now, 0.03);
-    smooth(this.sqG.gain, turning * (1 - 0.6 * sf) * 0.035 * (tank.alive === false ? 0 : 1), now);
-    // turret traverse whine: muted (owner feedback: every mouse move made a "woup"). Set TURRET_WHINE > 0 to restore.
-    const tr = Math.abs(tank.turretRate || 0);
-    smooth(this.whG.gain, clamp(tr / 0.25) * (isPlayer ? 0.05 : 0.025) * TURRET_WHINE, now, 0.05);
-    smooth(this.wA.frequency, 330 + tr * 420, now); smooth(this.wB.frequency, 165 + tr * 210, now);
+    // five-gear rpm model: rpm climbs through each gear band and drops at the shift; a shift is
+    // a short throttle lift with a clunk, so it's audible as a drop and rise
+    let rpm, gear = 0;
+    if (sf < 0.03) rpm = 0.12 * thr + 0.03 * turning;   // a pivot on the spot only nudges the revs
+    else { const gs = Math.min(4.999, sf * 5); gear = Math.floor(gs); rpm = 0.3 + 0.62 * (gs - gear) * (0.75 + 0.25 * thr) + 0.08 * thr; }
+    if (gear !== this.gear) { if (gear > this.gear && thr > 0.3 && on) { this.shiftT = now; if (isPlayer || this.d < 60) K.punch(this.out, now + 0.02, { f: 110, f1: 50, gain: 0.12, nf: 300 }); } this.gear = gear; }
+    const shifting = now - this.shiftT < 0.28;
+    if (!on) rpm = 0;
+    this.rpm += (rpm - this.rpm) * clamp(dt * (shifting ? 9 : 5));
+    let load = clamp(0.15 + 0.85 * thr) * (shifting ? 0.25 : 1);
+    const overrun = thr < 0.1 && sf > 0.15 ? 1 : 0;            // engine braking
+    const r = this.rpm, rpmAbs = E.idle + (E.max - E.idle) * r;
+    const wob = eng === 'damaged' ? 1 + 0.04 * Math.sin(now * 17) : 1 + 0.006 * Math.sin(now * 2.3);
+    smooth(this.ex.frequency, rpmAbs / 120 * wob, now, 0.04);
+    smooth(this.drv.gain, 0.5 + E.drive * load * (0.6 + 0.4 * r), now, 0.06);
+    smooth(this.exLp.frequency, E.lp + E.lpSpan * r * (0.35 + 0.65 * load) - 80 * overrun, now);
+    smooth(this.engG.gain, on * (0.16 + 0.12 * load + 0.06 * r), now);
+    smooth(this.gravG.gain, on * E.gravL * (0.05 + 0.25 * load * (0.4 + r) * clamp(sf * 4 + thr) + 0.12 * overrun), now);
+    smooth(this.rumG.gain, on * (0.25 + 0.2 * load) * E.sub + 0.35 * sf, now);
+    smooth(this.rumLp.frequency, 90 + 90 * r + 40 * sf, now);
+    smooth(this.mechG.gain, on * (0.01 + 0.03 * r), now);
+    smooth(this.mechBp.frequency, 450 + 500 * r, now);
+    // tracks: clank at the sprocket rate, rattle at a link rate; both ∝ speed; pivot grind
+    const moving = clamp(v / 1.5), alive = tank.alive === false ? 0 : 1;
+    smooth(this.pA.frequency, 0.4 + v * 1.6, now, 0.05); smooth(this.pB.frequency, 0.6 + v * 3.7, now, 0.05);
+    smooth(this.clkG.gain, alive * moving * (0.25 + 0.2 * sf), now);
+    smooth(this.rtG.gain, alive * moving * (0.03 + 0.1 * sf), now);
+    smooth(this.grG.gain, alive * turning * 0.2, now);
+    // suspension thuds over rough ground: occasional one-shots, more at speed
+    if (alive && v > 2 && (isPlayer || this.d < 80) && now > this.thudT) {
+      this.thudT = now + 0.25 + (1.8 - 1.2 * sf) * K.R();
+      if (K.R() < 0.6) K.punch(this.out, now + 0.02, { f: 90 + 40 * K.R(), f1: 35, fdur: 0.05, gain: 0.08 + 0.12 * sf * K.R(), nf: 250 });
+    }
     // placement
     const P = this.A._pos(tank.pos, { ref: 6, roll: 1, range: 0.8 });
     this.d = isPlayer ? 0 : P.d;
-    const lvl = isPlayer ? 0.6 : P.gain * 0.9;
-    smooth(this.out.gain, lvl, now, 0.1);
-    smooth(this.lp.frequency, isPlayer ? 9000 : P.lp, now, 0.1);
+    smooth(this.out.gain, isPlayer ? 0.32 : P.gain * 0.45, now, 0.1);
+    smooth(this.lp.frequency, isPlayer ? 8000 : P.lp, now, 0.1);
     if (this.pan) smooth(this.pan.pan, isPlayer ? 0 : P.pan, now, 0.05);
     smooth(this.send.gain, isPlayer ? 0.05 : P.wet * 0.5, now, 0.2);
   }
 }
-
 export class EnginePool {
   constructor(A, max = 7) { this.A = A; this.max = max; this.voices = []; this.byId = new Map(); }
   update(tank, isPlayer) {

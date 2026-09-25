@@ -9,7 +9,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 import { join, dirname, extname } from 'path';
 import { fileURLToPath } from 'url';
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const ROOT = process.env.AUDIO_ROOT || join(dirname(fileURLToPath(import.meta.url)), '..');   // AUDIO_ROOT: render another checkout (before/after comparisons)
 const args = process.argv.slice(2);
 const wavDir = args.includes('--wav') ? args[args.indexOf('--wav') + 1] : null;
 const pngDir = args.includes('--png') ? args[args.indexOf('--png') + 1] : null;
@@ -34,6 +34,11 @@ const S = {
   shot20_50m:   { dur: 1.5, fn: (A, W, L, c, T) => { T(-50, 0); A.event({ type: 'shot', tank: 2, cal: 20, pos: W.tanks[1].pos }, W, L); } },
   shot88_50m:   { dur: 4, fn: (A, W, L, c, T) => { T(-50, 0); A.event({ type: 'shot', tank: 2, cal: 88, pos: W.tanks[1].pos }, W, L); } },
   shot122_50m:  { dur: 5, fn: (A, W, L, c, T) => { T(-50, 0); A.event({ type: 'shot', tank: 2, cal: 122, pos: W.tanks[1].pos }, W, L); } },
+  shot37_50m:   { dur: 2.5, fn: (A, W, L, c, T) => { T(-50, 0); A.event({ type: 'shot', tank: 2, cal: 37, pos: W.tanks[1].pos }, W, L); } },
+  shot75_50m:   { dur: 4, fn: (A, W, L, c, T) => { T(-50, 0); A.event({ type: 'shot', tank: 2, cal: 75, pos: W.tanks[1].pos }, W, L); } },
+  shot152_50m:  { dur: 5, fn: (A, W, L, c, T) => { T(-50, 0); A.event({ type: 'shot', tank: 2, cal: 152, pos: W.tanks[1].pos }, W, L); } },
+  shot75_own:   { dur: 5, fn: (A, W, L) => { W.tanks[0].gunDef.cal = 75; A.event({ type: 'shot', tank: 1, cal: 75 }, W, L); } },
+  shot88_own:   { dur: 5, fn: (A, W, L) => { A.event({ type: 'shot', tank: 1, cal: 88 }, W, L); } },
   shot122_own:  { dur: 5, fn: (A, W, L) => { A.event({ type: 'shot', tank: 1, cal: 122 }, W, L); } },
   shot20_own:   { dur: 1.5, fn: (A, W, L) => { W.tanks[0].gunDef.cal = 20; A.event({ type: 'shot', tank: 1, cal: 20 }, W, L); } },
   shot88_600m:  { dur: 5, fn: (A, W, L, c, T) => { T(0, 600); A.event({ type: 'shot', tank: 2, cal: 88, pos: W.tanks[1].pos }, W, L); } },
@@ -59,6 +64,23 @@ const S = {
     for (let t = 0.05; t < 4.9; t += 0.05) steps.push(t);
     return steps.map((t) => [t, () => { const a = Math.max(0, t - 1); p.throttle = t > 1 ? 1 : 0; p.speed = Math.min(12, a * 4); p.yawRate = t > 3.5 ? 0.5 : 0; p.turretRate = t > 2 && t < 3 ? 0.7 : 0; A.engine(p, L); }]);
   } },
+  // mouse-only traverse: player stationary, turret traversing (turretRate is deg/s in the sim), a TD
+  // auto-turning its hull; compared against the same tank idling (idle_player).
+  idle_player: { dur: 4, engine: true, fn: (A, W, L) => { const p = W.tanks[0]; const st = []; for (let t = 0.05; t < 3.95; t += 0.05) st.push([t, () => { p.throttle = 0; p.speed = 0; A.engine(p, L); }]); return st; } },
+  traverse_td: { dur: 4, engine: true, fn: (A, W, L) => { const p = W.tanks[0]; const st = []; for (let t = 0.05; t < 3.95; t += 0.05) st.push([t, () => { p.throttle = 0; p.speed = 0; p.turretRate = 30 * Math.sin(t * 2); p.yawRate = 0.4 * Math.sin(t * 2); A.engine(p, L); }]); return st; } },
+  // steady cruise at 60 % throttle then a lift-off (engine braking), per nation
+  engine_usa: { dur: 5, engine: true, fn: (A, W, L) => {
+    const p = W.tanks[0]; p.def = { speed: 40, mass: 30, power: 400, nation: 'usa' }; const st = [];
+    for (let t = 0.05; t < 4.95; t += 0.05) st.push([t, () => { p.throttle = t < 3 ? 0.8 : 0; p.speed = t < 3 ? Math.min(7, t * 3) : Math.max(3, 7 - (t - 3) * 2); A.engine(p, L); }]);
+    return st; } },
+  engine_germany: { dur: 5, engine: true, fn: (A, W, L) => {
+    const p = W.tanks[0]; p.def = { speed: 40, mass: 57, power: 700, nation: 'germany' }; const st = [];
+    for (let t = 0.05; t < 4.95; t += 0.05) st.push([t, () => { p.throttle = t < 3 ? 0.8 : 0; p.speed = t < 3 ? Math.min(7, t * 3) : Math.max(3, 7 - (t - 3) * 2); A.engine(p, L); }]);
+    return st; } },
+  engine_ussr: { dur: 5, engine: true, fn: (A, W, L) => {
+    const p = W.tanks[0]; p.def = { speed: 40, mass: 45, power: 600, nation: 'ussr' }; const st = [];
+    for (let t = 0.05; t < 4.95; t += 0.05) st.push([t, () => { p.throttle = t < 3 ? 0.8 : 0; p.speed = t < 3 ? Math.min(7, t * 3) : Math.max(3, 7 - (t - 3) * 2); A.engine(p, L); }]);
+    return st; } },
   // CPU check: 7 engine voices + a burning tank for 10 s
   engine_7: { dur: 10, engine: true, cpu: true, fn: (A, W, L, c, T, mk) => {
     const tanks = [W.tanks[0]]; for (let i = 0; i < 9; i++) tanks.push(mk(10 + i, 20 + i * 15, i * 20));
@@ -79,6 +101,10 @@ const CHECKS = [
   ['raw peak < 1.0 (headroom before the limiter)', (M) => Object.entries(M).filter(([, m]) => m.raw >= 1).map(([n, m]) => `${n} raw ${m.raw}`)],
   ['calibre ordering: 20 < 88 < 122 in length', (M) => (M.shot20_50m && M.shot88_50m && M.shot122_50m && !(M.shot20_50m.len < M.shot88_50m.len && M.shot88_50m.len < M.shot122_50m.len)) ? [`len ${M.shot20_50m.len} ${M.shot88_50m.len} ${M.shot122_50m.len}`] : []],
   ['calibre ordering: 20 < 88 < 122 in low-band energy', (M) => (M.shot20_50m && M.shot88_50m && M.shot122_50m && !(M.shot20_50m.low < M.shot88_50m.low && M.shot88_50m.low < M.shot122_50m.low)) ? [`low ${M.shot20_50m.low} ${M.shot88_50m.low} ${M.shot122_50m.low}`] : []],
+  ['calibre ordering: 20 < 37 < 75 < 88 < 122 < 152 in sub-120 Hz level', (M) => { const k = ['shot20_50m', 'shot37_50m', 'shot75_50m', 'shot88_50m', 'shot122_50m', 'shot152_50m'].filter((n) => M[n]); for (let i = 1; i < k.length; i++) if (!(M[k[i]].sub > M[k[i - 1]].sub)) return [k.map((n) => M[n].sub).join(' ')]; return []; }],
+  ['cannons (≥75 mm): sub-120 Hz dominates (≥ 50 % of energy)', (M) => ['shot75_50m', 'shot88_50m', 'shot122_50m', 'shot152_50m', 'shot88_own', 'shot122_own'].filter((n) => M[n] && M[n].subF < 0.5).map((n) => `${n} ${M[n].subF}`)],
+  ['mouse-only traverse adds nothing above 2 kHz (≤ idle + 1 dB)', (M) => (M.traverse_td && M.idle_player && M.traverse_td.hi > M.idle_player.hi + 1) ? [`${M.traverse_td.hi} vs ${M.idle_player.hi}`] : []],
+  ['engines: no narrow peaks above 2 kHz (prominence < 10 dB)', (M) => Object.entries(M).filter(([n, m]) => /^engine_|idle_player|traverse/.test(n) && m.pk >= 10).map(([n, m]) => `${n} ${m.pk}dB@${m.pkHz}`)],
   ['own 122 louder than 122 at 50 m', (M) => (M.shot122_own && M.shot122_50m && M.shot122_own.rms <= M.shot122_50m.rms) ? ['not louder'] : []],
   ['600 m shot delayed by the capped speed of sound (≈0.6 s)', (M) => (M.shot88_600m && Math.abs(M.shot88_600m.onset - 0.61) > 0.06) ? [`onset ${M.shot88_600m.onset}`] : []],
   ['600 m shot darker than 50 m shot', (M) => (M.shot88_600m && M.shot88_50m && M.shot88_600m.zcr >= M.shot88_50m.zcr) ? [`zcr ${M.shot88_600m.zcr} vs ${M.shot88_50m.zcr}`] : []],
@@ -119,7 +145,7 @@ try {
         const q = (t) => Math.round((t + PRE) * SR / 128) * 128 / SR;
         ctx.suspend(q(0)).then(() => {
           const steps = scen(A, W, L, ctx, T, (id, x, z) => { const k = mk(id, x, z); W.tanks.push(k); return k; }) || [];
-          for (const [t, f] of steps) ctx.suspend(q(t)).then(() => { f(); ctx.resume(); });
+          for (const [t, f] of steps) ctx.suspend(q(t)).then(() => { try { f(); } finally { ctx.resume(); } });
           ctx.resume();
         });
         const t0 = performance.now(); const buf = await ctx.startRendering(); const ms = performance.now() - t0;
@@ -137,6 +163,23 @@ try {
         e += m * m; eL += l * l; eR += r * r; lp += a * (m - lp); lowE += lp * lp;
         if ((m >= 0) !== (prev >= 0) && Math.abs(m - prev) > 1e-4) zc++; prev = m;
       }
+      // band levels: <120 Hz (sub) and >2 kHz (hi), 2-pole one-pole cascades; absolute dB RMS
+      { const al = 1 - Math.exp(-2 * Math.PI * 120 / SR), ah = 1 - Math.exp(-2 * Math.PI * 2000 / SR); let l1 = 0, l2 = 0, h1 = 0, h2 = 0, se = 0, he = 0, hp1 = 0, hp2 = 0;
+        for (let i = 0; i < n; i++) { const m = (L[i] + R[i]) / 2; l1 += al * (m - l1); l2 += al * (l1 - l2); se += l2 * l2; h1 += ah * (m - h1); hp1 = m - h1; h2 += ah * (hp1 - h2); hp2 = hp1 - h2; he += hp2 * hp2; }
+        var subDb = 10 * Math.log10(se / n + 1e-12), hiDb = 10 * Math.log10(he / n + 1e-12), subFrac = se / (e || 1); }
+      // narrow high peaks: long-term spectrum (4096-pt), prominence of the strongest bin above 2 kHz over its ±30-bin median
+      let pk = { db: 0, hz: 0 };
+      if (engine) { const N = 4096, P = new Float64Array(N / 2), re = new Float64Array(N), im = new Float64Array(N); let cnt = 0;
+        for (let c0 = Math.floor(n / 2); c0 + N < n; c0 += N / 2) { for (let i = 0; i < N; i++) { re[i] = (L[c0 + i] + R[c0 + i]) * 0.5 * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / N)); im[i] = 0; } fftN(re, im, N); for (let k = 0; k < N / 2; k++) P[k] += re[k] * re[k] + im[k] * im[k]; cnt++; }
+        const dB = Array.from(P, (v) => 10 * Math.log10(v / (cnt || 1) + 1e-20)), k0 = Math.round(2000 / SR * N);
+        for (let k = k0; k < N / 2 - 31; k++) { const nb = dB.slice(k - 30, k + 31).sort((a, b) => a - b), pr = dB[k] - nb[30]; if (pr > pk.db) pk = { db: pr, hz: Math.round(k * SR / N) }; } }
+      // pulse modulation depth: coefficient of variation of the 5 ms RMS envelope of the <400 Hz band, 2nd half
+      let pm = 0;
+      if (engine) { const a4 = 1 - Math.exp(-2 * Math.PI * 400 / SR); let y = 0, acc = 0, k = 0; const env = [], w = Math.round(SR * 0.005);
+        for (let i = 0; i < n; i++) { y += a4 * ((L[i] + R[i]) / 2 - y); if (i < n / 2) continue; acc += y * y; if (++k === w) { env.push(Math.sqrt(acc / w)); acc = 0; k = 0; } }
+        const mu = env.reduce((s, v) => s + v, 0) / env.length, sd = Math.sqrt(env.reduce((s, v) => s + (v - mu) ** 2, 0) / env.length); pm = sd / (mu || 1); }
+      function fftN(re, im, N) { for (let i = 1, j = 0; i < N; i++) { let b = N >> 1; for (; j & b; b >>= 1) j ^= b; j ^= b; if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; } }
+        for (let len = 2; len <= N; len <<= 1) { const a = -2 * Math.PI / len; for (let i = 0; i < N; i += len) for (let k = 0; k < len / 2; k++) { const c = Math.cos(a * k), s = Math.sin(a * k), xr = re[i + k + len / 2] * c - im[i + k + len / 2] * s, xi = re[i + k + len / 2] * s + im[i + k + len / 2] * c; re[i + k + len / 2] = re[i + k] - xr; im[i + k + len / 2] = im[i + k] - xi; re[i + k] += xr; im[i + k] += xi; } } }
       for (const ch of [cut(raw, 0), cut(raw, 1)]) for (let i = 0; i < n; i++) { const v = Math.abs(ch[i]); if (v > rawPeak) rawPeak = v; }
       // envelope in 10 ms windows → onset (first > -40 dB re peak) and length (last > -40 dB)
       const win = Math.round(SR * 0.01), thr = peak * 0.01; let on = -1, off = 0;
@@ -145,7 +188,7 @@ try {
       const seg = [0, 1, 2, 3].map((s) => { let q = 0; const a0 = Math.floor(n * s / 4), a1 = Math.floor(n * (s + 1) / 4); for (let i = a0; i < a1; i++) q += L[i] * L[i] + R[i] * R[i]; return +Math.sqrt(q / (2 * (a1 - a0))).toFixed(4); });
       if (engine) { const q = seg.slice(); seg.length = 0; seg.push(q[0], (q[2] + q[3]) / 2); }
       const r4 = (v) => +v.toFixed(4);
-      const out = { peak: r4(peak), raw: r4(rawPeak), clip, rms: r4(Math.sqrt(e / n)), onset: r4(Math.max(0, on) / SR), len: r4(off / SR), low: r4(lowE / (e || 1)), zcr: Math.round(zc / (n / SR)), pan: r4((Math.sqrt(eR) - Math.sqrt(eL)) / (Math.sqrt(eR) + Math.sqrt(eL) + 1e-9)), seg, speed: r4(dur * 1000 / ms), dc: r4((L.reduce((s, v) => s + v, 0)) / n) };
+      const out = { peak: r4(peak), raw: r4(rawPeak), clip, rms: r4(Math.sqrt(e / n)), onset: r4(Math.max(0, on) / SR), len: r4(off / SR), low: r4(lowE / (e || 1)), zcr: Math.round(zc / (n / SR)), pan: r4((Math.sqrt(eR) - Math.sqrt(eL)) / (Math.sqrt(eR) + Math.sqrt(eL) + 1e-9)), seg, speed: r4(dur * 1000 / ms), sub: +subDb.toFixed(1), hi: +hiDb.toFixed(1), subF: r4(subFrac), pk: pk.db ? +pk.db.toFixed(1) : 0, pkHz: pk.hz, pm: r4(pm), dc: r4((L.reduce((s, v) => s + v, 0)) / n) };
       if (wantWav) { const i16 = new Int16Array(n * 2); for (let i = 0; i < n; i++) { i16[2 * i] = Math.max(-1, Math.min(1, L[i])) * 32767; i16[2 * i + 1] = Math.max(-1, Math.min(1, R[i])) * 32767; } let s = ''; const u8 = new Uint8Array(i16.buffer); for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); out.wav = btoa(s); }
       if (wantPng) out.png = spectro(L, R, SR, name);
       return out;
@@ -176,7 +219,7 @@ try {
     if (res.png) { mkdirSync(pngDir, { recursive: true }); writeFileSync(join(pngDir, name + '.png'), Buffer.from(res.png, 'base64')); delete res.png; }
     if (res.wav) { mkdirSync(wavDir, { recursive: true }); writeFileSync(join(wavDir, name + '.wav'), wav(Buffer.from(res.wav, 'base64'))); delete res.wav; }
     M[name] = res;
-    console.log(name.padEnd(14), `peak ${res.peak.toFixed(3)} raw ${res.raw.toFixed(3)} rms ${res.rms.toFixed(4)} clip ${res.clip} onset ${res.onset.toFixed(2)}s len ${res.len.toFixed(2)}s low ${res.low.toFixed(2)} zcr ${String(res.zcr).padStart(5)} pan ${res.pan.toFixed(2)} ×rt ${res.speed.toFixed(0)}` + ((sc.engine || /music|amb/.test(name)) ? ` seg ${res.seg}` : ''));
+    console.log(name.padEnd(14), `peak ${res.peak.toFixed(3)} raw ${res.raw.toFixed(3)} rms ${res.rms.toFixed(4)} clip ${res.clip} onset ${res.onset.toFixed(2)}s len ${res.len.toFixed(2)}s low ${res.low.toFixed(2)} zcr ${String(res.zcr).padStart(5)} pan ${res.pan.toFixed(2)} sub<120 ${res.sub}dB (${res.subF.toFixed(2)}) hi>2k ${res.hi}dB ×rt ${res.speed.toFixed(0)}` + (sc.engine ? ` pk>2k ${res.pk}dB@${res.pkHz} pm ${res.pm}` : '') + ((sc.engine || /music|amb/.test(name)) ? ` seg ${res.seg}` : ''));
   }
   console.log('');
   for (const [label, f] of CHECKS) { const bad = f(M); if (bad.length) failed++; console.log((bad.length ? 'FAIL ' : 'ok   ') + label + (bad.length ? ': ' + bad.join('; ') : '')); }

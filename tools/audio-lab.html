@@ -76,6 +76,7 @@
     <h2>Engine (per-frame engine() calls)</h2>
     <label><span>running</span><input type="checkbox" id="e-on"></label>
     <label><span>class</span><select id="e-cls"><option value="light">light 15 t / 300 hp</option><option value="medium" selected>medium 30 t / 450 hp</option><option value="heavy">heavy 57 t / 700 hp</option></select></label>
+    <label><span>engine</span><select id="e-nat"><option value="usa">US radial petrol</option><option value="germany">German Maybach V12</option><option value="ussr">Soviet V-2 diesel</option></select></label>
     <label><span>throttle</span><input type="range" id="e-thr" min="-1" max="1" step="0.05" value="0"><output></output></label>
     <label><span>steer</span><input type="range" id="e-steer" min="-1" max="1" step="0.05" value="0"><output></output></label>
     <label><span>turret °/s</span><input type="range" id="e-tur" min="-50" max="50" step="1" value="0"><output></output></label>
@@ -144,13 +145,13 @@ let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000); last = now;
   if ($('e-on').checked) {
-    Object.assign(player.def, CLS[$('e-cls').value]);
+    Object.assign(player.def, CLS[$('e-cls').value], { nation: $('e-nat').value });
     player.modules.engine.state = $('e-mod').value;
     const top = player.def.speed / 3.6, thr = +$('e-thr').value, st = +$('e-steer').value;
     const acc = player.modules.engine.state === 'destroyed' ? 0 : thr * (player.def.power / player.def.mass) * 0.12;
     player.speed += (acc - player.speed * 0.25 * (thr === 0 ? 3 : 1) * (Math.abs(player.speed) > top ? 4 : 0.2)) * dt;
     player.speed = Math.max(-top * 0.4, Math.min(top, player.speed));
-    player.throttle = thr; player.yawRate = st * 0.6; player.turretRate = +$('e-tur').value * Math.PI / 180;
+    player.throttle = thr; player.yawRate = st * 0.6; player.turretRate = +$('e-tur').value;   // deg/s, as in the sim
     A.engine(player, L);
     const n = +$('e-n').value;
     while (ai.length < n) { const k = mk(100 + ai.length, 1, 0, 0); k.r = 40 + ai.length * 18; k.ph = ai.length; ai.push(k); }

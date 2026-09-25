@@ -98,8 +98,34 @@ export class Kit {
     f.frequency.setValueAtTime(o.f ?? 1000, t);
     if (o.f1) f.frequency.exponentialRampToValueAtTime(o.f1, t + (o.fdur || dur));
     const g = c.createGain(); this.env(g.gain, t, o.gain ?? 1, o.attack ?? 0.002, dur, o.hold || 0);
-    s.connect(f); f.connect(g); g.connect(out);
+    s.connect(f);
+    // drive: tanh saturation after the filter (grit), output normalised back to about the same level
+    if (o.drive) { const pre = c.createGain(); pre.gain.value = 1.6; const ws = c.createWaveShaper(); ws.curve = this.curve(o.drive); f.connect(pre); pre.connect(ws); ws.connect(g); }
+    else f.connect(g);
+    g.connect(out);
     return g;
+  }
+  // Low-end body: a sine whose pitch drops fast (f → f1 over fdur), soft-clipped so it thumps on
+  // small speakers too (the clipping adds 2nd/3rd harmonics of the sub). o: {f, f1, fdur, dur, gain, shape}
+  boom(out, t, o) {
+    return this.tone(out, t, { f: o.f, f1: o.f1, fdur: o.fdur, dur: o.dur, gain: o.gain, attack: o.attack ?? 0.0015, shape: o.shape ?? 2.2 });
+  }
+  // Pressure-wave punch: a very short, heavily driven low click (the "kick" of a blast).
+  punch(out, t, o) {
+    this.tone(out, t, { f: o.f ?? 140, f1: o.f1 ?? 45, fdur: o.fdur ?? 0.035, dur: o.dur ?? 0.09, gain: o.gain ?? 1, attack: 0.0008, shape: 5 });
+    this.noise(out, t, { type: 'lowpass', f: o.nf ?? 500, q: 0.9, dur: 0.035, gain: (o.gain ?? 1) * 0.7, attack: 0.0005, drive: 4 });
+  }
+  // Rolling outdoor tail: a long, dark brown-noise rumble plus discrete terrain reflections that
+  // arrive later and darker (the "rolling thunder" of a big gun). len ~ 1..4 s.
+  thunder(out, t, o) {
+    const g = o.gain ?? 1, len = o.len ?? 2, lo = o.f ?? 160;
+    this.noise(out, t + 0.02, { buf: 'brown', type: 'lowpass', f: lo, q: 0.8, dur: len, attack: 0.06 + 0.04 * len, hold: 0.1 * len, gain: g * 0.9, drive: 1.5 });
+    const n = o.echoes ?? 4;
+    for (let i = 0; i < n; i++) {
+      const at = t + 0.28 + i * (0.22 + 0.18 * len / n) + this.R() * 0.12, a = g * 0.55 * Math.pow(0.62, i);
+      this.noise(out, at, { buf: 'brown', type: 'lowpass', f: lo * (2.4 - i * 0.3), q: 0.7, dur: 0.35 + 0.15 * i, attack: 0.015 + 0.02 * i, gain: a, drive: 2 });
+      this.noise(out, at, { type: 'lowpass', f: 900 - 150 * i, q: 0.6, dur: 0.12 + 0.05 * i, attack: 0.004, gain: a * 0.18 });
+    }
   }
   // Oscillator note with optional pitch sweep and saturation. o: {dur, f, f1, fdur, type, gain, attack, hold, shape, detune}
   tone(out, t, o) {

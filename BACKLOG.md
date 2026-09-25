@@ -16,6 +16,7 @@ Status: ☐ todo · ☑ done. The detail for each item lives in HANDOFF.md and d
 
 ## Next
 - ☐ Real-GPU fps measurement and quality tuning; a listening pass on the audio
+- ☐ Audio CPU: the reworked SFX use 2–3× more nodes per event; check it on a real PC during heavy fights (verify fast-sim showed 17–28 ms per frame at 4×)
 - ☐ Ultra-low graphics tier for integrated GPUs (owner plays on Intel iGPU)
 - ☐ AI: skill → survival correlation, light-tank survival, fewer long-range kills, map length balance
 - ☐ Garage: Sell button; show available vehicle XP (+ free XP) on owned tank cards in the tech tree (owner could not find their XP); add "Total XP earned" to Service Record and the top bar next to rank
