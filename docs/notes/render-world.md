@@ -67,7 +67,7 @@ view.tanks, view.fx                 // the TankRenderer / FxRenderer instances (
     cached per size and material.
 - **post.js**: HDR target (half float, float depth) → [depth SSAO, high] → [UnrealBloom threshold 1.6,
   medium/high] → composite: exponential height fog reconstructed from depth, lighter at combat range (at 445 m
-  about 13 % summer / 18 % winter), full haze toward the horizon, sky-coloured in-scatter with a sun glow. Then
+  about 11 % summer, 15 % winter), full haze toward the horizon, sky-coloured in-scatter with a sun glow. Then
   exposure, ACES, a mild grade and vignette, and the sniper tweaks. Last comes FXAA (low/medium) or SMAA (high).
 - **textures.js**: tileable value/gradient/Worley noise, the terrain layer arrays (512² × 8, albedo+height and
   normals), the macro noise, the water normals, the foliage atlas (broadleaf, small leaves, conifer spray, bare
