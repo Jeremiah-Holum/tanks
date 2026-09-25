@@ -50,7 +50,7 @@ async function runBattle({ mapId, seed, limit, verbose, skills }) {
         if (verbose) {
           const v = world.byId[e.victim], k = world.byId[e.killer], bv = brains.get(v.id), bk = k && brains.get(k.id);
           const d = k ? Math.hypot(k.pos.x - v.pos.x, k.pos.z - v.pos.z).toFixed(0) : '-';
-          console.log(`  ${world.time.toFixed(0).padStart(4)}s KILL t${v.team} ${v.def.cls[0]}${v.def.tier} s${bv.skill.toFixed(2)} ${bv.mode}${bv.hold ? '/hold' : ''} @${v.pos.x.toFixed(0)},${v.pos.z.toFixed(0)} by ${k ? k.def.cls[0] + k.def.tier + ' s' + bk.skill.toFixed(2) + ' ' + bk.mode : e.cause} d=${d} ${e.cause}`);
+          console.log(`  ${world.time.toFixed(0).padStart(4)}s KILL t${v.team} ${v.def.cls[0]}${v.def.tier} s${bv.skill.toFixed(2)} ${bv.mode}${bv.hold ? '/hold' : bv.arrived ? '/at' : '/move'} post ${bv.post ? bv.post.kind + ' ' + Math.hypot(bv.post.x - v.pos.x, bv.post.z - v.pos.z).toFixed(0) + 'm' : '-'} tgt ${bv.target ? bv.targetD.toFixed(0) : '-'} @${v.pos.x.toFixed(0)},${v.pos.z.toFixed(0)} by ${k ? k.def.cls[0] + k.def.tier + ' s' + bk.skill.toFixed(2) + ' ' + bk.mode : e.cause} d=${d} ${e.cause}`);
         }
       }
     }

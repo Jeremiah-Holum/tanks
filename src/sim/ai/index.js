@@ -220,7 +220,7 @@ export class Brain {
           // skilled bots finish the last few metres into cover first
           // skilled bots don't stop to trade in the open at range: they get to their post first
           const toPost = this.post ? hyp(this.post.x - pos.x, this.post.z - pos.z) : 0;
-          hold = !(s > 0.5 && toPost > 8 && (toPost < 70 || (this.targetD > 170 && now - this.lastHitT > 2)));
+          hold = !(s > 0.5 && toPost < 70 && toPost > 8);
         }
       }
     }
