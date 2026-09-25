@@ -3,6 +3,7 @@
 // overlay that spreads paths (congestion) so the team doesn't funnel down one street.
 import { mapInfo, clamp, hyp, headingTo, snapPassable } from './util.js';
 import { makeRng } from '../battle.js';
+import { lineClear, heightAt } from '../map/query.js';
 
 const SHARED = new WeakMap();
 // Per-world shared AI state: both team brains and the per-tick path-planning budget.
@@ -56,6 +57,12 @@ export class TeamBrain {
     this.wrecks = new Set();
     this.lastDecay = 0;
     this.assigned = false;
+    // danger map: coarse cells seen by recently spotted enemies (computed a slice per tick)
+    this.dc = 16; this.dn = Math.ceil(world.map.size / this.dc);
+    this.danger = new Float32Array(this.dn * this.dn);
+    this.views = new Map();              // enemy id → { x, z, t, cells: Uint8Array, k: next cell, done }
+    this.workStep = -1; this.dangerAt = -1;
+    this.planScratch = this.nav ? new Float32Array(this.navCost.length) : null;
   }
 
   register(b) { this.brains.push(b); }
@@ -115,6 +122,62 @@ export class TeamBrain {
       const base = this.navStatic, c = this.navCost;
       for (let i = 0; i < c.length; i++) if (c[i] !== base[i]) c[i] = base[i] + (c[i] - base[i]) * 0.55;
     }
+  }
+
+  // Per-tick background work (first bot of the team each tick): one slice of the danger map.
+  work(world) {
+    if (this.workStep === world.step) return;
+    this.workStep = world.step;
+    let job = null;
+    for (const v of this.views.values()) if (!v.done) { job = v; break; }
+    if (!job) {
+      // (re)start a view for the enemy whose record is missing or stale (moved > 20 m)
+      for (const [id, k] of this.known) {
+        if (world.time - k.t > 20) continue;
+        const v = this.views.get(id);
+        if (v && hyp(v.x - k.x, v.z - k.z) < 20) continue;
+        job = { id, x: k.x, z: k.z, y: heightAt(world.map, k.x, k.z) + 2.6, cells: v ? v.cells : new Uint8Array(this.dn * this.dn), k: 0, done: false };
+        job.cells.fill(0);
+        this.views.set(id, job);
+        break;
+      }
+      if (!job) return;
+    }
+    const n = this.dn, dc = this.dc, map = world.map, E = { x: job.x, y: job.y, z: job.z }, P = {};
+    const R2 = 440 * 440;
+    for (let it = 0; it < 90 && job.k < n * n; job.k++) {
+      const i = job.k % n, j = (job.k / n) | 0, x = (i + 0.5) * dc, z = (j + 0.5) * dc;
+      const dx = x - job.x, dz = z - job.z;
+      if (dx * dx + dz * dz > R2) continue;
+      it++;
+      P.x = x; P.z = z; P.y = heightAt(map, x, z) + 1.8;
+      job.cells[job.k] = lineClear(map, E, P) ? 1 : 0;
+    }
+    if (job.k >= n * n) { job.done = true; this.sumDanger(world); }
+  }
+  sumDanger(world) {
+    const d = this.danger; d.fill(0);
+    for (const [id, v] of this.views) {
+      const k = this.known.get(id);
+      if (!k || world.time - k.t > 25) { this.views.delete(id); continue; }
+      if (!v.done) continue;
+      const w = world.time - k.t < 10 ? 1 : 0.5;
+      for (let i = 0; i < d.length; i++) if (v.cells[i]) d[i] += w;
+    }
+  }
+  dangerAt2(x, z) { const n = this.dn, i = Math.min(n - 1, Math.max(0, Math.floor(x / this.dc))), j = Math.min(n - 1, Math.max(0, Math.floor(z / this.dc))); return this.danger[j * n + i]; }
+  // Nav for A*: the overlay plus `w` per enemy that can see a cell (skilled bots avoid open ground).
+  planNav(w) {
+    if (!this.nav || w <= 0) return this.nav;
+    const { cols, rows, cell } = this.nav, c = this.navCost, out = this.planScratch, n = this.dn, f = cell / this.dc;
+    for (let r = 0; r < rows; r++) {
+      const dj = Math.min(n - 1, Math.floor((r + 0.5) * f)) * n;
+      for (let q = 0; q < cols; q++) {
+        const k = r * cols + q, dd = this.danger[dj + Math.min(n - 1, Math.floor((q + 0.5) * f))];
+        out[k] = dd ? c[k] + w * Math.min(3, dd) : c[k];
+      }
+    }
+    return { cell, cols, rows, cost: out };
   }
 
   // Nearest bots to our base (by travel time) are flagged as defenders.
@@ -286,15 +349,15 @@ export class TeamBrain {
       const ps = this.team === 0 ? p.s : 1 - p.s;
       if (ps > s + 0.06 && ps < s + 0.35 && ps < bs) { bs = ps; best = p; }
     }
-    if (best) { const q = snapPassable(this.info.nav, best.x + (this.rng() - 0.5) * 20, best.z + (this.rng() - 0.5) * 20); return { x: q.x, z: q.z, geo: g, kind: best.kind }; }
-    const q = this.laneAt(g, Math.min(0.85, s + 0.18)), r = snapPassable(this.info.nav, q.x, q.z);
-    return { x: r.x, z: r.z, geo: g, kind: 'lane' };
+    if (best) { const q = snapPassable(this.info.nav, best.x + (this.rng() - 0.5) * 20, best.z + (this.rng() - 0.5) * 20); return { x: q.x, z: q.z, geo: g, kind: best.kind, s: bs }; }
+    const ns = Math.min(0.85, s + 0.18), q = this.laneAt(g, ns), r = snapPassable(this.info.nav, q.x, q.z);
+    return { x: r.x, z: r.z, geo: g, kind: 'lane', s: ns };
   }
   // Nearest remembered enemy (seen within maxAge s) to (x, z).
-  nearestKnown(x, z, maxAge, now, maxD = 600) {
+  nearestKnown(x, z, maxAge, now, maxD = 600, skip = null) {
     let best = null, bd = maxD;
     for (const [id, k] of this.known) {
-      if (now - k.t > maxAge) continue;
+      if (now - k.t > maxAge || (skip && skip.get(id) === k.t)) continue;
       const d = hyp(k.x - x, k.z - z);
       if (d < bd) { bd = d; best = { id, ...k, d }; }
     }

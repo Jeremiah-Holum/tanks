@@ -59,9 +59,10 @@ export class Brain {
     this.scoutPhase = 0; this.scoutAt = -1; this.relocAt = -99; this.flexAt = 40 + this.rng() * 30;
     this.brawlPushAt = 70 + this.rng() * 50;
     this.openingT = 75 + 40 * this.rng();
+    this.dangerW = s < 0.3 ? 0 : 0.6 + 1.6 * s;          // A* cost per enemy that can see a cell
     this.yolo = this.rng() < 0.45 - s;                  // potatoes that charge alone
     this.yoloAt = 50 + this.rng() * 80;
-    this.retreated = false; this.defending = false; this.cover = null; this.coverAt = -99;
+    this.retreated = false; this.defending = false; this.huntId = null; this.cleared = new Map(); this.capping = false; this.pushS = 0; this.pushGoal = null; this.cover = null; this.coverAt = -99;
     this.useAt = {}; this.carrot = { x: 0, z: 0, remain: 0 };
     this.stats = { unsticks: 0, plans: 0 };
   }
@@ -82,6 +83,7 @@ export class Brain {
     c.fire = false; c.use = null;
     if (!t.alive) { c.throttle = 0; c.steer = 0; c.brake = true; c.aim = null; c.lockGun = true; this.wantMove = false; return c; }
     this.team.tick(world);
+    this.team.work(world);
     this.events(world);
     const k = world.step + this.phase;
     if (k % this.evalN === 0 || (this.target && !this.target.alive)) this.perceive(world);
@@ -226,12 +228,27 @@ export class Brain {
         || (this.yolo && now > this.yoloAt && this.cls !== 'td');
       if (pushing && !(this.retreated && T.push < 2)) {
         mode = 'push';
-        const hunt = T.nearestKnown(pos.x, pos.z, 30, now, 420);
+        // hunt the nearest remembered enemy (sticky: switch only for a much closer one)
+        // a last-known spot we reached without finding anyone is "cleared" until it's seen again
+        if (this.huntId != null) {
+          const k = T.known.get(this.huntId);
+          if (k && hyp(k.x - pos.x, k.z - pos.z) < 45 && !world.visible[t.team].has(this.huntId)) { this.cleared.set(this.huntId, k.t); this.huntId = null; }
+        }
+        let hunt = T.nearestKnown(pos.x, pos.z, 30, now, 420, this.cleared);
+        const cur = this.huntId != null && T.known.get(this.huntId);
+        if (cur && now - cur.t < 30 && (!hunt || hunt.id === this.huntId || hunt.d > 0.6 * hyp(cur.x - pos.x, cur.z - pos.z))) hunt = { id: this.huntId, ...cur, d: hyp(cur.x - pos.x, cur.z - pos.z) };
+        this.huntId = hunt ? hunt.id : null;
+        if (!(T.push >= 1 || this.yolo)) this.capping = false;
+        if (prog > 0.72 || (T.push >= 2 && prog > 0.6)) this.capping = true;
         if (tgt && this.targetD < range) hold = true;
         else if (hunt && hunt.d > 40) goal = this.jitterGoal(hunt.x, hunt.z, 10, 'h' + hunt.id);
-        else if (prog > 0.72 || T.push >= 2 && prog > 0.6) { goal = this.jitterGoal(T.eBase.x, T.eBase.z, 22, 'cap'); mode = 'cap'; }
+        else if (this.capping) { goal = this.jitterGoal(T.eBase.x, T.eBase.z, 22, 'cap'); mode = 'cap'; }
         else {
-          if (!this.pushGoal || hyp(this.pushGoal.x - pos.x, this.pushGoal.z - pos.z) < 18 || this.pushGoal.geo !== g) this.pushGoal = T.pushGoal(g, prog);
+          // lane objectives only ever move forward
+          if (!this.pushGoal || hyp(this.pushGoal.x - pos.x, this.pushGoal.z - pos.z) < 18 || this.pushGoal.geo !== g) {
+            this.pushGoal = T.pushGoal(g, Math.max(prog, this.pushS));
+            if (this.pushGoal) this.pushS = this.pushGoal.s; else this.capping = true;
+          }
           goal = this.pushGoal || this.jitterGoal(T.eBase.x, T.eBase.z, 22, 'cap');
         }
       } else {
@@ -280,7 +297,7 @@ export class Brain {
     const goal = this.goal;
     if (!goal || this.hold || this.arrived) { this.holdStill(world); return; }
     if (this.needPlan && planBudget(world)) {
-      const r = plan(T.nav, T.navS, t.pos.x, t.pos.z, goal.x, goal.z);
+      const r = plan(T.planNav(this.dangerW), T.navS, t.pos.x, t.pos.z, goal.x, goal.z);
       this.stats.plans++;
       if (r) { this.follow.set(r.pts); T.notePath(r.raw); this.needPlan = false; this.planFail = 0; this.lastRemain = Infinity; }
       else { this.follow.set([{ x: t.pos.x, z: t.pos.z }, { x: goal.x, z: goal.z }]); this.needPlan = false; if (++this.planFail > 2) this.jitter = { x: (this.rng() - 0.5) * 40, z: (this.rng() - 0.5) * 40 }; }
