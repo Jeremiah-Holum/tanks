@@ -33,7 +33,7 @@ async function runBattle({ mapId, seed, limit, verbose, skills, tune }) {
   if (verbose) for (const b of brains.values()) b.log = [];
   const ctrl = new Map();
   let aiMs = 0, simMs = 0, steps = 0;
-  const deathT = {}, deaths = [];
+  const deathT = {}, deaths = [], use = new Map();
   // stuck tracking: samples every 5 s: [x, z, wantMove]
   const hist = new Map(world.tanks.map((t) => [t.id, []]));
   const stuck = new Map();
@@ -45,6 +45,11 @@ async function runBattle({ mapId, seed, limit, verbose, skills, tune }) {
     stepBattle(world, ctrl);
     const c = performance.now();
     aiMs += b - a; simMs += c - b; steps++;
+    if (steps % 6 === 0) for (const t of world.tanks) {
+      if (!t.alive) continue;
+      const br = brains.get(t.id), u = use.get(t.id) || use.set(t.id, { alive: 0, ready: 0, tgt: 0, cover: 0, move: 0, lit: 0 }).get(t.id);
+      u.alive++; if (br.targetLos) u.tgt++; if (br.targetLos && t.reload <= 0) u.ready++; if (br.mode === 'cover' || br.peek) u.cover++; if (br.wantMove) u.move++; if (t.spotted) u.lit++;
+    }
     for (const e of world.events) {
       if (e.type === 'kill') {
         deathT[e.victim] = world.time;
@@ -82,7 +87,7 @@ async function runBattle({ mapId, seed, limit, verbose, skills, tune }) {
   const tanks = world.tanks.map((t) => ({
     team: t.team, cls: t.def.cls, tier: t.def.tier, hp: t.maxHp, skill: t.bot ? t.bot.skill : 0.5, alive: t.alive,
     life: t.alive ? world.time : deathT[t.id] ?? world.time, share: (t.alive ? world.time : deathT[t.id] ?? world.time) / world.time, dmg: t.stats.dmg, shots: t.stats.shots, hits: t.stats.hits, pens: t.stats.pens,
-    kills: t.stats.kills, received: t.stats.received, unsticks: brains.get(t.id).stats.unsticks, spotted: t.stats.spotted,
+    kills: t.stats.kills, received: t.stats.received, use: use.get(t.id), unsticks: brains.get(t.id).stats.unsticks, spotted: t.stats.spotted,
   }));
   const bots = world.tanks.length;
   return {
@@ -168,6 +173,11 @@ function report(R, secs) {
     const sh = L.reduce((a, t) => a + t.shots, 0), hi2 = L.reduce((a, t) => a + t.hits, 0);
     const pe2 = L.reduce((a, t) => a + t.pens, 0);
     console.log(`  ${name.padEnd(15)} n=${String(L.length).padStart(4)}  dmg/hp ${mean(L.map((t) => t.dmg / t.hp)).toFixed(2)}  survived ${pct(L.filter((t) => t.alive).length, L.length)}  life ${mean(L.map((t) => t.life / 60)).toFixed(1)} min  shots ${(sh / Math.max(1, L.length)).toFixed(1)}  hit ${pct(hi2, sh)}  pen ${pct(pe2, hi2)}  kills ${mean(L.map((t) => t.kills)).toFixed(2)}  recv/hp ${mean(L.map((t) => t.received / t.hp)).toFixed(2)}`);
+  }
+  // how bots spend their lives, by skill bucket (fractions of alive time)
+  for (const [lo, hi, name] of [[0, 0.35, 'potato'], [0.35, 0.65, 'average'], [0.65, 1.01, 'unicum']]) {
+    const L = T.filter((t) => t.skill >= lo && t.skill < hi && t.use), S = (k) => L.reduce((a, t) => a + t.use[k], 0), al = S('alive') || 1;
+    console.log(`  time ${name}: target in sight ${pct(S('tgt'), al)}, loaded+target ${pct(S('ready'), al)}, hiding ${pct(S('cover'), al)}, moving ${pct(S('move'), al)}, lit ${pct(S('lit'), al)}`);
   }
   // how bots die (state at death) by skill bucket
   const D = R.flatMap((r) => r.deaths || []);
