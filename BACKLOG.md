@@ -18,7 +18,7 @@ Status: ☐ todo · ☑ done. The detail for each item lives in HANDOFF.md and d
 - ☐ Real-GPU fps measurement and quality tuning; a listening pass on the audio
 - ☐ Ultra-low graphics tier for integrated GPUs (owner plays on Intel iGPU)
 - ☐ AI: skill → survival correlation, light-tank survival, fewer long-range kills, map length balance
-- ☐ Garage: Sell button
+- ☐ Garage: Sell button; show available vehicle XP (+ free XP) on owned tank cards in the tech tree (owner could not find their XP); add "Total XP earned" to Service Record and the top bar next to rank
 - ☐ HUD: scale bottom panels at 1080p+; "skip to results" after leaving dead
 - ☐ Visual: early-tank silhouettes, US hull variety, M6 triangle count, tracer interpolation, water reflections, crater props
 - ☐ Sim: rear-deck depression, HEAT after spaced armour, buried-pivot edge case
