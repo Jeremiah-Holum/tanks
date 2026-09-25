@@ -289,7 +289,13 @@ export function foliageAtlas(pal, key) {
     for (let b = 0; b < 3; b++) {
       const y0 = 150 + b * 110, droop = 40 + rnd() * 30;
       const P = (t) => [30 + t * 450, y0 + droop * t * t - 30 * t];
-      for (let k = 0; k < 520; k++) {
+      // a soft dark body under the needles gives the spray coverage at every mip level
+      g.fillStyle = rgbs(pal.needle[2], 0.55, 0.9);
+      g.beginPath();
+      for (let t = 0; t <= 1.001; t += 0.05) { const [x, y] = P(t); g.lineTo(x, y - (1 - t * 0.75) * 40); }
+      for (let t = 1; t >= -0.001; t -= 0.05) { const [x, y] = P(t); g.lineTo(x, y + (1 - t * 0.75) * 44); }
+      g.fill();
+      for (let k = 0; k < 900; k++) {
         const t = Math.pow(rnd(), 0.8), [x, y] = P(t), w = (1 - t * 0.7) * 70;
         const a = (rnd() - 0.5) * 2.6 + (rnd() < 0.5 ? 0 : Math.PI);
         const L = 10 + rnd() * w * 0.6;

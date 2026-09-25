@@ -667,7 +667,12 @@ function vegMaterial(tex, U) {
       // keep leaf-card normals facing the same way on both sides (volumetric crown lighting)
       .replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('normal *= faceDirection;', ''))
       // sharpened alpha test keeps foliage from thinning out in the distance
-      .replace('#include <alphatest_fragment>', 'diffuseColor.a = (diffuseColor.a - 0.5) / max(fwidth(diffuseColor.a), 1e-4) + 0.5; if (diffuseColor.a < 0.5) discard;')
+      .replace('#include <alphatest_fragment>', `{
+        // mip-aware coverage boost + sharpened test: sparse foliage (needles) stays solid far away
+        vec2 dx = dFdx(vMapUv * vec2(1024.0, 1536.0)), dy = dFdy(vMapUv * vec2(1024.0, 1536.0));
+        float lod = max(0.0, 0.5 * log2(max(dot(dx, dx), dot(dy, dy))));
+        diffuseColor.a *= 1.0 + lod * 0.32;
+        diffuseColor.a = (diffuseColor.a - 0.5) / max(fwidth(diffuseColor.a), 1e-4) + 0.5; if (diffuseColor.a < 0.5) discard; }`)
       // cheap translucency: leaves glow a little when the sun is behind them
       .replace('#include <aomap_fragment>', `#include <aomap_fragment>
         { vec3 Vw = normalize(cameraPosition - vFsW); float back = pow(max(dot(-Vw, uSunDir), 0.0), 3.0);

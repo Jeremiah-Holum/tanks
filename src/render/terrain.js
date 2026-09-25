@@ -128,9 +128,10 @@ void terrainShade() {
       col[i] = vec4(mix(a.rgb, b.rgb, mix(0.3, 0.62, far)), mix(a.a, b.a, 0.4));
       if (i == 6) { // crop rows: soil in the furrows, the field's crop on the ridges
         int ci = int(F.b * 4.0 + 0.5);
-        float ridge = smoothstep(0.3, 0.72, a.a) * uCropCov[ci];
+        float ridge = smoothstep(0.3, 0.72, a.a);
         vec3 lum = vec3(dot(a.rgb, vec3(0.3, 0.59, 0.11)) / 0.18);
-        vec3 crop = mix(uSoil, uCrop[ci] * clamp(lum, 0.55, 1.5), ridge);
+        float fill = uCropCov[ci];
+        vec3 crop = mix(uSoil, uCrop[ci] * clamp(lum, 0.55, 1.5) * mix(0.72, 1.0, ridge), max(ridge, step(0.8, fill) * fill));
         col[i].rgb = mix(col[i].rgb, mix(crop, crop * b.rgb / max(dot(b.rgb, vec3(0.33)), 0.02) * 0.2, 0.25 * far), uCropMix);
       }
       hb[i] = w[i] * (0.35 + col[i].a);
@@ -379,7 +380,7 @@ export class Terrain {
     const CROP = th.crops || [[196, 158, 62], [186, 176, 104], [70, 104, 56], [176, 150, 98], [52, 84, 30]];
     const U = { tAlb: { value: this.layers.albedo }, tNrm: { value: this.layers.normal }, tSplatA: { value: this.splatA }, tSplatB: { value: this.splatB },
       tField: { value: this.fieldTex }, tNoise: { value: noiseTexture() }, uDetail: { value: 1 }, uPlay: { value: new THREE.Vector2(play.min, play.max) },
-      uCropMix: { value: th.cropMix ?? 1 }, uSoil: { value: lin(th.ground.field[1]) }, uCrop: { value: CROP.map(lin) }, uCropCov: { value: [0.97, 0.95, 0.55, 0.9, 0.7] } };
+      uCropMix: { value: th.cropMix ?? 1 }, uSoil: { value: lin(th.ground.field[1]) }, uCrop: { value: CROP.map(lin) }, uCropCov: { value: [0.95, 0.92, 0.4, 0.85, 0.5] } };
     this.cropU = U;
     m.onBeforeCompile = (sh) => {
       Object.assign(sh.uniforms, U);
@@ -541,7 +542,8 @@ export class Terrain {
           float ang = hh.x * 6.2831;
           vec3 transformed = position;
           transformed.xz = mat2(cos(ang), -sin(ang), sin(ang), cos(ang)) * transformed.xz * (0.8 + 0.5 * hh.y);
-          transformed.y *= sc * (0.3 + 0.35 * patchN);
+          float tall = texture2D(tNoise, wp / 9.0 + 0.3).b;
+          transformed.y *= sc * (0.22 + 0.5 * patchN * patchN + 0.25 * tall);
           transformed.xz *= 0.75;
           transformed.xz *= step(0.001, sc);
           float sway = sin(uTime * 1.9 + wp.x * 0.35 + wp.y * 0.21) + 0.4 * sin(uTime * 4.3 + wp.x * 1.3);

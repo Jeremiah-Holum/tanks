@@ -26,7 +26,7 @@ const SUMMER = {
     flowers: [[240, 240, 232], [232, 204, 64], [176, 92, 168], [210, 70, 56]],
     bare: false,
   },
-  sky: { zenith: [0.16, 0.34, 0.78], horizon: [0.78, 0.84, 0.92], sun: [1.0, 0.85, 0.66], sunI: 4.2, elev: 24, azim: 235,
+  sky: { zenith: [0.15, 0.32, 0.76], horizon: [0.8, 0.83, 0.88], sun: [1.0, 0.8, 0.58], sunI: 4.4, elev: 24, azim: 235,
     fog: 1 / 1700, haze: 0.9, clouds: 0.46, ground: [0.24, 0.24, 0.16], exposure: 1.0, env: 0.42 },
   grassDensity: 1, cropMix: 1,
 };
