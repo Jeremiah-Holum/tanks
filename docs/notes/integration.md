@@ -80,7 +80,7 @@ setting or `?q=` disables it. `renderScale` (settings) multiplies the view's pix
 | param | effect |
 |---|---|
 | `q=low|medium|high` | fixed quality |
-| `fast=1` | test mode: battle 100 s (unless `limit`), sim ×4 (unless `speed`), up to 150 steps / frame and 1 s per frame, player god mode |
+| `fast=1` | test mode: battle 600 s (unless `limit`), sim ×4 (unless `speed`), up to 150 steps / frame and 1 s per frame, player god mode |
 | `god=1`, `speed=n`, `limit=s` | god mode, sim speed, battle time limit |
 | `auto=1` | skip the hangar and start a battle at once (`tank=<id>`, `map=<id>`, `size=7|15`, `seed=n`) |
 | `map`, `size`, `seed` | also override BATTLE! from the hangar |

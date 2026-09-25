@@ -87,7 +87,8 @@ window.__sf = {
     };
   },
   lastReport: null,
-  setSpeed(n) { if (session) session.speed = n; },   // test hook: sim speed multiplier
+  setSpeed(n) { if (session) session.speed = n; },   // test hooks: sim speed multiplier, remaining battle time
+  endIn(sec) { if (session?.world) session.world.timeLimit = Math.min(session.world.timeLimit, session.world.time + sec); },
 };
 
 // boot

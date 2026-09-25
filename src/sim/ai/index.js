@@ -56,7 +56,6 @@ export class Brain {
       relocate: tr('relocate', 0.25, 0.75), // move after being lit
       retreat: tr('retreat', 0.15, 0.6),    // fall back when low
       discipline: tr('discipline', 0.2, 0.7), // hold fire at range early / on hopeless shots
-      stopEnRoute: !tr('route', 0.1, 0.5),  // stops to trade anywhere on the way (bad)
     };
     this.angleArmor = (this.cls === 'heavy' || (this.cls === 'medium' && tank.def.hull.upper.t >= 60)) && this.knows.angle ? 0.25 + 0.25 * s : 0;
     this.angleSide = this.rng() < 0.5 ? 1 : -1;
@@ -294,8 +293,9 @@ export class Brain {
           // skilled bots finish the last few metres into cover first.
           const toPost = this.post ? hyp(this.post.x - pos.x, this.post.z - pos.z) : 0;
           if (this.arrived || toPost < 8 || mode === 'stage') hold = true;
-          else if (this.knows.stopEnRoute) hold = true;
-          else hold = this.targetD < 150 - 60 * s || (now - this.lastHitT < 3 && toPost > 120 && s < 0.6);
+          // on the way: everyone stops to fight back within engage range (skilled bots then use
+          // cover if they're lit); only lights on a scouting run keep going
+          else hold = true;
         }
       }
     }

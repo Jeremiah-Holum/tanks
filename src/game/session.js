@@ -66,7 +66,7 @@ export class BattleSession {
     await view.ready;
     if (!view.tanks || !view.fx) throw new Error('the tank / FX renderer failed to load');
     let timeLimit = b.timeLimit || 900;
-    if (P.get('limit')) timeLimit = +P.get('limit'); else if (this.fast) timeLimit = 100;
+    if (P.get('limit')) timeLimit = +P.get('limit'); else if (this.fast) timeLimit = 600;
     const world = this.world = createBattle({ ...b, map, timeLimit });
     const me = this.player = world.tanks.find((t) => t.player) || world.tanks[0];
     this.team = me.team;

@@ -3,7 +3,7 @@
 // turret (mouse), fire (LMB), switch shells (1/3), sniper mode (Shift + wheel), score panel (Tab),
 // minimap size (M), Esc menu → resume, then wait for the battle to end → results → garage.
 // ?fast=1 gives the player god mode and lets slow frames advance the sim further; the input tests
-// run at speed 1, then the rest of the battle (limit 240 s) runs at 8× through __sf.setSpeed.
+// run at speed 1, then the test hooks __sf.endIn(70) + __sf.setSpeed(8) play the last 70 s at 8×.
 // Fails on any console error or page error. Screenshots: shots/verify/<quality>/NN-step.png.
 //   tools/capped.sh -- node tools/verify.mjs [low|medium|high]
 // Run one quality at a time (one browser on the machine).
@@ -45,7 +45,7 @@ const perfNote = (s) => s.perf && s.perf.fps ? `${s.perf.fps.toFixed(1)} fps, fr
 
 try {
   await check('boot → hangar', async () => {
-    await page.goto(`http://127.0.0.1:${PORT}/index.html?fast=1&speed=1&limit=240&q=${q}`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`http://127.0.0.1:${PORT}/index.html?fast=1&speed=1&q=${q}`, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.hangar .sf-battle', { timeout: 120000 });
     await wait(1500);
     await shot('hangar');
@@ -191,11 +191,11 @@ try {
   await check('battle plays out to the end (god mode, fast sim)', async () => {
     // keep driving; the rest of the battle runs at 8× (?fast allows up to 150 steps per frame)
     await page.keyboard.down('KeyW');
-    await page.evaluate(() => window.__sf.setSpeed(8));
+    await page.evaluate(() => { window.__sf.setSpeed(8); window.__sf.endIn(70); });
     let shotMid = false; mid0 = (await st()).time;
     const end = await until(async () => {
       const s = await st();
-      if (!shotMid && s.time > mid0 + 40) { shotMid = true; mid = s; await page.keyboard.up('KeyW'); await shot('mid-battle'); log('  mid-battle:', perfNote(s)); }
+      if (!shotMid && s.time > mid0 + 30) { shotMid = true; mid = s; await page.keyboard.up('KeyW'); await shot('mid-battle'); log('  mid-battle:', perfNote(s)); }
       if (s.phase === 'ending' && !mid?.endShot) { mid = { ...(mid || {}), endShot: true }; await shot('result-banner'); }
       return s.state === 'results' ? s : null;
     }, 420000, 400);

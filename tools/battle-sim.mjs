@@ -84,7 +84,8 @@ async function runBattle({ mapId, seed, limit, verbose, skills, tune }) {
       }
     }
   }
-  const tanks = world.tanks.map((t) => ({
+  const top = Math.max(...world.tanks.map((t) => t.def.tier));
+  const tanks = world.tanks.map((t) => ({ below: top - t.def.tier,
     team: t.team, cls: t.def.cls, tier: t.def.tier, hp: t.maxHp, skill: t.bot ? t.bot.skill : 0.5, alive: t.alive,
     life: t.alive ? world.time : deathT[t.id] ?? world.time, share: (t.alive ? world.time : deathT[t.id] ?? world.time) / world.time, dmg: t.stats.dmg, shots: t.stats.shots, hits: t.stats.hits, pens: t.stats.pens,
     kills: t.stats.kills, received: t.stats.received, use: use.get(t.id), nf: brains.get(t.id).stats.nf, unsticks: brains.get(t.id).stats.unsticks, spotted: t.stats.spotted,
@@ -166,7 +167,11 @@ function report(R, secs) {
   const sd = (a) => { const m = mean(a); return Math.sqrt(mean(a.map((x) => (x - m) ** 2))); };
   // within-class correlation (class and tier explain a lot of the raw variance)
   const within = ['light', 'medium', 'heavy', 'td'].map((c) => { const L = T.filter((t) => t.cls === c); return L.length > 20 ? `${c} ${corr(L.map((t) => t.skill), L.map((t) => t.dmg / t.hp)).toFixed(2)}` : ''; }).filter(Boolean).join(', ');
-  console.log(`\nsd(dmg/hp) ${sd(T.map((t) => t.dmg / t.hp)).toFixed(2)}, sd(skill) ${sd(sk).toFixed(2)}; r(skill, dmg/hp) within class: ${within}`);
+  // skill vs results with class and tier (relative to the battle's top tier) factored out
+  const grp = {}; for (const t of T) { const k = t.cls + t.below; (grp[k] ||= []).push(t); }
+  const res = (f) => T.map((t) => f(t) - mean(grp[t.cls + t.below].map(f)));
+  console.log(`\nskill vs residuals after class+tier: r(dmg/hp) ${corr(sk, res((t) => t.dmg / t.hp)).toFixed(2)}, r(lifetime) ${corr(sk, res((t) => t.share)).toFixed(2)}, r(survived) ${corr(sk, res((t) => (t.alive ? 1 : 0))).toFixed(2)}`);
+  console.log(`sd(dmg/hp) ${sd(T.map((t) => t.dmg / t.hp)).toFixed(2)}, sd(skill) ${sd(sk).toFixed(2)}; r(skill, dmg/hp) within class: ${within}`);
   console.log(`\nskill correlation: r(skill, dmg/hp) = ${corr(sk, T.map((t) => t.dmg / t.hp)).toFixed(2)}, r(skill, lifetime share) = ${corr(sk, T.map((t) => t.share)).toFixed(2)}, r(skill, survived) = ${corr(sk, T.map((t) => (t.alive ? 1 : 0))).toFixed(2)}, r(skill, hit%) = ${corr(sk.filter((_, i) => T[i].shots > 2), T.filter((t) => t.shots > 2).map((t) => t.hits / t.shots)).toFixed(2)}`);
   for (const [lo, hi, name] of [[0, 0.35, 'potato (<0.35)'], [0.35, 0.65, 'average'], [0.65, 1.01, 'unicum (>0.65)']]) {
     const L = T.filter((t) => t.skill >= lo && t.skill < hi);
