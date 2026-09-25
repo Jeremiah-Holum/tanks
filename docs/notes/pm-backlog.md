@@ -10,4 +10,5 @@
 Counted (reported agents): SIM 357k, MAPS 291k, AUDIO 192k, SIM-review 198k, META 317k, RENDER-WORLD 430k, RENDER-TANKS 504k = ~2.29M
 Free: AI up to 421.8k and INTEGRATION up to 334k (their usage when the cap was set); anything beyond those counts.
 Counted overage: AI +16k (final 438k).
-Remaining: ~1.18M (to 3.5M) covers AI/INTEGRATION overage plus phase 3; wiggle to ~1.45M.
+Counted overage: INTEGRATION +20k (final 354k).
+Remaining: ~1.16M (to 3.5M) covers AI/INTEGRATION overage plus phase 3; wiggle to ~1.45M.

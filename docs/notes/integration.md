@@ -105,24 +105,27 @@ F3 perf strip · Esc menu. Sensitivities and invert Y come from Settings.
 - `node tools/build.mjs` → `dist/` (game.js, ui.css, hud.css, index.html).
 
 ## Verify results / perf (SwiftShader, 4 shared cores, 1024×576)
-- verify low, run 2: all input steps passed through Esc menu; the battle then ended by time-out; results → garage
-  passed (draw, 36 XP, 638 credits). The final run's result is at the end of this file.
-- The loop, per sim step with 30 tanks: sim 0.13–0.36 ms, AI 0.29–0.45 ms (whole team of bots) under SwiftShader
-  load. Node alone: sim 0.23 ms/tick, AI 0.2 ms/tick (tools/battle-sim.mjs). HUD 1.5–6 ms and view.frame CPU
-  9–13 ms per frame in headless Chrome; the frame time itself (170–250 ms at speed 1, low/medium) is the CPU
-  rasteriser. `view.stats()`: low 27–150 draw calls, 0.3–0.4 M tris; medium ~100 calls, 1.05 M tris.
-- FX and tank animations age with sim time (`dt × speed`), so the 8× test phase doesn't pile up particles.
+- **verify low: 18/18 passed in 349 s**: hangar → pick tank → BATTLE! → loading → countdown (Space) → W drives
+  (7.3 m) → mouse turns camera + turret → 4 shots → shells 3/1 → R reload → sniper ×4 → arcade zoom out → Tab →
+  M → Esc/Resume → last 45 s at 4× → results (draw, 36 XP, 638 cr) → garage (no leftover battle nodes), zero
+  console/page errors. Shots: `shots/verify/low/01…17-*.png`.
+- **verify medium: 18/18 passed in 484 s** (same steps; Kolvik Pass). Shots: `shots/verify/medium/`.
+- Per sim step with 30 tanks under SwiftShader load: sim 0.13–0.36 ms, AI (all bots) 0.17–0.45 ms. In node alone
+  sim 0.23 ms/tick and AI 0.2 ms/tick (tools/battle-sim.mjs). Per frame: view.frame CPU 6–13 ms, HUD 1.5–2.4 ms,
+  audio 6 ms (headless, many one-shots at 4×). Frame times of 170–600 ms are the CPU rasteriser.
+  `view.stats()`: low 80–150 draw calls, 0.3–0.4 M tris; medium ~100–160 calls, ~1.05 M tris.
+- FX and tank animations age with sim time (`dt × speed`), so a sped-up test battle doesn't pile up particles.
 
 ## Known issues / unfinished (priority order)
-1. verify on **medium** has not been run to completion (budget). Run `tools/capped.sh -- node tools/verify.mjs medium`;
-   it may exceed capped.sh's 900 s limit under SwiftShader: lower `limit=` in the URL or the 8× phase length.
-2. Verify's end-of-battle leg is timing-sensitive: 240 s of sim at 8× must fit in the 900 s budget of capped.sh.
+1. verify must fit capped.sh's 900 s under SwiftShader; the end leg uses the test hooks `__sf.endIn(45)` and
+   `__sf.setSpeed(4)` (both only change the remaining time / sim speed). Low takes ~350 s, medium ~480 s.
+2. Real-GPU frame timing and auto-quality haven't been measured here (headless only).
 3. Marker clutter: allies are compact and scaled, overlaps stack up to 4 levels and then fade; it can still be busy
    at spawn. Consider hiding ally markers beyond ~150 m or behind terrain.
-4. A run where the dev server died mid-load left TankRenderer/FxRenderer unloaded (no tanks drawn, "player tank
-   invisible"). Loading now fails loudly (back to the hangar with a toast) if either renderer is missing.
-5. Tier-I Leichttraktor looked hull-less in some shots: RENDER-TANKS is checking (the session only uses
-   `prewarm/sync`).
+4. The "player tank invisible" shot came from a run where the dev server died mid-load, so TankRenderer and
+   FxRenderer never loaded. Loading now fails loudly (back to the hangar with a toast) if either is missing.
+   In the latest runs the player's tank is drawn in arcade view (e.g. `shots/verify/low/07-firing.png`).
 6. The dispersion circle has a 6 px floor added to the true angular radius (readability in arcade).
 7. No tree/prop occlusion test for markers; no shell fly-by; no replay of the damage log after death.
-8. The perf strip (F3, `?debug=1`, `?perf=1` or the Show FPS setting) is wide at 1024 px.
+8. Audio can spike (65 ms in one headless frame at 4× with many one-shots); worth a look on real hardware.
+9. Enemy markers can overlap the side team lists. The perf strip (F3, `?debug=1`, `?perf=1` or the Show FPS setting) is wide at 1024 px.

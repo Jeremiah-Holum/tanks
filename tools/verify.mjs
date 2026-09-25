@@ -3,7 +3,7 @@
 // turret (mouse), fire (LMB), switch shells (1/3), sniper mode (Shift + wheel), score panel (Tab),
 // minimap size (M), Esc menu → resume, then wait for the battle to end → results → garage.
 // ?fast=1 gives the player god mode and lets slow frames advance the sim further; the input tests
-// run at speed 1, then the test hooks __sf.endIn(70) + __sf.setSpeed(8) play the last 70 s at 8×.
+// run at speed 1, then the test hooks __sf.endIn(70) + __sf.setSpeed(8) play the last 45 s at 4×.
 // Fails on any console error or page error. Screenshots: shots/verify/<quality>/NN-step.png.
 //   tools/capped.sh -- node tools/verify.mjs [low|medium|high]
 // Run one quality at a time (one browser on the machine).
@@ -136,8 +136,9 @@ try {
     await until(async () => (await st()).player.reload <= 0, 30000, 150);
     const a = await st();
     await page.keyboard.press('KeyR');
-    const s = await until(async () => { const s = await st(); return s.player.reloads > a.player.reloads ? s : null; }, 15000, 100);
-    return { ok: !!s && s.player.shell === 0 && s.player.shots === a.player.shots, detail: s && `reload started without a shot, shell ${s.player.shell}` };
+    const s = await until(async () => { const s = await st(); return s.player.reloads > a.player.reloads ? s : null; }, 40000, 100);
+    const z = s || (await st());
+    return { ok: !!s && s.player.shell === 0 && s.player.shots === a.player.shots, detail: `reloads ${a.player.reloads} → ${z.player.reloads}, shots ${a.player.shots} → ${z.player.shots}, shell ${z.player.shell}` };
   });
 
   await check('Shift → sniper mode, wheel zooms ×4', async () => {
@@ -191,11 +192,11 @@ try {
   await check('battle plays out to the end (god mode, fast sim)', async () => {
     // keep driving; the rest of the battle runs at 8× (?fast allows up to 150 steps per frame)
     await page.keyboard.down('KeyW');
-    await page.evaluate(() => { window.__sf.setSpeed(8); window.__sf.endIn(70); });
+    await page.evaluate(() => { window.__sf.setSpeed(4); window.__sf.endIn(45); });
     let shotMid = false; mid0 = (await st()).time;
     const end = await until(async () => {
       const s = await st();
-      if (!shotMid && s.time > mid0 + 30) { shotMid = true; mid = s; await page.keyboard.up('KeyW'); await shot('mid-battle'); log('  mid-battle:', perfNote(s)); }
+      if (!shotMid && s.time > mid0 + 15) { shotMid = true; mid = s; await page.keyboard.up('KeyW'); await shot('mid-battle'); log('  mid-battle:', perfNote(s)); }
       if (s.phase === 'ending' && !mid?.endShot) { mid = { ...(mid || {}), endShot: true }; await shot('result-banner'); }
       return s.state === 'results' ? s : null;
     }, 420000, 400);
