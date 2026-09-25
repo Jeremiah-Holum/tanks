@@ -37,7 +37,7 @@ export class TeamBrain {
     this.team = team; this.enemy = 1 - team;
     this.map = world.map; this.info = mapInfo(world.map);
     this.rng = makeRng((world.seed * 97 + team * 7919 + 13) >>> 0);
-    this.brains = [];
+    this.brains = []; this.byTank = new Map();
     this.last = -1;
     this.known = new Map();              // enemy id → { x, z, t, hp, def } last sighting
     this.base = world.bases.find((b) => b.team === team) || world.bases[0];
@@ -67,7 +67,7 @@ export class TeamBrain {
     this.planScratch = this.nav ? new Float32Array(this.navCost.length) : null;
   }
 
-  register(b) { this.brains.push(b); }
+  register(b) { this.brains.push(b); this.byTank.set(b.t.id, b); }
   // Team-relative lane progress (0 at our base, 1 at theirs).
   prog(x, z, g) { const s = this.info.lanes[g].project(x, z).s; return this.team === 0 ? s : 1 - s; }
   laneAt(g, s) { return this.info.lanes[g].at(this.team === 0 ? s : 1 - s); }
@@ -241,6 +241,14 @@ export class TeamBrain {
       const k = r * cols + q, add = dr || dc ? 1.5 : 4;
       if (isFinite(this.navStatic[k])) { this.navStatic[k] += add; this.navCost[k] += add; }
     }
+  }
+  // A physical pinch point (props closer than a hull width): permanently dearer.
+  addBlock(x, z) {
+    if (!this.nav) return;
+    const { cell, cols, rows } = this.nav, q = Math.floor(x / cell), r = Math.floor(z / cell);
+    if (q < 0 || r < 0 || q >= cols || r >= rows) return;
+    const k = r * cols + q;
+    if (isFinite(this.navStatic[k])) { this.navStatic[k] += 8; this.navCost[k] += 8; }
   }
   // A cell where a bot got stuck: make it expensive for a while.
   noteBlocked(x, z) {

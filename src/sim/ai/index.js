@@ -5,7 +5,7 @@
 // Deterministic: randomness comes from a per-bot rng seeded from world.seed and the tank id.
 // The bot only uses what its team has spotted (world.visible[team]); no wallhacks.
 import { aimSolution, predictImpact, DT, makeRng, penPreview, hullToWorld } from '../battle.js';
-import { heightAt, lineClear, waterDepthAt } from '../map/query.js';
+import { heightAt, lineClear, waterDepthAt, resolveCircle } from '../map/query.js';
 import { teamBrain, planBudget } from './team.js';
 import { plan, Follower, segClear } from './path.js';
 import { bestAim, candWorld, lineTo, gunFacing, alphaOf, chooseShell, chanceWith, pHit } from './combat.js';
@@ -334,7 +334,15 @@ export class Brain {
     const goal = this.goal;
     if (!goal || this.hold || this.arrived) { this.holdStill(world); return; }
     if (this.needPlan && planBudget(world, t.team)) {
-      const r = plan(T.planNav(this.dangerW), T.navS, t.pos.x, t.pos.z, goal.x, goal.z, world.map);
+      let r = plan(T.planNav(this.dangerW), T.navS, t.pos.x, t.pos.z, goal.x, goal.z, world.map);
+      // physical check: nav cells are 8 m, so a gap between props can look open but be too
+      // narrow for this hull. Mark the pinch point and plan again (twice at most).
+      for (let k = 0; k < 2 && r; k++) {
+        const bad = this.pinch(world, r.pts);
+        if (!bad) break;
+        T.addBlock(bad.x, bad.z);
+        r = plan(T.planNav(this.dangerW), T.navS, t.pos.x, t.pos.z, goal.x, goal.z, world.map);
+      }
       this.stats.plans++;
       if (r) { this.follow.set(r.pts); T.notePath(r.raw); this.needPlan = false; this.planFail = 0; this.lastRemain = Infinity; }
       else { this.follow.set([{ x: t.pos.x, z: t.pos.z }, { x: goal.x, z: goal.z }]); this.needPlan = false; if (++this.planFail > 2) this.jitter = { x: (this.rng() - 0.5) * 40, z: (this.rng() - 0.5) * 40 }; }
@@ -356,6 +364,21 @@ export class Brain {
     this.intent = this.pivoting ? 0 : Math.abs(c.throttle);  // what we meant before avoidance
     if (!this.pivoting) this.avoid(world);
     this.unstick(world, remain);
+  }
+
+  // First spot along a route (sampled every 2 m) where this hull doesn't fit between props, or null.
+  pinch(world, pts) {
+    const t = this.t, h = t.def.hull, r = h.W / 2 + h.track.w + 0.2, map = world.map;
+    if (!this._blockF) { const m = t.def.mass; this._blockF = (o, k) => k.solidTank && !(k.breakable === 'crush' && m >= k.crushMass); }
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i], L = hyp(b.x - a.x, b.z - a.z);
+      for (let d = i === 1 ? 6 : 0; d < L; d += 2) {
+        const x = a.x + (b.x - a.x) * d / L, z = a.z + (b.z - a.z) * d / L;
+        const q = resolveCircle(map, x, z, r, this._blockF);
+        if (Math.abs(q.x - x) + Math.abs(q.z - z) > 0.6) return { x, z };
+      }
+    }
+    return null;
   }
 
   steerTo(x, z, maxTh) {
@@ -392,7 +415,10 @@ export class Brain {
       adj += side * w * (still ? 3.5 : 2);      // obstacle on our left (+l) → steer right (+)
       if (f < 9 && Math.abs(l) < 3.2) {
         const sameWay = o.alive && Math.abs(o.speed) > 1.5 && Math.cos(o.yaw - t.yaw) > 0.5;
-        mul = Math.min(mul, sameWay ? 0.55 : 0.3);
+        // two allies nose to nose in a street: the lower id has right of way (no mutual yield)
+        const ob = o.alive && this.team.byTank.get(o.id);
+        const priority = ob && ob.wantMove && !ob.arrived && t.id < o.id && Math.cos(o.yaw - t.yaw) < 0;
+        mul = Math.min(mul, priority ? 0.8 : sameWay ? 0.55 : 0.3);
       }
     }
     if (adj) c.steer = clamp(c.steer + adj, -1, 1);
