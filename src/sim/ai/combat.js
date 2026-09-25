@@ -1,6 +1,7 @@
 // Combat helpers: target scoring, weak-spot aim candidates (penPreview), lead, shell choice.
 // Everything here only looks at tanks the bot's team has spotted (world.visible[team]).
-import { penPreview, hullToWorld, turretToWorld, worldToHull, muzzle, gunPivot } from '../battle.js';
+import { penPreview, hullToWorld, turretToWorld, worldToHull, muzzle } from '../battle.js';
+import { gunPivot } from '../tank.js';
 import { penAt } from '../damage.js';
 import { lineClear } from '../map/query.js';
 import { hyp, clamp } from './util.js';

@@ -44,7 +44,7 @@ export class ArmorView {
     this.scene.add(this.model.group);
     const box = new THREE.Box3().setFromObject(this.model.group), size = box.getSize(new THREE.Vector3());
     this.target = new THREE.Vector3(0, size.y * 0.45, 0);
-    this.orbit.dist = Math.max(size.x, size.z) * 1.75;
+    this.orbit.dist = Math.max(size.x, size.z) * 1.45;
     this.recolor(); this.render();
   }
   setMode(m) { this.mode = m; this.recolor(); this.render(); }

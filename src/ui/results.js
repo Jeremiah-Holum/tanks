@@ -46,7 +46,8 @@ function summary(S, r, def) {
   const personal = h('div.rs-col.rs-personal.sf-panel',
     h('div.rs-tank', flag(def.nation, 'flag rs-flag'), img,
       h('div.rs-tank-name', h('span.tier', roman(def.tier)), classIcon(def.cls, 14), h('b', def.name)),
-      h('div.rs-state' + (r.survived ? '.alive' : '.dead'), r.survived ? `Survived · ${fmt(r.hpLeft)} / ${fmt(r.maxHp)} HP` : 'Destroyed')),
+      h('div.rs-state' + (r.survived ? '.alive' : '.dead'), r.survived ? `Survived · ${fmt(r.hpLeft)} / ${fmt(r.maxHp)} HP`
+        : r.killedBy?.name ? `Destroyed by ${r.killedBy.name} (${r.killedBy.short})` : 'Destroyed')),
     h('div.rs-tiles',
       tile('target', 'Damage', fmt(s.dmg), null, 'big'),
       tile('eye', 'Assisted', fmt(s.assist)),
@@ -57,7 +58,8 @@ function summary(S, r, def) {
       tile('target', 'Penetrations', s.pens),
       tile('battle', 'Capture / defence', `${s.capture}/${s.defended}`),
       tile('shield', 'Received', fmt(s.received)),
-      tile('clock', 'Battle time', `${Math.floor(r.duration / 60)}:${String(r.duration % 60).padStart(2, '0')}`)));
+      tile('clock', 'Battle time', `${Math.floor(r.duration / 60)}:${String(r.duration % 60).padStart(2, '0')}`)),
+    r.kills?.length ? h('div.rs-kills', h('h3.sf-h', svg(ICON.skull), 'Destroyed'), h('div.rs-kchips', r.kills.map((k) => h('span.rs-kchip', classIcon(k.cls, 11), h('i', roman(k.tier)), k.short, h('small', k.name))))) : null);
 
   const xl = r.xp.lines.map((l) => h('div.rs-line', h('span', LINE_LABEL[l.key] || l.key), h('b.xp', fmt(l.xp))));
   const cl = r.credits.lines.map((l) => h('div.rs-line', h('span', LINE_LABEL[l.key] || l.key), h('b', fmt(l.cr))));

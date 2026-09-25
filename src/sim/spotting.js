@@ -66,14 +66,16 @@ export function scanTeam(world, team) {
       for (const o of obs) {
         if (!canSee(world, o, t)) continue;
         if (t.lastSeen[team] < 0) o.stats.spotted++; // first sighting this battle
-        t.lastSeen[team] = now; t.spottedBy[team] = o.id;
+        // the first spotter keeps the credit (assist) until the target is lost
+        if (!vis.has(t.id) || !t.spottedBy[team]) t.spottedBy[team] = o.id;
+        t.lastSeen[team] = now;
         break;
       }
     }
     const on = !t.alive || now - t.lastSeen[team] <= SPOT_MEMORY;
     const was = vis.has(t.id);
     if (on && !was) { vis.add(t.id); if (t.alive) world.events.push({ type: 'spot', team, tank: t.id, on: true }); }
-    else if (!on && was) { vis.delete(t.id); world.events.push({ type: 'spot', team, tank: t.id, on: false }); }
+    else if (!on && was) { vis.delete(t.id); t.spottedBy[team] = 0; world.events.push({ type: 'spot', team, tank: t.id, on: false }); }
     if (t.team === enemy) t.spotted = t.alive && vis.has(t.id);
   }
 }

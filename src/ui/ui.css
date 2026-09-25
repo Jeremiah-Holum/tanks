@@ -423,9 +423,9 @@ kbd { font: 600 11px/1 var(--cond); color: var(--muted); border: 1px solid var(-
 .rs-body { position: absolute; top: 146px; left: 16px; right: 16px; bottom: 64px; }
 .rs-summary { height: 100%; display: grid; grid-template-columns: 1.05fr 1fr 0.95fr; gap: 12px; }
 .rs-col { padding: 12px 16px; overflow: auto; scrollbar-width: thin; }
-.rs-tank { position: relative; height: 128px; overflow: hidden; margin: -12px -16px 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.rs-tank { position: relative; height: 112px; overflow: hidden; margin: -12px -16px 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
 .rs-flag { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0.09; -webkit-mask-image: linear-gradient(100deg, #000, transparent 80%); mask-image: linear-gradient(100deg, #000, transparent 80%); }
-.rs-img { position: absolute; right: 0; top: 2px; height: 124px; width: 66%; object-fit: contain; opacity: 0; transition: opacity 0.3s; }
+.rs-img { position: absolute; right: 0; top: 2px; height: 108px; width: 66%; object-fit: contain; opacity: 0; transition: opacity 0.3s; }
 .rs-img.ok { opacity: 1; }
 .rs-tank-name { position: relative; display: flex; align-items: center; gap: 6px; font-size: 21px; text-transform: uppercase; }
 .rs-tank-name .tier { font: 22px/1 var(--head); color: var(--amber); }
@@ -434,12 +434,12 @@ kbd { font: 600 11px/1 var(--cond); color: var(--muted); border: 1px solid var(-
 .rs-state.alive { color: var(--green); background: rgba(143, 194, 90, 0.12); border: 1px solid rgba(143, 194, 90, 0.35); }
 .rs-state.dead { color: var(--red2); background: rgba(216, 84, 58, 0.12); border: 1px solid rgba(216, 84, 58, 0.35); }
 .rs-tiles { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
-.rs-tile { display: flex; flex-direction: column; align-items: center; padding: 8px 4px 7px; background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(255, 255, 255, 0.05); text-align: center; }
-.rs-tile .ico { width: 16px; height: 16px; color: var(--olive2); margin-bottom: 3px; }
-.rs-tile b { font: 700 22px/1 var(--cond); font-variant-numeric: tabular-nums; }
+.rs-tile { display: flex; flex-direction: column; align-items: center; padding: 5px 4px 5px; background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(255, 255, 255, 0.05); text-align: center; }
+.rs-tile .ico { width: 14px; height: 14px; color: var(--olive2); margin-bottom: 2px; }
+.rs-tile b { font: 700 20px/1 var(--cond); font-variant-numeric: tabular-nums; }
 .rs-tile span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-top: 3px; }
 .rs-tile small { font-size: 11px; color: var(--text2); }
-.rs-tile.big { grid-column: span 3; flex-direction: row; justify-content: center; gap: 10px; padding: 10px; background: linear-gradient(90deg, rgba(240, 168, 48, 0.05), rgba(240, 168, 48, 0.15), rgba(240, 168, 48, 0.05)); border-color: rgba(240, 168, 48, 0.25); }
+.rs-tile.big { grid-column: span 3; flex-direction: row; justify-content: center; gap: 10px; padding: 7px; background: linear-gradient(90deg, rgba(240, 168, 48, 0.05), rgba(240, 168, 48, 0.15), rgba(240, 168, 48, 0.05)); border-color: rgba(240, 168, 48, 0.25); }
 .rs-tile.big b { font-size: 32px; color: var(--amber2); }
 .rs-tile.big .ico { width: 22px; height: 22px; color: var(--amber); margin: 0; }
 .rs-tile.big span { font-size: 13px; margin: 0; }
@@ -561,3 +561,10 @@ kbd { font: 600 11px/1 var(--cond); color: var(--muted); border: 1px solid var(-
 .rs-nbar { height: 5px; margin-top: 5px; background: rgba(255, 255, 255, 0.08); }
 .rs-nbar i { display: block; height: 100%; background: linear-gradient(90deg, #9b6d12, var(--xp)); box-shadow: 0 0 8px rgba(242, 193, 78, 0.5); }
 .rs-nrow.ok .rs-nbar i { background: linear-gradient(90deg, var(--olive), var(--olive2)); }
+.rs-kills .sf-h { margin: 8px 0 5px; }
+.rs-kills .sf-h .ico { width: 14px; height: 14px; color: var(--red); }
+.rs-kchips { display: flex; flex-wrap: wrap; gap: 4px; }
+.rs-kchip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 7px; font-size: 13px; font-weight: 700; background: rgba(216, 84, 58, 0.12); border: 1px solid rgba(216, 84, 58, 0.3); }
+.rs-kchip i { font: 11px/1 var(--head); font-style: normal; color: var(--amber); }
+.rs-kchip small { font-weight: 500; color: var(--muted); }
+.rs-kchip .cls-ico { color: var(--red2); }

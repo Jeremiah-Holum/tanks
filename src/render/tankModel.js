@@ -226,7 +226,7 @@ col = mix(col, uDust, smoothstep(0.6, 0.97, normalize(vONrm).y) * 0.25 * (0.4 + 
 #ifdef CHARRED
 float cn = tkFbm(P*1.6 + 5.0);
 col = mix(vec3(0.026, 0.024, 0.022), vec3(0.10, 0.045, 0.02), smoothstep(0.52, 0.85, cn)*0.85) + col*0.035;
-col = mix(col, vec3(0.16, 0.155, 0.14), smoothstep(0.72, 0.92, n2)*0.35*(1.0 - dirt));
+col = mix(col, vec3(0.13, 0.125, 0.115), smoothstep(0.82, 0.95, n2)*0.25*(1.0 - dirt));
 tRough = 0.93; tMetal = 0.12;
 #endif
 diffuseColor.rgb = col;
@@ -1126,6 +1126,8 @@ function castLoft(gb, planes, H, zc, r, rt, M_ = 36) {
     const p = levels[i].ring[k];
     gb.quad(a, b, c, d, V.norm([p[0], 0.2, p[2] - zc]));
   }
+  const bot = levels[0], bId = gb.v(0, bot.y, zc, 0, -1, 0, 0), bIds = bot.ring.map((p) => gb.v(p[0], p[1], p[2], 0, -1, 0, 0));
+  for (let k = 0; k < M_; k++) gb.tri(bId, bIds[k], bIds[(k + 1) % M_], [0, -1, 0]);
   const top = levels[nL - 1];
   const cId = gb.v(0, top.y, zc, 0, 1, 0, 0);
   const tIds = top.ring.map((p) => gb.v(p[0], p[1], p[2], 0, 1, 0, 0));
@@ -1332,8 +1334,8 @@ function buildGeometry(def, lod, gunIndex) {
   if (D.cast && !lod) castLoft(turGb, D.pc.turret.planes, D.t.H, D.t.zOff || 0, Math.min(D.t.W, D.t.L) * 0.2, D.t.H * 0.3);
   else for (const f of tFaces) {
     const pl = f.plane.plate;
-    if (pl === 'turret.floor' || (D.open && pl === 'turret.open')) continue;
-    turGb.plate(f.verts, f.plane.n, te, tilt, rings);
+    if ((pl === 'turret.floor' && lod) || (D.open && pl === 'turret.open')) continue;
+    turGb.plate(f.verts, f.plane.n, pl === 'turret.floor' ? 0 : te, tilt, rings && pl !== 'turret.floor');
   }
   const gunDef = (def.guns ? def.guns[gunIndex] || def.guns[0] : def.gun) || { cal: 75, len: 3 };
   if (D.open && !lod) openTurret(turGb, tFaces, D, gunDef.cal);

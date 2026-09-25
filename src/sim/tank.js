@@ -62,19 +62,30 @@ export function turretToWorld(t, x, y, z, out = {}, yaw = t.turretYaw) {
   const a = t.armor, c = Math.cos(yaw), s = Math.sin(yaw);
   return hullToWorld(t, a.turretPos[0] + c * x + s * z, a.turretPos[1] + y, a.turretPos[2] - s * x + c * z, out);
 }
+// Centre (turret frame x, z) the gun and mantlet yaw about: the turret ring centre (0, 0) for
+// turrets, the gun pivot for casemates (the gun swings in its embrasure).
+export function gunYawCentre(t) {
+  const p = t.armor.gun.pivot;
+  return t.def.turret.shape === 'casemate' ? [p[0], p[2]] : [0, 0];
+}
+// Gun-frame point (turret frame at yaw 0) → world: rotate about gunYawCentre by turretYaw.
+export function gunToWorld(t, x, y, z, out = {}) {
+  const [cx, cz] = gunYawCentre(t), c = Math.cos(t.turretYaw), s = Math.sin(t.turretYaw);
+  const lx = x - cx, lz = z - cz;
+  return turretToWorld(t, cx + c * lx + s * lz, y, cz - s * lx + c * lz, out, 0);
+}
 
 // Muzzle position and gun direction in world space: { pos, dir } (fresh objects unless out given).
 export function muzzle(t, out = { pos: {}, dir: {} }) {
   const a = t.armor, p = a.gun.pivot, len = t.gunDef.len;
   const cg = Math.cos(t.gunPitch), sg = Math.sin(t.gunPitch), c = Math.cos(t.turretYaw), s = Math.sin(t.turretYaw);
   // gun direction in the turret frame (0, sg, cg), rotated into the hull frame
-  const hx = s * cg, hy = sg, hz = c * cg;
-  hullDirToWorld(t, hx, hy, hz, out.dir);
-  turretToWorld(t, p[0] + 0 * len, p[1] + sg * len, p[2] + cg * len, out.pos);
+  hullDirToWorld(t, s * cg, sg, c * cg, out.dir);
+  gunToWorld(t, p[0], p[1] + sg * len, p[2] + cg * len, out.pos);
   return out;
 }
 // Gun pivot (trunnion) in world space.
-export function gunPivot(t, out = {}) { const p = t.armor.gun.pivot; return turretToWorld(t, p[0], p[1], p[2], out); }
+export function gunPivot(t, out = {}) { const p = t.armor.gun.pivot; return gunToWorld(t, p[0], p[1], p[2], out); }
 // Commander's eye (turret top) in world space: the spotting observer point.
 export function eyePos(t, out = {}) { return turretToWorld(t, 0, t.def.turret.H + 0.15, t.armor.gun.pivot[2] * 0.2, out, 0); }
 
@@ -126,8 +137,9 @@ function defaultAmmo(g) {
 // [{ t, tExit, piece, plane, nx,ny,nz (world entry normal), ly (entry height in the piece frame) }].
 // Pieces in the turret frame use yaw turretYaw unless `fixed` (casemate body).
 const _o = {}, _d = {}, _hits = [];
-export function rayArmor(tank, ox, oy, oz, dx, dy, dz, maxT) {
-  const a = tank.armor;
+// skip: a piece to ignore when it is entered within 10 cm (a ricochet leaving that plate).
+export function rayArmor(tank, ox, oy, oz, dx, dy, dz, maxT, skip = null) {
+  const a = tank.armor, [gcx, gcz] = gunYawCentre(tank);
   worldToHull(tank, ox, oy, oz, _o); worldDirToHull(tank, dx, dy, dz, _d);
   _hits.length = 0;
   const tp = a.turretPos, ty = tank.turretYaw, cT = Math.cos(ty), sT = Math.sin(ty);
@@ -137,14 +149,15 @@ export function rayArmor(tank, ox, oy, oz, dx, dy, dz, maxT) {
     let ox2 = _o.x, oy2 = _o.y, oz2 = _o.z, dx2 = _d.x, dy2 = _d.y, dz2 = _d.z, c = 1, s = 0;
     if (pc.frame === 'turret') {
       ox2 -= tp[0]; oy2 -= tp[1]; oz2 -= tp[2];
-      if (!pc.fixed) { // inverse rotation about y by turretYaw
+      if (!pc.fixed) { // inverse rotation about y by turretYaw (about the pivot for casemate mantlets)
         c = cT; s = sT;
-        const x = ox2, z = oz2; ox2 = c * x - s * z; oz2 = s * x + c * z;
+        const qx = pc.gunYaw ? gcx : 0, qz = pc.gunYaw ? gcz : 0;
+        const x = ox2 - qx, z = oz2 - qz; ox2 = c * x - s * z + qx; oz2 = s * x + c * z + qz;
         const u = dx2, w = dz2; dx2 = c * u - s * w; dz2 = s * u + c * w;
       }
     }
     const h = rayConvex(pc.planes, ox2, oy2, oz2, dx2, dy2, dz2, maxT);
-    if (!h) continue;
+    if (!h || (pc === skip && h.t < 0.1)) continue;
     const n = h.plane.n;
     // piece-frame normal → hull frame (rotate back by +yaw) → world
     let nx = n[0], ny = n[1], nz = n[2];

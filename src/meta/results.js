@@ -30,7 +30,7 @@ export const MEDAL_BY_ID = Object.fromEntries(MEDALS.map((m) => [m.id, m]));
 export { MASTERY_NAMES };
 
 const today = (t = Date.now()) => new Date(t).toISOString().slice(0, 10);
-const gunIndex = (t) => { const i = t.def.guns.indexOf(t.gunDef); return i >= 0 ? i : (t.gun ?? 0); };
+const gunIndex = (t) => { if (t.gunIndex != null) return t.gunIndex; const i = t.def.guns.indexOf(t.gunDef); return i >= 0 ? i : (t.gun ?? 0); };
 
 export function summarize(world, playerTankId, profile, battle = null) {
   const me = world.tanks.find((t) => t.id === playerTankId) || world.tanks.find((t) => t.player);
@@ -77,6 +77,8 @@ export function summarize(world, playerTankId, profile, battle = null) {
     xp: rew.xp, credits: rew.credits, freeXp: rew.xp.free,
     mastery: rew.mastery, masteryName: MASTERY_NAMES[rew.mastery], masteryNew: rew.mastery > prevMastery,
     medals, teams: teamRows, playerTeam: team,
+    kills: enemies.filter((t) => t.killedBy === me.id).map((t) => ({ name: t.name, short: t.def.short || t.def.name, tier: t.def.tier, cls: t.def.cls })),
+    killedBy: me.alive ? null : (() => { const k = world.tanks.find((t) => t.id === me.killedBy); return k ? { name: k.name, short: k.def.short || k.def.name, cause: me.deathCause } : { name: null, cause: me.deathCause }; })(),
     alive: [allies.filter((t) => t.alive).length, enemies.filter((t) => t.alive).length],
   };
 }

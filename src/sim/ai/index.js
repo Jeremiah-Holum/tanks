@@ -4,16 +4,16 @@
 // per-tick driving (path follower, avoidance, unstick) and gunnery (weak spot, lead, patience).
 // Deterministic: randomness comes from a per-bot rng seeded from world.seed and the tank id.
 // The bot only uses what its team has spotted (world.visible[team]); no wallhacks.
-import { aimSolution, predictImpact, DT, makeRng, muzzle } from '../battle.js';
+import { aimSolution, predictImpact, DT, makeRng, penPreview, hullToWorld } from '../battle.js';
 import { heightAt } from '../map/query.js';
 import { teamBrain, planBudget } from './team.js';
 import { plan, Follower } from './path.js';
-import { bestAim, candWorld, lineTo, gunFacing, alphaOf, chooseShell, chanceWith } from './combat.js';
+import { bestAim, candWorld, lineTo, gunFacing, alphaOf, chooseShell, chanceWith, pHit } from './combat.js';
 import { wrap, clamp, hyp, headingTo, shellSlots, snapPassable, TAU } from './util.js';
 
 const CRUISE_LOOK = 11;                    // m, carrot distance (+ speed)
 const ENGAGE_RANGE = { light: 330, medium: 380, heavy: 260, td: 520 };
-const _v = {}, _sol = {}, _mz = { pos: {}, dir: {} };
+const _sol = {};
 
 export function createBrain(world, tank) { return new Brain(world, tank); }
 
@@ -33,7 +33,8 @@ export class Brain {
     this.evalN = Math.round(10 + 20 * p);               // ticks between target evaluations
     this.aimErrBase = 0.08 + 1.5 * p * p;               // m of aim error at ~200 m
     this.patience = 0.3 + 2.4 * s;                      // × gun aim time we are willing to wait
-    this.fireK = 1 + 3.2 * p ** 1.5;                    // acceptable circle / aim-area ratio
+    this.fireQ = 0.3 + 0.55 * s;                        // fire at this fraction of the full-aim hit chance
+    this.errFloor = 0.25 + 0.5 * p;                     // aim error left after tracking a target
     this.leadK = 0.25 + 0.75 * s;                       // fraction of the true lead applied
     this.goldBudget = s > 0.6 ? Math.round((s - 0.6) * 25) : 0;
     this.goldUsed = 0;
@@ -49,13 +50,15 @@ export class Brain {
     this.seen = new Map(); this.enemies = [];
     this.target = null; this.targetLos = false; this.targetD = 0; this.aimPt = null; this.aimAt = -9;
     this.aimSince = 0; this.laidSince = -1; this.err = { x: 0, y: 0, z: 0 }; this.errAt = -9;
-    this.nextShot = 0; this.checkAt = 0;
+    this.nextShot = 0; this.checkAt = 0; this.curErr = 0;
     this.lastHitT = -99; this.hitDir = null; this.recentDmg = 0;
     this.stuckT = 0; this.reverseT = 0; this.revSteer = 0; this.unsticks = []; this.jitter = null;
     this.progX = tank.pos.x; this.progZ = tank.pos.z; this.progT = 0;
-    this.peek = 0; this.peekT = 0; this.peekDur = 0;
+    this.peek = 0; this.peekT = 0; this.peekDur = 0; this.peekWhy = ''; this.duckUntil = -1;
     this.scoutPhase = 0; this.scoutAt = -1; this.relocAt = -99; this.flexAt = 40 + this.rng() * 30;
-    this.brawlPushAt = 70 + this.rng() * 50 + p * 40;
+    this.brawlPushAt = 70 + this.rng() * 50;
+    this.yolo = this.rng() < 0.45 - s;                  // potatoes that charge alone
+    this.yoloAt = 50 + this.rng() * 80;
     this.retreated = false; this.defending = false;
     this.useAt = {}; this.carrot = { x: 0, z: 0, remain: 0 };
     this.stats = { unsticks: 0, plans: 0 };
@@ -150,6 +153,12 @@ export class Brain {
     const pos = t.pos;
     let goal = null, mode = 'post', hold = false;
     const tgt = this.targetLos ? this.target : null;
+    // over-exposed (skilled bots): several guns on us, or losing hp fast → duck out for a bit
+    if (s > 0.45 && t.spotted && now > this.duckUntil + 4 && this.peek === 0) {
+      let aimed = 0;
+      for (const x of this.enemies) if (x.los && x.d < 450 && gunFacing(x.e, pos.x, pos.z) > 0.97) aimed++;
+      if (aimed >= 3 || (aimed >= 2 && hpF < 0.7) || this.recentDmg > t.maxHp * 0.25) { this.duckUntil = now + 2.5 + 3 * this.rng(); this.recentDmg *= 0.5; }
+    }
     const range = ENGAGE_RANGE[this.cls];
     const g = this.post ? this.post.geo : T.info.brawlLane;
     const prog = T.prog(pos.x, pos.z, g);
@@ -186,7 +195,8 @@ export class Brain {
       this.arrived = false; goal = this.post; mode = 'retreat';
     } else {
       const pushing = T.push >= 2 || (T.push === 1 && (this.cls === 'heavy' || this.cls === 'medium'))
-        || (this.cls === 'heavy' && now > this.brawlPushAt && T.laneA[g] >= T.laneE[g] && !this.retreated);
+        || (this.cls === 'heavy' && now > this.brawlPushAt && T.laneA[g] >= T.laneE[g] && !this.retreated)
+        || (this.yolo && now > this.yoloAt && this.cls !== 'td');
       if (pushing && !(this.retreated && T.push < 2)) {
         mode = 'push';
         const hunt = T.nearestKnown(pos.x, pos.z, 30, now, 420);
@@ -323,14 +333,23 @@ export class Brain {
     const t = this.t, c = this.c, now = world.time;
     this.wantMove = false; this.stuckT = 0; this.progT = 0; this.progX = t.pos.x; this.progZ = t.pos.z;
     c.throttle = 0; c.steer = 0; c.brake = true;
-    // peek-a-boo on long reloads: back off behind cover after the shot, come back when nearly loaded
-    if (this.peeker && this.hold && this.target) {
+    // peek-a-boo: back off behind cover after a shot on a long reload (come back when nearly
+    // loaded), or duck out when over-exposed (come back after the duck timer)
+    if (this.peek || (this.hold && this.target)) {
       const R = t.gunDef.reload;
-      if (this.peek === 0 && t.reload > R * 0.6 && now - t.lastShot < 0.6 && t.spotted) { this.peek = 1; this.peekT = 0; this.peekDur = 1.2 + this.rng() * 0.6; }
-      if (this.peek === 1) { this.peekT += DT; c.throttle = -1; c.brake = false; if (this.peekT >= this.peekDur) { this.peek = 2; } return; }
-      if (this.peek === 2) { if (t.reload < this.peekDur + 0.5) { this.peek = 3; this.peekT = 0; } return; }
+      if (this.peek === 0) {
+        if (this.peeker && t.reload > R * 0.6 && now - t.lastShot < 0.6 && t.spotted) { this.peek = 1; this.peekWhy = 'reload'; }
+        else if (now < this.duckUntil) { this.peek = 1; this.peekWhy = 'duck'; }
+        if (this.peek) { this.peekT = 0; this.peekDur = 1.3 + this.rng() * 0.8; }
+      }
+      if (this.peek === 1) { this.peekT += DT; c.throttle = -1; c.brake = false; if (this.peekT >= this.peekDur) this.peek = 2; return; }
+      if (this.peek === 2) {
+        const back = this.peekWhy === 'reload' ? t.reload < this.peekDur + 0.5 : now >= this.duckUntil && t.reload <= this.peekDur;
+        if (back) { this.peek = 3; this.peekT = 0; }
+        return;
+      }
       if (this.peek === 3) { this.peekT += DT; c.throttle = 1; c.brake = false; if (this.peekT >= this.peekDur * 0.9) this.peek = 0; return; }
-    } else this.peek = 0;
+    }
     // facing
     let want = null;
     const tg = this.target;
@@ -370,7 +389,7 @@ export class Brain {
       p.z += Math.cos(tg.yaw) * tg.speed * tof * this.leadK;
       // personal aim error: shrinks as the bot tracks the same target
       if (now - this.errAt > 2.5) this.rollErr(now);
-      const e = this.aimErrBase * clamp(d / 200, 0.4, 2) * (0.35 + 0.65 * Math.exp(-(now - this.aimSince) / 1.8));
+      const e = this.curErr = this.aimErrBase * clamp(d / 200, 0.4, 2) * (this.errFloor + (1 - this.errFloor) * Math.exp(-(now - this.aimSince) / 1.8));
       p.x += this.err.x * e; p.y += this.err.y * e; p.z += this.err.z * e;
       c.aim = p; c.lockGun = false;
       this.maybeFire(world, tg, p, d);
@@ -404,13 +423,15 @@ export class Brain {
     const laid = angErr * d < 0.35 + 0.4 * Rd;
     if (!laid) { this.laidSince = -1; return; }
     if (this.laidSince < 0) this.laidSince = now;
-    const size = this.aimPt.cand.size * (1 + (1 - s) * 1.2);
-    const aimedFull = t.disp <= t.dispTarget * 1.08;
+    // Fire when the hit chance on the chosen area is close enough to what full aim would give
+    // (skilled bots hold out for more), when patience runs out, or when the target is leaving.
+    const size = s < 0.3 ? 1.3 : this.aimPt.cand.size;
+    const pNow = pHit(size, Rd, this.curErr), pFull = pHit(size, t.dispTarget * d / 100, this.curErr);
     const waited = now - this.laidSince >= this.patience * t.gunDef.aim;
     // leaving: the team is about to lose sight of it (last sighting ageing), or it's moving fast
     const leaving = now - tg.lastSeen[t.team] > 1.4 || (Math.abs(tg.speed) > 5 && s > 0.4);
-    const good = Rd <= size * this.fireK;
-    if (!(good || aimedFull || waited || (leaving && Rd <= size * this.fireK * 2.5))) return;
+    const q = pNow / Math.max(1e-3, pFull);
+    if (!(q >= this.fireQ || waited || (leaving && q >= this.fireQ * 0.5))) return;
     // don't shoot friends or into a wall
     if (now < this.checkAt) return;
     this.checkAt = now + 0.08;
@@ -450,7 +471,6 @@ export class Brain {
 }
 
 // Pen chance at the hull centre (cheap target-scoring estimate).
-import { penPreview, hullToWorld } from '../battle.js';
 const _qp = {};
 function quickPen(world, t, e) {
   const h = e.def.hull;

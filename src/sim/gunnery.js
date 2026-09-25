@@ -1,5 +1,5 @@
 // Turret and gun laying, dispersion, firing, and the aim helpers the HUD and AI use.
-import { muzzle, gunPivot, worldDirToHull, hullDirToWorld, updateRot } from './tank.js';
+import { muzzle, gunPivot, worldDirToHull, updateRot } from './tank.js';
 import { crewOk, previewPlate } from './damage.js';
 import { castShell } from './ballistics.js';
 
@@ -69,13 +69,14 @@ export function updateGun(world, t, c, dt) {
   const g = t.gunDef, p = perf(t);
   t._autoSteer = 0;
   let wantYaw = t.turretYaw, wantPitch = t.gunPitch;
-  if (c.aim && !c.lockGun) { aimSolution(world, t, c.aim, _sol); wantYaw = _sol.yaw; wantPitch = _sol.pitch; }
+  const aim = c.aim && Number.isFinite(c.aim.x) && Number.isFinite(c.aim.y) && Number.isFinite(c.aim.z) ? c.aim : null; // ignore bad aims
+  if (aim && !c.lockGun) { aimSolution(world, t, aim, _sol); wantYaw = _sol.yaw; wantPitch = _sol.pitch; }
   const arc = gunArc(t);
   let dyaw;
   if (arc) {
     // Casemate: clamp to the arc; outside it the hull turns for the gun (WoT TD behaviour).
     const w = wrap(wantYaw);
-    if (c.aim && !c.lockGun && (w < arc[0] || w > arc[1])) t._autoSteer = w > 0 ? -1 : 1;
+    if (aim && !c.lockGun && (w < arc[0] || w > arc[1])) t._autoSteer = w > 0 ? -1 : 1;
     dyaw = Math.min(arc[1], Math.max(arc[0], w)) - t.turretYaw;
   } else dyaw = wrap(wantYaw - t.turretYaw);
   const trMax = t.def.turretTraverse * DEG * p.traverse * dt;
@@ -89,7 +90,7 @@ export function updateGun(world, t, c, dt) {
   // Dispersion (docs: Aiming). Rates in km/h and deg/s.
   const sp = Math.abs(t.speed) * 3.6, hr = Math.abs(t.yawRate) / DEG, tr = Math.abs(t.turretRate);
   t.dispTarget = g.disp * p.disp * Math.sqrt(1 + (g.dMove * sp / 10) ** 2 + (g.dHull * hr / 10) ** 2 + (g.dTurret * tr / 10) ** 2);
-  const tau = g.aim * p.aim / 3;
+  const tau = g.aim * p.aim; // WoT aim time: the circle shrinks by a factor e every `aim` seconds
   t.disp = t.dispTarget + (t.disp - t.dispTarget) * Math.exp(-dt / tau);
   // Shell selection: switching away from a loaded shell reloads the gun.
   if (c.shell != null && c.shell !== t.shell && g.shells[c.shell]) {
@@ -104,7 +105,7 @@ export function updateGun(world, t, c, dt) {
 }
 
 // Fire the gun: a shell leaves the muzzle, deviated inside the dispersion circle.
-const _m = { pos: {}, dir: {} };
+const _m = { pos: {}, dir: {} }, _pv = {};
 export function fire(world, t, p = perf(t)) {
   const g = t.gunDef, sh = curShell(t), rng = world.rng;
   muzzle(t, _m);
@@ -121,14 +122,17 @@ export function fire(world, t, p = perf(t)) {
   let dx = d.x + ux * cp + wx * spp, dy = d.y + uy * cp + wy * spp, dz = d.z + uz * cp + wz * spp;
   const dl = Math.hypot(dx, dy, dz); dx /= dl; dy /= dl; dz /= dl;
   const v = sh.v * SHELL_SPEED;
+  // The shell is traced from the gun pivot, so a barrel poking into an enemy, a wall or the
+  // ground hits it (dist starts negative: the firing tank is ignored until 6 m past the muzzle).
+  gunPivot(t, _pv);
   const s = {
     id: world.nextShell++, owner: t.id, team: t.team, type: sh.type, gold: !!sh.gold,
-    pos: { x: _m.pos.x, y: _m.pos.y, z: _m.pos.z }, vel: { x: dx * v, y: dy * v, z: dz * v },
-    cal: g.cal, pen: sh.pen, dmg: sh.dmg, splash: sh.splash || 0, alive: true, tracer: true, dist: 0, ricochets: 0, ignore: 0,
+    pos: { x: _pv.x, y: _pv.y, z: _pv.z }, vel: { x: dx * v, y: dy * v, z: dz * v },
+    cal: g.cal, pen: sh.pen, dmg: sh.dmg, splash: sh.splash || 0, alive: true, tracer: true, dist: -g.len, ricochets: 0, skipPiece: null,
   };
   world.shells.push(s);
   t.ammo[t.shell]--; t.stats.shots++; t.lastShot = world.time;
-  world.events.push({ type: 'shot', tank: t.id, shell: s.id, pos: { ...s.pos }, dir: { x: dx, y: dy, z: dz }, cal: g.cal, shellType: sh.type });
+  world.events.push({ type: 'shot', tank: t.id, shell: s.id, pos: { x: _m.pos.x, y: _m.pos.y, z: _m.pos.z }, dir: { x: dx, y: dy, z: dz }, cal: g.cal, shellType: sh.type });
   t.disp = Math.min(g.disp * 8, Math.max(t.disp, t.dispTarget) * g.dShot);
   if (g.clip) {
     t.clipLeft--;
@@ -145,9 +149,9 @@ function gauss(rng) { let u = 0; while (u === 0) u = rng(); return Math.sqrt(-2 
 // predictImpact(world, tank) → { x, y, z, dist, targetId|null }: where the gun points now,
 // with drop, no dispersion. Casts the trajectory in 1/30 s segments (cheap enough per frame).
 export function predictImpact(world, t) {
-  muzzle(t, _m);
+  muzzle(t, _m); gunPivot(t, _pv); // traced from the pivot, like real shots
   const v = curShell(t).v * SHELL_SPEED;
-  return castShell(world, _m.pos, { x: _m.dir.x * v, y: _m.dir.y * v, z: _m.dir.z * v }, t.id);
+  return castShell(world, _pv, { x: _m.dir.x * v, y: _m.dir.y * v, z: _m.dir.z * v }, t.id);
 }
 
 // penPreview(world, tank, point, targetId) → { plate, eff, chance, angle, ricochet, pen } | null.

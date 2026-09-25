@@ -6,6 +6,7 @@ import { TANKS, NATIONS, TREE, STARTERS } from '../src/data/tanks.js';
 import { buildArmor, solidFaces } from '../src/sim/armor.js';
 import { createBattle, stepBattle, DT, aimSolution, predictImpact, penPreview, muzzle, visibleTo, tankMatrix, hullToWorld, turretToWorld } from '../src/sim/battle.js';
 import { fire } from '../src/sim/gunnery.js';
+import { rayArmor, gunPivot } from '../src/sim/tank.js';
 import { settle } from '../src/sim/move.js';
 import { startFire, useConsumable, plateEff } from '../src/sim/damage.js';
 import { testMap, simpleBot } from '../src/sim/testmap.js';
@@ -156,7 +157,7 @@ console.log('Armour');
   {
     const w4 = battle(['usa_m4'], ['ger_tiger', 'ger_pz4h']); const [a, t1, t2b] = w4.tanks;
     place(w4, a, 400, 500, 90); place(w4, t1, 500, 500, 105); // glancing on the Tiger's left side
-    let ev = shoot(w4, a, onTank(t1, 1.7, 1.7, 1.5), 0, 0.2);
+    let ev = shoot(w4, a, onTank(t1, 1.7, 1.7, 1.5), 0, 0.3);
     const r = hits(ev, t1.id)[0];
     check('Ricochet off a 75°-ish side plate', r && r.result === 'ricochet', r && `${r.plate} ${r.angle}°`);
     const sh = w4.shells[0];
@@ -271,7 +272,10 @@ console.log('Ballistics and aiming');
   const t0 = c.disp;
   run(w2, g.aim, new Map([[c.id, { aim: target }]]));
   check('dispersion blooms while moving', moving > g.disp * 2, `${f1(moving)} vs ${g.disp}`);
-  check('dispersion converges ~95% in aim time', (c.disp - c.dispTarget) <= (t0 - c.dispTarget) * 0.07 + 1e-3 && c.dispTarget < g.disp * 1.05, `${c.disp.toFixed(3)} → ${c.dispTarget.toFixed(3)}`);
+  const r1 = (c.disp - c.dispTarget) / (t0 - c.dispTarget);
+  run(w2, 2 * g.aim, new Map([[c.id, { aim: target }]]));
+  const r3 = (c.disp - c.dispTarget) / (t0 - c.dispTarget);
+  check('aim time is WoT τ: e⁻¹ left after aim, ~5% after 3×aim', Math.abs(r1 - Math.exp(-1)) < 0.03 && r3 < 0.06 && c.dispTarget < g.disp * 1.05, `${(r1 * 100).toFixed(0)}% / ${(r3 * 100).toFixed(1)}%`);
   // shots land inside the circle, with a gaussian-ish spread
   const w3 = battle(['usa_m4'], ['ger_tiger']); const [e] = w3.tanks;
   place(w3, e, 500, 100, 0);
@@ -424,6 +428,90 @@ console.log('Determinism');
   check('same seed → identical battle', s1 === s2);
   check('different seed → different battle', s1 !== s3);
   check('scripted bots actually fought', JSON.parse(s1).some((r) => r[3] > 0 && r[4] > 0));
+}
+
+// ------------------------------------------------------------------ review regressions
+console.log('Review regressions');
+{
+  // 1. the plate behind a track is found even when the track is entered at the end of a step
+  const w = battle(['ussr_is'], ['ger_tiger']); const [is, tg] = w.tanks;
+  is.gunDef = TANKS.ussr_is.guns[1]; is.ammo = [400, 5, 5];
+  place(w, tg, 500, 500, 0);
+  const trackX = -(tg.def.hull.W / 2 + tg.def.hull.track.w / 2);
+  let stopped = 0;
+  for (let i = 0; i < 60; i++) {
+    place(w, is, 380 - i * 0.37, 500, 90); tg.hp = tg.maxHp; tg.alive = true;
+    for (const m of Object.values(tg.modules)) { m.hp = m.max; m.state = 'ok'; }
+    const e = hits(shoot(w, is, onTank(tg, trackX, 0.6, -0.5 + (i % 5) * 0.2)), tg.id)[0];
+    if (!e || e.result === 'track') stopped++;
+  }
+  check('122 mm through the Tiger track never stops at the track (any step phase)', stopped === 0, `${stopped}/60 stopped`);
+  // 2. point blank: the muzzle inside an enemy still hits it (and predictImpact sees it)
+  const w2 = battle(['ger_tiger'], ['usa_m4']); const [a2, b2] = w2.tanks;
+  place(w2, a2, 500, 300, 0); a2.gunPitch = 0; a2.turretYaw = 0;
+  const m = muzzle(a2); place(w2, b2, m.pos.x, m.pos.z - 0.8, 90);
+  const pi = predictImpact(w2, a2);
+  a2.shell = 0; a2.disp = 0; a2.reload = 0; fire(w2, a2);
+  const ev2 = run(w2, 0.5);
+  check('point-blank: muzzle inside the enemy hits it', hits(ev2, b2.id).length === 1 && pi.targetId === b2.id, hits(ev2, b2.id).map((e) => e.result).join(',') + ' predict ' + pi.targetId);
+  // 3. ammo rack: hit before kill, full remaining hp credited
+  const w3 = battle(['ussr_is'], ['usa_m4']); const [is3, m43] = w3.tanks;
+  is3.gunDef = TANKS.ussr_is.guns[1]; is3.ammo = [20, 5, 5];
+  place(w3, is3, 380, 500, 90); place(w3, m43, 500, 500, 0);
+  m43.modules.ammoRack.hp = 1; m43.hp = 400;
+  const rack = buildArmor(m43.def).modules.find((q) => q.name === 'ammoRack');
+  const ev3 = shoot(w3, is3, onTank(m43, 1.0, rack.c[1], rack.c[2])).filter((e) => e.type === 'hit' || e.type === 'kill');
+  check('ammo rack: hit event first, then kill; 400 hp credited both ways', ev3.length === 2 && ev3[0].type === 'hit' && ev3[0].dmg === 400 && ev3[1].cause === 'ammorack' && is3.stats.dmg === 400 && m43.stats.received === 400, ev3.map((e) => e.type + (e.dmg ?? '') + (e.cause ?? '')).join(' '));
+  // 4. non-finite aim is ignored
+  const w4 = battle(['usa_m4'], ['usa_m4']); const [a4] = w4.tanks;
+  run(w4, 0.5, new Map([[a4.id, { aim: { x: 500, z: 500 } }]]));
+  run(w4, 1, new Map([[a4.id, { aim: { x: 500, y: 12, z: 700 } }]]));
+  check('an aim with a missing coordinate is ignored (no NaN)', Number.isFinite(a4.turretYaw) && Number.isFinite(a4.gunPitch) && Number.isFinite(predictImpact(w4, a4).x));
+  // 5. casemate guns swing about their pivot, not the ring centre
+  const w5 = battle(['ussr_su152'], ['usa_m4']); const [su] = w5.tanks; place(w5, su, 500, 500, 0);
+  su.turretYaw = 0; su.gunPitch = 0; const p0 = gunPivot(su, {});
+  su.turretYaw = 12 * DEG; const p1 = gunPivot(su, {}), m1 = muzzle(su);
+  const armS = buildArmor(su.def);
+  const mant = rayArmor(su, m1.pos.x - m1.dir.x * (su.gunDef.len + 0.5), m1.pos.y - m1.dir.y * (su.gunDef.len + 0.5), m1.pos.z - m1.dir.z * (su.gunDef.len + 0.5), -m1.dir.x, -m1.dir.y, -m1.dir.z, 0.2);
+  check('casemate: pivot fixed as the gun traverses, muzzle = pivot + len·dir', Math.hypot(p1.x - p0.x, p1.z - p0.z) < 1e-9 && Math.abs(Math.hypot(m1.pos.x - p1.x, m1.pos.y - p1.y, m1.pos.z - p1.z) - su.gunDef.len) < 1e-6 && !!armS);
+  // 6. holding on slopes
+  const ramp = (deg) => { const mp = testMap(); for (let j = 0; j < mp.res; j++) for (let i = 0; i < mp.res; i++) mp.heights[j * mp.res + i] = 10 + Math.max(0, j * mp.cell - 300) * Math.tan(deg * DEG); return mp; };
+  const drift = (deg, ctl) => {
+    const w6 = createBattle({ map: ramp(deg), seed: 1, teams: [[{ def: TANKS.usa_m4 }], [{ def: TANKS.usa_m4 }]] });
+    const [t6] = w6.tanks; place(w6, t6, 500, 400, 0); place(w6, w6.tanks[1], 100, 100, 0);
+    run(w6, 1); const z0 = t6.pos.z; run(w6, 5, new Map([[t6.id, ctl]])); return t6.pos.z - z0;
+  };
+  const d20 = drift(20, { throttle: 0 }), b25 = drift(25, { brake: true }), d35 = drift(35, { brake: true });
+  check('stopped tanks hold on 20–25° slopes (idle and brake), slide beyond 30°', Math.abs(d20) < 0.05 && Math.abs(b25) < 0.05 && d35 < -1, `${d20.toFixed(2)} ${b25.toFixed(2)} ${d35.toFixed(1)} m`);
+  // 7. capture reset event; no reset for a capper damaged after leaving
+  const w7 = battle(['usa_m4', 'usa_m4'], ['ger_tiger']); const [c1, c2, d7] = w7.tanks;
+  const base = w7.bases.find((x) => x.team === 1);
+  place(w7, c1, base.x, base.z, 0); place(w7, c2, base.x + 5, base.z, 0); place(w7, d7, base.x, base.z - 250, 0);
+  run(w7, 10);
+  const ev7 = shoot(w7, d7, onTank(c1, 0, 1.2, 0), 0, 1.5);
+  check('damaging a capper emits a capture event with the reduced points', ev7.some((e) => e.type === 'capture' && e.team === 1 && e.points < 15));
+  place(w7, c2, base.x + base.r + 20, base.z, 0); run(w7, 0.1);
+  const before = base.points;
+  shoot(w7, d7, onTank(c2, 0, 1.2, 0), 0, 1.5);
+  check('damage after leaving the circle does not reset the capture', base.points >= before - 1e-6, `${f1(before)} → ${f1(base.points)}`);
+  // 8. ricochets can re-hit other plates of the same tank; blocked counts ricochets and tracks
+  const w8 = battle(['usa_m4'], ['ger_tiger']); const [a8, t8] = w8.tanks;
+  place(w8, a8, 400, 500, 90); place(w8, t8, 500, 500, 105);
+  const hs = rayArmor(t8, 400, t8.pos.y + 1.7, 500, 1, 0, 0, 300).map((h) => h);
+  const first = hs[0].piece, again = rayArmor(t8, 400, t8.pos.y + 1.7, 500, 1, 0, 0, 300, first);
+  check('ricochet skip ignores only the plate just left (other pieces of that tank still hit)', again.length > 0 && again.every((h) => h.piece !== first || h.t >= 0.1));
+  const bl0 = t8.stats.blocked;
+  const e8 = hits(shoot(w8, a8, onTank(t8, 1.7, 1.7, 1.5), 0, 0.3), t8.id);
+  check('ricochets count toward blocked damage', e8[0] && e8[0].result === 'ricochet' && t8.stats.blocked - bl0 >= a8.gunDef.shells[0].dmg, f1(t8.stats.blocked - bl0));
+  // 9. first spotter keeps the credit while the target stays spotted
+  const w9 = battle(['usa_m4', 'usa_m4'], ['ger_pz4h']); const [o1, o2, tt9] = w9.tanks;
+  place(w9, o1, 500, 300, 0); place(w9, o2, 900, 900, 0); place(w9, tt9, 500, 520, 180);
+  run(w9, 1.2);
+  place(w9, o2, 520, 320, 0); run(w9, 3);
+  check('spottedBy keeps the first spotter', tt9.spottedBy[0] === o1.id, tt9.spottedBy[0]);
+  // 11. view range by class
+  const v = (c) => Object.values(TANKS).find((d) => d.tier === 5 && d.cls === c).view;
+  check('view: light > medium > heavy > TD at the same tier (320+12·tier + 40/20/10/0)', v('light') === 400 && v('medium') === 380 && v('heavy') === 370 && v('td') === 360, ['light', 'medium', 'heavy', 'td'].map(v).join(' '));
 }
 
 // ------------------------------------------------------------------ real maps

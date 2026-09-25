@@ -61,8 +61,9 @@ export function previewPlate(tank, target, o, d, dist) {
 // ------------------------------------------------------------------ shell vs tank
 // The shell s (world segment o + d·t) hits `tank`. Resolves the armour and applies damage.
 // Returns null when the ray misses the tank, else { t, stop, reflect: {x,y,z,nx,ny,nz}|null }.
-export function shellHitsTank(world, s, tank, ox, oy, oz, dx, dy, dz, maxT) {
-  const hits = rayArmor(tank, ox, oy, oz, dx, dy, dz, maxT);
+// Hit events are pushed before the damage is dealt, so a `kill` always follows its `hit`.
+export function shellHitsTank(world, s, tank, ox, oy, oz, dx, dy, dz, maxT, skipPiece = null) {
+  const hits = rayArmor(tank, ox, oy, oz, dx, dy, dz, maxT, skipPiece);
   if (!hits.length) return null;
   const h0 = hits[0], t0 = h0.t;
   const at = (h) => ({ x: ox + dx * h.t, y: oy + dy * h.t, z: oz + dz * h.t });
@@ -89,8 +90,8 @@ export function shellHitsTank(world, s, tank, ox, oy, oz, dx, dy, dz, maxT) {
       const side = tank.def.hull.side.t;
       const dmg = Math.max(0, Math.round(s.dmg / 2 * (0.75 + 0.5 * rng()) - (sp.eff + side) * 1.1));
       Object.assign(ev, { pos: at(sp.hit), normal: nrm(sp.hit), result: 'track', plate: 'track', eff: Math.round(sp.eff), angle: Math.round(sp.angle) });
-      if (dmg > 0) dealDamage(world, tank, dmg, s.owner, 'shot', ev);
       world.events.push(ev);
+      if (dmg > 0) dealDamage(world, tank, dmg, s.owner, 'shot', ev); else tank.stats.blocked += s.dmg;
       splash(world, s, ev.pos, tank.id);
       return { t: sp.hit.t, stop: true, reflect: null };
     }
@@ -98,6 +99,7 @@ export function shellHitsTank(world, s, tank, ox, oy, oz, dx, dy, dz, maxT) {
     if (pen <= 0 || !r.hit) {
       Object.assign(ev, { pos: at(sp.hit), normal: nrm(sp.hit), result: 'track', plate: 'track', eff: Math.round(sp.eff), angle: Math.round(sp.angle) });
       world.events.push(ev);
+      tank.stats.blocked += s.dmg;
       return { t: sp.hit.t, stop: true, reflect: null };
     }
   }
@@ -106,8 +108,9 @@ export function shellHitsTank(world, s, tank, ox, oy, oz, dx, dy, dz, maxT) {
   if (r.ricochet) {
     ev.result = 'ricochet';
     world.events.push(ev);
+    tank.stats.blocked += s.dmg;
     const dn = dx * h.nx + dy * h.ny + dz * h.nz;
-    return { t: h.t, stop: false, reflect: { x: pos.x + h.nx * 0.05, y: pos.y + h.ny * 0.05, z: pos.z + h.nz * 0.05, dx: dx - 2 * dn * h.nx, dy: dy - 2 * dn * h.ny, dz: dz - 2 * dn * h.nz } };
+    return { t: h.t, stop: false, reflect: { x: pos.x + h.nx * 0.05, y: pos.y + h.ny * 0.05, z: pos.z + h.nz * 0.05, dx: dx - 2 * dn * h.nx, dy: dy - 2 * dn * h.ny, dz: dz - 2 * dn * h.nz, piece: h.piece } };
   }
   if (pen >= r.eff) {
     // Penetration: damage, then the shell travels on ~10 calibres through modules and crew.
@@ -124,11 +127,12 @@ export function shellHitsTank(world, s, tank, ox, oy, oz, dx, dy, dz, maxT) {
       const md = dmg * (0.75 + 0.5 * rng()) * Math.pow(0.8, k++);
       if (box.crew) { if (tank.crew[box.name]?.alive && rng() < Math.min(0.9, Math.max(0.3, md / (1.3 * D)))) killCrew(world, tank, box.name, crew); }
       else damageModule(world, tank, box.name, md, s.owner, crits);
-      if (!tank.alive) break;
+      if (tank._rackBy) break;
     }
-    if (tank.alive) dealDamage(world, tank, dmg, s.owner, 'shot', ev);
-    else ev.dmg = 0;
     world.events.push(ev);
+    // An ammo rack pop kills: the shooter is credited with all the hp that was left.
+    if (tank._rackBy) { tank._rackBy = 0; dealDamage(world, tank, tank.hp, s.owner, 'ammorack', ev); }
+    else dealDamage(world, tank, dmg, s.owner, 'shot', ev);
     if (s.type === 'HE') splash(world, s, pos, tank.id);
     return { t: h.t, stop: true, reflect: null };
   }
@@ -136,9 +140,8 @@ export function shellHitsTank(world, s, tank, ox, oy, oz, dx, dy, dz, maxT) {
   if (s.type === 'HE') {
     const dmg = Math.max(0, Math.round(s.dmg / 2 * (0.75 + 0.5 * rng()) - r.eff * 1.1));
     ev.result = dmg > 0 ? 'splash' : 'nopen';
-    if (dmg > 0) dealDamage(world, tank, dmg, s.owner, 'shot', ev);
-    if (!dmg) tank.stats.blocked += s.dmg / 2;
     world.events.push(ev);
+    if (dmg > 0) dealDamage(world, tank, dmg, s.owner, 'shot', ev); else tank.stats.blocked += s.dmg / 2;
     splash(world, s, pos, tank.id);
   } else {
     tank.stats.blocked += s.dmg;
@@ -163,8 +166,8 @@ export function splash(world, s, pos, excludeId) {
     const dmg = Math.max(0, Math.round(s.dmg / 2 * (1 - d / R) - arm * 1.1));
     if (dmg <= 0) continue;
     const ev = { type: 'hit', shooter: s.owner, target: t.id, shell: s.id, shellType: s.type, pos: { ...pos }, normal: { x: 0, y: 1, z: 0 }, result: 'splash', dmg: 0, plate: open ? 'open' : 'splash', eff: arm, pen: 0, angle: 0, crits: [], crew: [] };
-    dealDamage(world, t, dmg, s.owner, 'splash', ev);
     world.events.push(ev);
+    dealDamage(world, t, dmg, s.owner, 'splash', ev);
   }
 }
 
@@ -196,13 +199,15 @@ export function kill(world, tank, byId, cause) {
   if (tank.fire) { tank.fire = null; world.events.push({ type: 'fire', tank: tank.id, on: false }); }
 }
 
-// Any damage to a capper removes the points it contributed (docs: "capture and reset").
+// Any damage to a capper (a tank inside the circle now) removes the points it contributed
+// (docs: "capture and reset"), with a capture event carrying the new points.
 function resetCapture(world, tank, by) {
   for (const b of world.bases) {
     const c = b.contrib[tank.id];
-    if (!c) continue;
+    if (!c || !b.cappers.includes(tank.id)) continue;
     b.points = Math.max(0, b.points - c); b.contrib[tank.id] = 0;
     if (by && by.team === b.team) by.stats.defended += Math.round(c);
+    world.events.push({ type: 'capture', team: b.team, by: 1 - b.team, points: Math.floor(b.points), reset: tank.id });
   }
 }
 
@@ -224,7 +229,7 @@ export function damageModule(world, tank, name, amount, byId, crits) {
   if (crits) crits.push(name + ':' + state);
   setModuleState(world, tank, name, state);
   if (state === 'destroyed') m.t = REPAIR_T[name] || 10;
-  if (name === 'ammoRack' && state === 'destroyed') { kill(world, tank, byId, 'ammorack'); return; }
+  if (name === 'ammoRack' && state === 'destroyed') { tank._rackBy = byId || -1; return; } // the shell resolver kills (after its hit event)
   if ((name === 'trackL' || name === 'trackR') && state === 'destroyed') tank.trackedBy = byId || 0;
   const fireP = name === 'engine' ? (state === 'destroyed' ? 0.45 : 0.15) : name === 'fuel' ? (state === 'destroyed' ? 0.5 : 0.25) : 0;
   if (fireP && rng() < fireP) startFire(world, tank, byId);

@@ -312,17 +312,17 @@ export class FxRenderer {
       this.blast(t.pos, d, cal, this._ground(t.pos.x, t.pos.z));
       if (t.def && t.gunDef?.muzzleBrake !== undefined ? t.gunDef.muzzleBrake : false) this.brakeJets(p, d, cal);
     }
-    this._flash(p, 400 * s * s, 0.08);
+    this._flash(p, 250 * s * s, 0.07);
   }
   // Muzzle: flash core, forward flame tongues, smoke ring and lingering smoke.
   muzzle(p, d, cal = 75) {
     const s = Math.sqrt(cal / 75), A = this.add, B = this.alpha;
     const ox = p.x + d.x * 0.3 * s, oy = p.y + d.y * 0.3 * s, oz = p.z + d.z * 0.3 * s;
-    A.spawn({ x: ox, y: oy, z: oz, life: 0.07, s0: 2.2 * s, s1: 2.8 * s, frame: T.FLASH, r: 6, g: 3.6, b: 1.6, a: 1, drag: 0, fadeIn: 0, curve: 1.5 });
-    A.spawn({ x: ox + d.x, y: oy + d.y, z: oz + d.z, life: 0.1, s0: 1.4 * s, s1: 2.4 * s, frame: T.GLOW, r: 4, g: 2, b: 0.7, a: 1, drag: 0, fadeIn: 0 });
+    A.spawn({ x: ox, y: oy, z: oz, life: 0.06, s0: 1.3 * s, s1: 1.7 * s, frame: T.FLASH, r: 3, g: 1.9, b: 0.8, a: 1, drag: 0, fadeIn: 0, curve: 1.5 });
+    A.spawn({ x: ox + d.x * 0.8 * s, y: oy + d.y * 0.8 * s, z: oz + d.z * 0.8 * s, life: 0.08, s0: 1.0 * s, s1: 1.6 * s, frame: T.FLAME, r: 2.6, g: 1.2, b: 0.35, a: 1, drag: 0, fadeIn: 0 });
     for (let k = 0; k < 5; k++) {
-      cone(d.x, d.y, d.z, 0.18, _c); const v = (18 + rnd() * 30) * s;
-      A.spawn({ x: ox, y: oy, z: oz, vx: _c.x * v, vy: _c.y * v, vz: _c.z * v, life: 0.06 + rnd() * 0.05, s0: 0.5 * s, s1: 0.8 * s, frame: T.FLAME, streak: 0.06, r: 5, g: 2.6, b: 0.9, a: 1, drag: 8, fadeIn: 0 });
+      cone(d.x, d.y, d.z, 0.14, _c); const v = (20 + rnd() * 25) * s;
+      A.spawn({ x: ox, y: oy, z: oz, vx: _c.x * v, vy: _c.y * v, vz: _c.z * v, life: 0.05 + rnd() * 0.04, s0: 0.35 * s, s1: 0.6 * s, frame: T.FLAME, streak: 0.05, r: 3, g: 1.6, b: 0.5, a: 1, drag: 8, fadeIn: 0 });
     }
     // smoke ring: puffs around the muzzle axis, pushed outward and forward
     const ux = -d.z, uz = d.x, ul = Math.hypot(ux, uz) || 1;
@@ -331,15 +331,15 @@ export class FxRenderer {
     for (let k = 0; k < n; k++) {
       const a = (k / n) * Math.PI * 2, c = Math.cos(a), sn = Math.sin(a);
       const rx = u.x * c + w.x * sn, ry = u.y * c + w.y * sn, rz = u.z * c + w.z * sn;
-      const v = (3 + rnd() * 2) * s, fw = (5 + rnd() * 4) * s;
-      const g = 0.5 + rnd() * 0.12;
+      const v = (5 + rnd() * 3) * s, fw = (6 + rnd() * 5) * s;
+      const g = 0.62 + rnd() * 0.12;
       B.spawn({ x: ox + d.x * 0.6, y: oy + d.y * 0.6, z: oz + d.z * 0.6, vx: rx * v + d.x * fw, vy: ry * v + d.y * fw + 0.3, vz: rz * v + d.z * fw,
-        life: 1.6 + rnd() * 1.2, s0: 0.35 * s, s1: 2.2 * s, frame: T.SMOKE + (k % 3), r: g, g: g * 0.97, b: g * 0.93, a: 0.5, drag: 2.2, grav: -0.25, fadeIn: 0.04, curve: 1.3 });
+        life: 2 + rnd() * 1.5, s0: 0.5 * s, s1: 2.8 * s, frame: T.SMOKE + (k % 3), r: g, g: g * 0.97, b: g * 0.93, a: 0.7, drag: 2.4, grav: -0.25, fadeIn: 0.03, curve: 1.4 });
     }
-    for (let k = 0; k < this._n(5); k++) {
-      const f = 1 + rnd() * 4 * s, g = 0.55 + rnd() * 0.1;
-      B.spawn({ x: ox + d.x * f, y: oy + d.y * f, z: oz + d.z * f, vx: d.x * 3 + rs(0.5), vy: 0.4 + rnd() * 0.4, vz: d.z * 3 + rs(0.5),
-        life: 2.5 + rnd() * 2, s0: 0.8 * s, s1: 3.2 * s, frame: T.SMOKE + (k % 3), r: g, g, b: g * 0.95, a: 0.35, drag: 1.2, grav: -0.2, fadeIn: 0.15, curve: 1.2 });
+    for (let k = 0; k < this._n(8); k++) {
+      const f = 0.5 + rnd() * 5 * s, g = 0.62 + rnd() * 0.1;
+      B.spawn({ x: ox + d.x * f, y: oy + d.y * f, z: oz + d.z * f, vx: d.x * 4 + rs(0.8), vy: 0.4 + rnd() * 0.4, vz: d.z * 4 + rs(0.8),
+        life: 3 + rnd() * 2.5, s0: 1.0 * s, s1: 4.2 * s, frame: T.SMOKE + (k % 3), r: g, g, b: g * 0.95, a: 0.5, drag: 1.2, grav: -0.2, fadeIn: 0.08, curve: 1.3 });
     }
   }
   brakeJets(p, d, cal) {
@@ -355,7 +355,7 @@ export class FxRenderer {
   blast(pos, d, cal, ground) {
     const S = SURF[surfaceKind(ground)] || SURF.grass;
     if (surfaceKind(ground) === 'water') return this.splash({ x: pos.x + d.x * 3, y: pos.y, z: pos.z + d.z * 3 }, 0.6);
-    const s = Math.sqrt(cal / 75), n = this._n(12 * s * S.amt);
+    const s = Math.sqrt(cal / 75), n = this._n(18 * s * S.amt);
     const hl = Math.hypot(d.x, d.z) || 1, fx = d.x / hl, fz = d.z / hl;
     for (let k = 0; k < n; k++) {
       const a = rnd() * Math.PI * 2, rx = Math.cos(a), rz = Math.sin(a);
@@ -363,7 +363,7 @@ export class FxRenderer {
       const v = (2 + bias * 7 + rnd() * 2) * s, r0 = 1.5 + rnd();
       const c = S.dust, g = 0.85 + rnd() * 0.3;
       this.alpha.spawn({ x: pos.x + rx * r0 + fx * 2, y: pos.y + 0.3, z: pos.z + rz * r0 + fz * 2, vx: rx * v + fx * 2 * s, vy: 0.4 + rnd() * 0.8, vz: rz * v + fz * 2 * s,
-        life: 1.4 + rnd() * 1.4, s0: 0.8, s1: 3.2 * s, frame: T.DUST, r: c[0] * g, g: c[1] * g, b: c[2] * g, a: 0.42, drag: 1.8, grav: -0.1, fadeIn: 0.08 });
+        life: 1.8 + rnd() * 1.6, s0: 1.0, s1: 3.8 * s, frame: T.DUST, r: c[0] * g, g: c[1] * g, b: c[2] * g, a: 0.6, drag: 1.8, grav: -0.1, fadeIn: 0.06 });
     }
   }
   _impact(e) {
@@ -555,10 +555,10 @@ export class FxRenderer {
   }
   // A burning tank: flames licking up plus thick black smoke.
   fire(x, y, z, dt, s = 1) {
-    const nf = 14 * s * this.mul * dt, cf = Math.floor(nf) + (rnd() < nf % 1 ? 1 : 0);
+    const nf = 30 * s * this.mul * dt, cf = Math.floor(nf) + (rnd() < nf % 1 ? 1 : 0);
     for (let k = 0; k < cf; k++) {
-      this.add.spawn({ x: x + rs(0.6 * s), y: y + rnd() * 0.2, z: z + rs(0.6 * s), vx: rs(0.3) + this.wind.x * 0.2, vy: 1.5 + rnd() * 1.5, vz: rs(0.3) + this.wind.z * 0.2,
-        life: 0.5 + rnd() * 0.4, s0: 0.9 * s, s1: 0.3 * s, frame: T.FLAME, r: 4, g: 1.7, b: 0.45, r2: 2.5, g2: 0.5, b2: 0.05, a: 1, drag: 1, grav: -1.5, fadeIn: 0.08, curve: 0.8 });
+      this.add.spawn({ x: x + rs(0.7 * s), y: y + rnd() * 0.2, z: z + rs(0.7 * s), vx: rs(0.3) + this.wind.x * 0.2, vy: 1.2 + rnd() * 1.6, vz: rs(0.3) + this.wind.z * 0.2,
+        life: 0.45 + rnd() * 0.45, s0: 0.75 * s, s1: 0.2 * s, frame: T.FLAME, r: 2.6, g: 1.05, b: 0.25, r2: 1.4, g2: 0.25, b2: 0.03, a: 0.9, drag: 1, grav: -1.8, fadeIn: 0.1, curve: 0.7, rotV: rs(2) });
     }
     const ns = 6 * s * this.mul * dt, cs = Math.floor(ns) + (rnd() < ns % 1 ? 1 : 0);
     for (let k = 0; k < cs; k++) {

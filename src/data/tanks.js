@@ -467,6 +467,7 @@ const CLS = {
   heavy:  { camo: [0.07, 0.035], view: 320, terrain: [1.1, 1.3, 2.3], d: [1.0, 1.0, 0.55] },
   td:     { camo: [0.24, 0.14], view: 320, terrain: [1.0, 1.2, 2.1], d: [1.0, 1.0, 0.45] },
 };
+const VIEW_BONUS = { light: 40, medium: 20, heavy: 10, td: 0 };
 const r2 = (x) => Math.round(x * 100) / 100;
 
 function finish(d) {
@@ -482,7 +483,7 @@ function finish(d) {
   const sz = Math.min(1.35, Math.max(0.65, 2.3 / height));
   const cal = Math.max(...d.guns.map((g) => g.cal));
   d.camo ??= { still: r2(c.camo[0] * sz), moving: r2(c.camo[1] * sz), fire: r2(Math.min(0.6, Math.max(0.15, 0.62 - cal / 250))) };
-  d.view ??= Math.min(420, c.view + d.tier * 12 + (d.cls === 'light' ? 10 : 0));
+  d.view ??= Math.min(445, 320 + d.tier * 12 + VIEW_BONUS[d.cls]); // scouting matters: lights see furthest
   // Guns: class dispersion factors and nation depression unless the gun says otherwise.
   const gxp = Math.round(XP[Math.max(2, d.tier)] * 0.35 / 10) * 10;
   d.guns.forEach((g, i) => {

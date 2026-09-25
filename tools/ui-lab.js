@@ -50,14 +50,15 @@ function sampleWorld(p, battle, result) {
     stats: { dmg: 0, assist: 0, blocked: 0, kills: 0, shots: 0, hits: 0, pens: 0, received: 0, spotted: 0, capture: 0, defended: 0 } })));
   const me = tanks.find((t) => t.player);
   const won = result === 'victory', draw = result === 'draw';
+  let killsLeft = 4;
   for (const t of tanks) if (t !== me) {
     t.stats.dmg = Math.round(t.maxHp * rng() * 1.5); t.stats.kills = rng() < 0.4 ? 1 + (rng() < 0.3 ? 1 : 0) : 0; t.stats.assist = Math.round(t.maxHp * rng() * 0.6);
     t.stats.spotted = rng() < 0.3 ? 1 : 0;
     const dead = t.team === me.team ? rng() < (won ? 0.45 : 0.9) : rng() < (won ? 0.95 : 0.5);
-    if (dead && !draw) { t.alive = false; t.hp = 0; } else t.hp = Math.round(t.maxHp * (0.1 + rng() * 0.8));
+    if (dead && !draw) { t.alive = false; t.hp = 0; t.killedBy = t.team !== me.team && killsLeft-- > 0 ? me.id : null; } else t.hp = Math.round(t.maxHp * (0.1 + rng() * 0.8));
   }
   Object.assign(me.stats, { dmg: Math.round(me.maxHp * 2.6), assist: 640, blocked: 820, kills: 4, shots: 14, hits: 12, pens: 10, received: 380, spotted: 5, capture: 0, defended: 45 });
-  me.hp = Math.round(me.maxHp * 0.21); me.ammo[0] -= 14; me.consumables[0].ready = false;
+  if (!won && !draw) { me.alive = false; me.hp = 0; me.killedBy = tanks.find((t) => t.team !== me.team).id; me.deathCause = 'shot'; } else me.hp = Math.round(me.maxHp * 0.21); me.ammo[0] -= 14; me.consumables[0].ready = false;
   return { time: 611, seed: battle.seed, map: { id: battle.mapId, name: battle.meta.mapName }, mode: 'standard', tanks, firstKill: me.id,
     result: { winner: won ? me.team : draw ? -1 : 1 - me.team, reason: won ? 'destroyed' : draw ? 'time' : 'captured' } };
 }

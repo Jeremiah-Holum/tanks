@@ -8,7 +8,7 @@ const G = 9.81, MAX_RANGE = 720;
 const _o = {}, _d = {}, _n = {};
 
 // Earliest tank entry along a segment (o, unit d, length L): { tank, t } or null.
-function firstTank(world, o, d, L, skipId) {
+function firstTank(world, o, d, L, skipId, skipPiece) {
   let best = null, bt = L;
   for (const t of world.tanks) {
     if (t.id === skipId) continue;
@@ -18,7 +18,7 @@ function firstTank(world, o, d, L, skipId) {
     if (along < -t.rad || along > bt + t.rad) continue;
     const px = cx - d.x * along, py = cy - d.y * along, pz = cz - d.z * along;
     if (px * px + py * py + pz * pz > t.rad * t.rad) continue;
-    const hits = rayArmor(t, o.x, o.y, o.z, d.x, d.y, d.z, bt);
+    const hits = rayArmor(t, o.x, o.y, o.z, d.x, d.y, d.z, bt, skipPiece);
     if (hits.length && hits[0].t < bt) { bt = hits[0].t; best = t; }
   }
   return best ? { tank: best, t: bt } : null;
@@ -35,7 +35,7 @@ function waterHit(map, o, d, L) {
 
 // One segment test: the earliest of terrain / water / object / tank.
 // → { kind: 'terrain'|'water'|'object'|'tank', t, obj?, tank?, nx,ny,nz } | null
-function segment(world, o, d, L, skipId) {
+function segment(world, o, d, L, skipId, skipPiece = null) {
   const map = world.map;
   let t = L, kind = null, obj = null, tank = null, nx = 0, ny = 1, nz = 0;
   const tt = raycastTerrain(map, o, d, L);
@@ -44,7 +44,7 @@ function segment(world, o, d, L, skipId) {
   if (tw >= 0 && tw < t) { t = tw; kind = 'water'; }
   const ob = raycastObjects(map, o, d, t, 'shell');
   if (ob && ob.t < t) { t = ob.t; kind = 'object'; obj = ob.obj; nx = ob.nx; ny = ob.ny; nz = ob.nz; }
-  const tk = firstTank(world, o, d, t, skipId);
+  const tk = firstTank(world, o, d, t, skipId, skipPiece);
   if (tk) { t = tk.t; kind = 'tank'; tank = tk.tank; }
   if (!kind) return null;
   if (kind === 'terrain') { normalAt(map, o.x + d.x * t, o.z + d.z * t, _n); nx = _n.x; ny = _n.y; nz = _n.z; }
@@ -58,10 +58,11 @@ export function stepShells(world, dt) {
     const v = s.vel, vy1 = v.y - G * dt;
     const sx = v.x * dt, sy = (v.y + vy1) / 2 * dt, sz = v.z * dt, L = Math.hypot(sx, sy, sz);
     _o.x = s.pos.x; _o.y = s.pos.y; _o.z = s.pos.z; _d.x = sx / L; _d.y = sy / L; _d.z = sz / L;
-    // the firing tank is ignored for the first metres; a ricocheting shell ignores that tank once
-    const skip = s.dist < 6 ? s.owner : s.ignore;
-    s.ignore = 0;
-    const h = segment(world, _o, _d, L, skip);
+    // the firing tank is ignored until 6 m past the muzzle; a ricochet ignores only the plate
+    // it just left (for 10 cm), so it can still hit another part of the same tank
+    const skipPiece = s.skipPiece || null;
+    s.skipPiece = null;
+    const h = segment(world, _o, _d, L, s.dist < 6 ? s.owner : 0, skipPiece);
     if (!h) {
       s.pos.x += sx; s.pos.y += sy; s.pos.z += sz; v.y = vy1; s.dist += L;
       if (s.dist > MAX_RANGE || s.pos.y < -200) s.alive = false;
@@ -69,13 +70,14 @@ export function stepShells(world, dt) {
     }
     const pos = { x: _o.x + _d.x * h.t, y: _o.y + _d.y * h.t, z: _o.z + _d.z * h.t };
     if (h.kind === 'tank') {
-      const r = shellHitsTank(world, s, h.tank, _o.x, _o.y, _o.z, _d.x, _d.y, _d.z, L + 0.01);
+      // search the tank's whole extent: the plate behind a track may lie beyond this step
+      const r = shellHitsTank(world, s, h.tank, _o.x, _o.y, _o.z, _d.x, _d.y, _d.z, h.t + 2 * h.tank.rad + 1, skipPiece);
       s.dist += h.t;
       if (r && r.reflect && s.ricochets < 2) {
         const sp = Math.hypot(v.x, vy1, v.z);
         s.pos.x = r.reflect.x; s.pos.y = r.reflect.y; s.pos.z = r.reflect.z;
         v.x = r.reflect.dx * sp; v.y = r.reflect.dy * sp; v.z = r.reflect.dz * sp;
-        s.ricochets++; s.ignore = h.tank.id;
+        s.ricochets++; s.skipPiece = r.reflect.piece;
       } else if (r) s.alive = false;
       else { s.pos.x += sx; s.pos.y += sy; s.pos.z += sz; v.y = vy1; } // grazed the bounding volume only
       continue;

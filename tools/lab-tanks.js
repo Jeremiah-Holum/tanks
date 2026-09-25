@@ -6,6 +6,8 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { buildTankModel, triCount, modelStats } from '../src/render/tankModel.js';
+import { TankRenderer } from '../src/render/tanks.js';
+import { FxRenderer } from '../src/render/fx.js';
 import { TANKS } from '../src/data/tanks.js';
 
 const Q = new URLSearchParams(location.search);
@@ -75,24 +77,108 @@ function frame(def, yawDeg, elevDeg, dist) {
 }
 const DEG = Math.PI / 180;
 
+// Single tank through TankRenderer + FxRenderer with a fake one-tank world.
+//   dmg: tracks|trackL|burning|dead|ammorack   move: m/s   t: seconds to simulate before the shot
+//   fx: shot|ricochet|nopen|pen|he|track|impact:<surface>|splash|tracer|kill  ft: seconds after the fx event
 async function single() {
   const id = Q.get('id') || 'usa_m4';
   const def = TANKS[id];
   if (!def) throw new Error('no tank ' + id);
-  const model = buildTankModel(def, { lod: num('lod', 0), paint: Q.get('paint') || undefined, number: Q.get('number') ?? undefined, gunIndex: num('gunIndex', 0) });
-  scene.add(model.group);
-  const d = dmgOf(Q.get('dmg'));
-  if (d) model.setDamage(d);
-  const st = { turretYaw: num('turret', 0) * DEG, gunPitch: num('gun', 0) * DEG, speed: num('move', 0), yawRate: 0 };
-  // advance time (turret flight, track scroll)
-  const T = num('t', d && d.ammorack ? 3 : 0);
-  for (let t = 0; t < T; t += 1 / 30) model.update(st, 1 / 30);
-  model.update(st, 0);
+  const tr = new TankRenderer(scene, Q.get('q') || 'high');
+  const fx = new FxRenderer(scene, Q.get('q') || 'high');
+  const dmg = Q.get('dmg') || '';
+  const tank = {
+    id: 1, team: 0, def, gunDef: def.guns[num('gunIndex', 0)], gunIndex: num('gunIndex', 0), pos: { x: 0, y: 0, z: 0 }, yaw: 0, pitch: 0, roll: 0,
+    speed: num('move', 0), yawRate: 0, throttle: num('move', 0) ? 1 : 0, turretYaw: num('turret', 0) * DEG, gunPitch: num('gun', 0) * DEG,
+    alive: !(dmg === 'dead' || dmg === 'ammorack'), fire: dmg === 'burning' ? { t: 0 } : null, deathCause: dmg === 'ammorack' ? 'ammorack' : 'shot',
+    modules: { trackL: { state: dmg === 'tracks' || dmg === 'trackL' ? 'destroyed' : 'ok' }, trackR: { state: dmg === 'tracks' ? 'destroyed' : 'ok' } },
+  };
+  const world = { time: 0, tanks: [tank], shells: [], events: [], map: null, byId: { 1: tank } };
+  const lod = Q.has('lod') ? num('lod', 0) : null;
+  if (lod != null) tr.setQuality(lod ? 'low' : 'high');
   frame(def, num('yaw', 35), num('elev', 16), num('dist', 0));
+  camera.updateMatrixWorld();
+  const step = (dt) => {
+    world.time += dt;
+    if (tank.speed) { tank.pos.x += Math.sin(tank.yaw) * tank.speed * dt; tank.pos.z += Math.cos(tank.yaw) * tank.speed * dt; }
+    for (const e of world.events) { tr.handle(e); fx.handle(e, world); }
+    world.events.length = 0;
+    tr.sync(world, { alpha: 1, dt, camera: lod != null ? (lod ? { matrixWorld: new THREE.Matrix4().makeTranslation(0, 0, 9999), fov: 55 } : camera) : camera });
+    fx.update(dt, camera, world);
+  };
+  if (dmg === 'ammorack') world.events.push({ type: 'kill', victim: 1, cause: 'ammorack' });
+  const T = num('t', dmg === 'ammorack' ? 3 : dmg === 'dead' ? 6 : dmg === 'burning' ? 3 : tank.speed ? 3 : 0.1);
+  for (let t = 0; t < T; t += 1 / 30) step(1 / 30);
+  // keep the moving tank framed
+  if (tank.speed) { const d = camera.position.clone().sub(new THREE.Vector3(0, 0, 0)); camera.position.set(tank.pos.x + d.x, d.y, tank.pos.z + d.z); camera.lookAt(tank.pos.x, 1, tank.pos.z); camera.updateMatrixWorld(); }
+  const kind = Q.get('fx');
+  if (kind) {
+    const m = tr.modelOf(1);
+    m.group.updateMatrixWorld(true);
+    const muz = m.parts.gunMesh.localToWorld(new THREE.Vector3(0, 0, m.info.muzzleLen));
+    const dir = m.parts.gunMesh.localToWorld(new THREE.Vector3(0, 0, m.info.muzzleLen + 1)).sub(muz).normalize();
+    const cal = tank.gunDef.cal;
+    const hitP = { x: 0.3, y: def.hull.clr + def.hull.H * 0.6, z: def.hull.L / 2 + 0.05 }, n = { x: 0, y: 0.3, z: 0.95 };
+    fx.shells.set(99, { type: kind === 'he' ? 'HE' : 'AP', cal: 88, dir: { x: 0.25, y: -0.05, z: -0.97 } });
+    const ev = {
+      shot: { type: 'shot', tank: 1, shell: 7, pos: muz, dir, cal, shellType: 'AP' },
+      ricochet: { type: 'hit', target: 1, shell: 99, pos: hitP, normal: n, result: 'ricochet', plate: 'hull.front.upper' },
+      nopen: { type: 'hit', target: 1, shell: 99, pos: hitP, normal: n, result: 'nopen', plate: 'hull.front.upper' },
+      pen: { type: 'hit', target: 1, shell: 99, pos: hitP, normal: n, result: 'pen', dmg: 200, plate: 'hull.front.upper' },
+      he: { type: 'hit', target: 1, shell: 99, pos: hitP, normal: n, result: 'nopen', shellType: 'HE', plate: 'hull.front.upper' },
+      track: { type: 'hit', target: 1, shell: 99, pos: { x: def.hull.W / 2 + def.hull.track.w, y: 0.5, z: 1 }, normal: { x: 1, y: 0, z: 0 }, result: 'track', plate: 'track' },
+      kill: { type: 'kill', victim: 1, cause: 'shot' },
+    }[kind];
+    if (ev) world.events.push(ev);
+    else if (kind.startsWith('impact')) {
+      const surf = kind.split(':')[1] || 'dirt';
+      fx.shells.set(98, { type: Q.get('shell') || 'AP', cal: 88 });
+      world.events.push({ type: 'impact', shell: 98, pos: { x: 3, y: 0, z: 5 }, normal: { x: 0, y: 1, z: 0 }, surface: surf, shellType: Q.get('shell') || 'AP', cal: 88 });
+    } else if (kind === 'tracer') {
+      for (let k = 0; k < 3; k++) world.shells.push({ id: 50 + k, alive: true, tracer: true, type: 'AP', cal: 75 + k * 20, pos: { x: -6 + k * 3, y: 2 + k, z: 8 + k * 2 }, vel: { x: 500, y: 5, z: -120 } });
+    }
+    const FT = num('ft', 0.03);
+    for (let t = 0; t < FT; t += 1 / 60) step(1 / 60);
+    step(1e-4);
+  }
   renderer.render(scene, camera);
-  const s = modelStats(def);
-  lab.info = { id, tris: triCount(model.group), near: s.near, far: s.far };
-  if (Q.get('info') !== '0') hud.textContent = `${def.name}  (${id})  tier ${def.tier} ${def.cls}  ·  tris ${lab.info.tris} (far LOD ${s.far})`;
+  const md = tr.modelOf(1);
+  lab.info = { id, tris: triCount(md.group), lod: md.lod, fx: fx.stats(), ...modelStats(def) };
+  lab.tr = tr; lab.fx = fx; lab.world = world;
+  if (Q.get('info') !== '0') hud.textContent = `${def.name}  (${id})  tier ${def.tier} ${def.cls}  ·  tris ${lab.info.tris} (near ${lab.info.near}, far ${lab.info.far})`;
+}
+
+// Mini battle on a flat test map with the sim's simpleBot: ?battle=1&ids=a,b,c&t=20&cam=x,y,z,lx,ly,lz
+async function battle() {
+  const { createBattle, stepBattle, DT } = await import('../src/sim/battle.js');
+  const { testMap, simpleBot } = await import('../src/sim/testmap.js');
+  const map = testMap({ size: 1000, res: 129, hills: 0 });
+  ground.position.y = 10;
+  const ids = (Q.get('ids') || 'usa_m4,ger_pz4h,ussr_t34,ger_tiger,usa_m10,ussr_is').split(',');
+  const teams = [[], []];
+  ids.forEach((id, k) => teams[k % 2].push({ def: TANKS[id], gun: 0, name: id, player: k === 0, bot: { skill: 0.7 } }));
+  const world = createBattle({ map, seed: num('seed', 3), teams });
+  for (const t of world.tanks) { t.pos.z = t.team ? 500 + 60 : 500 - 60; t.pos.x = 500 + (t.id % 5 - 2) * 12; }
+  const bots = new Map(world.tanks.map((t) => [t.id, simpleBot(t)]));
+  const tr = new TankRenderer(scene, 'high'), fx = new FxRenderer(scene, 'high');
+  const c = (Q.get('cam') || '540,25,470,500,10,500').split(',').map(Number);
+  camera.position.set(c[0], c[1], c[2]); camera.lookAt(c[3], c[4], c[5]); camera.updateMatrixWorld();
+  sun.target.position.set(c[3], c[4], c[5]); sun.position.set(c[3] - 30, c[4] + 26, c[5] + 18);
+  Object.assign(sun.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60 }); sun.shadow.camera.updateProjectionMatrix();
+  const T = num('t', 20);
+  const ctl = new Map();
+  let events = 0;
+  for (let k = 0; k < T / DT; k++) {
+    for (const t of world.tanks) if (t.alive) ctl.set(t.id, bots.get(t.id)(world));
+    stepBattle(world, ctl);
+    for (const e of world.events) { tr.handle(e); fx.handle(e, world); events++; }
+    tr.sync(world, { alpha: 1, dt: DT, camera, playerId: world.tanks[0].id });
+    fx.update(DT, camera, world);
+    if (world.result) break;
+  }
+  renderer.render(scene, camera);
+  lab.info = { time: world.time.toFixed(1), events, alive: world.tanks.filter((t) => t.alive).length, fx: fx.stats(), tanks: tr.stats(), result: world.result };
+  lab.world = world; lab.tr = tr; lab.fx = fx;
 }
 
 async function grid() {
@@ -126,7 +212,7 @@ async function grid() {
 
 (async () => {
   try {
-    if (Q.get('grid')) await grid(); else await single();
+    if (Q.get('grid')) await grid(); else if (Q.get('battle')) await battle(); else await single();
   } catch (e) { console.error('LAB ' + e.message + '\n' + e.stack); lab.info = { error: e.message }; }
   lab.done = true;
 })();

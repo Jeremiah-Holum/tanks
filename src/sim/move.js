@@ -40,12 +40,12 @@ export function moveTank(world, t, c, dt) {
   const slopeA = G * Math.sin(t.pitch) * Math.cos(t.roll);   // pitch > 0 nose up: pulls backwards
   const rollA = ROLL_RES * res * G;
   if (c.brake || th === 0) {
-    // engine braking / brakes, holding on slopes
+    // engine braking / brakes. Tracks hold a stopped (or crawling) tank on slopes up to 30°;
+    // steeper than that it slides.
     const dec = (c.brake ? 7 : 2.2) + rollA;
-    const a = -slopeA;
-    v += a * dt;
+    v -= slopeA * dt;
     v = Math.abs(v) <= dec * dt ? 0 : v - Math.sign(v) * dec * dt;
-    if (Math.abs(slopeA) < dec && Math.abs(v) < 0.05) v = 0;
+    if (Math.abs(slopeA) < G * 0.5 && Math.abs(v) < (c.brake ? 2 : 0.6)) v = 0;
   } else {
     const dir = Math.sign(th);
     let a;

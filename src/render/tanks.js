@@ -40,7 +40,7 @@ export class TankRenderer {
 
   _entry(t) {
     const e = {
-      id: t.id, def: t.def, gunIndex: t.def.guns ? Math.max(0, t.def.guns.indexOf(t.gunDef)) : 0,
+      id: t.id, def: t.def, gunIndex: t.gunIndex ?? (t.def.guns ? Math.max(0, t.def.guns.indexOf(t.gunDef)) : 0),
       number: 100 + ((t.id * 53 + t.team * 7) % 800),
       root: new THREE.Group(), models: [null, null], lod: -1,
       prev: null, cur: null, t: -1, fade: 1, recoilT: 9, dmgKey: '', deadAt: -1,

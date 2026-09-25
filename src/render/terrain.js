@@ -39,9 +39,14 @@ export function makeOuterHeight(map, h) {
   return (x, z) => {
     const cx = Math.min(S, Math.max(0, x)), cz = Math.min(S, Math.max(0, z));
     const d = Math.hypot(x - cx, z - cz);
-    const he = h(cx, cz);
-    if (d <= 0) return he;
-    const w = smooth(0, 420, d);
+    if (d <= 0) return h(cx, cz);
+    // the edge profile, blurred along the edge more the further out we are (a plain
+    // extrusion would stretch every bump on the edge into a long ridge)
+    const spread = Math.min(260, d * 0.8), tx = cx === x ? 1 : 0, tz = cz === z ? 1 : 0;
+    let he = 0;
+    for (let k = -3; k <= 3; k++) { const t = (k / 3) * spread; he += h(Math.min(S, Math.max(0, cx + tx * t)), Math.min(S, Math.max(0, cz + tz * t))); }
+    he /= 7;
+    const w = smooth(0, 380, d);
     const amp = 10 + Math.min(d, 4000) * 0.06;
     const hills = base + fbm(x, z, 900, 5) * amp * 2.2 + Math.pow(Math.min(d, 5000) / 1000, 1.6) * 38 + fbm(x, z, 180, 3) * 6 * w;
     return he + (hills - he) * w;
