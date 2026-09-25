@@ -44,6 +44,7 @@ const RIBBON = {
 };
 const MINI = { small: 0.25, medium: 0.33, large: 0.46 };
 const MINI_ORDER = ['small', 'medium', 'large'];
+const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
 
 // cached writes
 const txt = (el, v) => { v = String(v); if (el._t !== v) { el._t = v; el.textContent = v; } };
@@ -104,7 +105,7 @@ export class Hud {
     const modEls = MODS.map(([k, n]) => { const el = h('div.dp-mod', { title: n }, ico(k), h('span.dp-t')); D.mods[k] = el; return el; });
     const crewEls = Object.keys(me.crew).map((r) => { const el = h('div.dp-crew', { title: ROLE_NAME[r] || r }, ico('crew'), h('span.dp-role', ROLE[r] || r[0].toUpperCase())); D.crew[r] = el; return el; });
     this.dmgPanel = h('div.hud-dmg',
-      h('div.dp-head', h('span.dp-tier', ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII'][me.def.tier] || ''), classIcon(me.def.cls, 14), D.name, h('span.dp-sp', D.speed, h('small', 'km/h'))),
+      h('div.dp-head', h('span.dp-tier', ROMAN[me.def.tier] || ''), classIcon(me.def.cls, 14), D.name, h('span.dp-sp', D.speed, h('small', 'km/h'))),
       h('div.dp-hp', h('div.dp-hpbar', D.hpLag, D.hpBar), D.hpN),
       h('div.dp-row', h('div.dp-mods', modEls), D.fire),
       h('div.dp-row.crew', crewEls));
@@ -186,7 +187,7 @@ export class Hud {
     cls(this.scoreEl, 'on', s.score); if (s.score && (this._scoreT = (this._scoreT || 0) - s.dt) <= 0) { this._scoreT = 0.5; this._scorePanel(w); }
     if (!s.score) this._scoreT = 0;
     cls(this.perfEl, 'on', !!s.perf);
-    if (s.perf && s.perf.fps) txt(this.perfEl, `${s.perf.fps.toFixed(0)} fps · ${s.perf.frame.toFixed(1)} ms · sim ${s.perf.sim.toFixed(2)} · ai ${s.perf.ai.toFixed(2)} · render ${s.perf.render.toFixed(1)} · hud ${s.perf.hud.toFixed(2)} · ${s.perf.calls} calls · ${(s.perf.tris / 1e6).toFixed(2)} M tris · ${s.quality}`);
+    if (s.perf && s.perf.fps) txt(this.perfEl, `${s.perf.fps.toFixed(0)} fps · ${s.perf.frame.toFixed(1)} ms/frame · ${s.perf.steps.toFixed(1)} steps · per step: sim ${s.perf.sim.toFixed(2)} ai ${s.perf.ai.toFixed(2)} · per frame: render ${s.perf.render.toFixed(1)} · hud ${s.perf.hud.toFixed(2)} · ${s.perf.calls} calls · ${(s.perf.tris / 1e6).toFixed(2)} M tris · ${s.quality}`);
     // hints
     let hint = '';
     if (s.phase === 'dead') hint = s.spec != null ? 'Spectating · LMB / RMB: next / previous ally · Esc: menu' : '';
@@ -337,7 +338,6 @@ export class Hud {
   }
   _toasts() {
     for (let i = this.toasts.length - 1; i >= 0; i--) { const f = this.toasts[i]; f.age += this.s.dt; if (f.age > 1.8 && !f.out) { f.out = true; f.el.classList.add('out'); } if (f.age > 2.3) { f.el.remove(); this.toasts.splice(i, 1); } }
-    if (this._flashAge != null) { this._flashAge += this.s.dt; if (this._flashAge > 1.4) { this.flashEl.classList.remove('on'); this._flashAge = null; } }
   }
 
   // ------------------------------------------------------------------ minimap
@@ -518,8 +518,12 @@ export class Hud {
     this._endCls = won ? 'win' : draw ? 'draw' : 'lose';
     this._endMsg = `<b class="big">${won ? 'Victory!' : draw ? 'Draw' : 'Defeat'}</b><small>${why}</small>`;
   }
-  flash(text) { this.flashEl.textContent = text; this.flashEl.classList.remove('on'); void this.flashEl.offsetWidth; this.flashEl.classList.add('on'); this._flashAge = 0; }
-  flashShell(k) { const el = this.slots[k]; if (el) { el.classList.remove('pick'); void el.offsetWidth; el.classList.add('pick'); } }
+  // animations restart through the Web Animations API (no forced layout)
+  flash(text) {
+    this.flashEl.textContent = text;
+    this.flashEl.animate([{ opacity: 0, transform: 'scale(1.4)' }, { opacity: 1, transform: 'scale(1)', offset: 0.15 }, { opacity: 1, offset: 0.7 }, { opacity: 0, transform: 'scale(.96)' }], { duration: 1400, easing: 'ease-out' });
+  }
+  flashShell(k) { this.slots[k]?.animate([{ transform: 'translateY(-5px)' }, { transform: 'none' }], { duration: 300, easing: 'ease-out' }); }
   toast(msg, kind = '') {
     if (this.toasts.length && this.toasts[this.toasts.length - 1].msg === msg) { this.toasts[this.toasts.length - 1].age = 0; return; }
     const el = h('div.ht' + (kind ? '.' + kind : ''), msg); this.toastEl.append(el); this.toasts.push({ el, age: 0, msg });
@@ -583,7 +587,7 @@ export class Hud {
     if (cur) {
       cur.n++; cur.dmg += dmg; cur.age = 0;
       txt(cur.cnt, '×' + cur.n); if (cur.dmgEl) txt(cur.dmgEl, cur.dmg);
-      cur.el.classList.remove('pop'); void cur.el.offsetWidth; cur.el.classList.add('pop');
+      cur.el.animate([{ transform: 'scale(1.25)', filter: 'brightness(1.6)' }, { transform: 'none', filter: 'none' }], { duration: 250, easing: 'ease-out' });
       return;
     }
     const cnt = h('span.rb-n'), dmgEl = dmg > 0 || kind === 'pen' ? h('b.rb-d', dmg) : null;
@@ -618,12 +622,14 @@ export class Hud {
   }
 
   _scorePanel(w) {
-    const teams = [w.tanks.filter((t) => t.team === this.team), w.tanks.filter((t) => t.team !== this.team)];
+    const order = { heavy: 0, medium: 1, td: 2, light: 3 };
+    const sort = (a, b) => b.def.tier - a.def.tier || order[a.def.cls] - order[b.def.cls] || a.name.localeCompare(b.name);
+    const teams = [w.tanks.filter((t) => t.team === this.team).sort(sort), w.tanks.filter((t) => t.team !== this.team).sort(sort)];
     const col = (list, k) => h('div.sp-col.' + (k ? 'en' : 'al'),
       h('h3', k ? 'Enemy team' : 'Your team', h('span', `${list.filter((t) => t.alive).length} / ${list.length}`)),
-      h('div.sp-row.head', h('span', 'Vehicle'), h('span', 'Player'), h('span', 'Dmg'), h('span', 'Kills')),
+      h('div.sp-row.head', h('span', 'Tier'), h('span', 'Vehicle'), h('span', 'Player'), h('span', 'Dmg'), h('span', 'Kills')),
       list.map((t) => h('div.sp-row' + (t.alive ? '' : '.dead') + (t.id === this.playerId ? '.me' : '') + (k && t.alive && !w.visible[this.team].has(t.id) ? '.hid' : ''),
-        h('span.sp-tank', classIcon(t.def.cls, 12), ` ${t.def.short || t.def.name}`), h('span.sp-name', t.name), h('span', Math.round(t.stats.dmg)), h('span', t.stats.kills))));
+        h('span.sp-tier', ROMAN[t.def.tier] || t.def.tier), h('span.sp-tank', classIcon(t.def.cls, 13), h('b', t.def.short || t.def.name)), h('span.sp-name', t.name), h('span', Math.round(t.stats.dmg)), h('span', t.stats.kills))));
     clear(this.scoreEl).append(h('div.sp-box', h('div.sp-head', h('b', w.map.name || ''), h('span', mmss(w.timeLimit - w.time))), h('div.sp-cols', col(teams[0], 0), col(teams[1], 1))));
   }
 

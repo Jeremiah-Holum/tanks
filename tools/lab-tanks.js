@@ -108,7 +108,8 @@ async function single() {
   };
   if (dmg === 'ammorack') world.events.push({ type: 'kill', victim: 1, cause: 'ammorack' });
   const T = num('t', dmg === 'ammorack' ? 3 : dmg === 'dead' ? 6 : dmg === 'burning' ? 3 : tank.speed ? 3 : 0.1);
-  for (let t = 0; t < T; t += 1 / 30) step(1 / 30);
+  const FDT = num('fdt', 1 / 30); // frame dt (test slow frame rates)
+  for (let t = 0; t < T; t += FDT) step(FDT);
   // keep the moving tank framed
   if (tank.speed) { const d = camera.position.clone().sub(new THREE.Vector3(0, 0, 0)); camera.position.set(tank.pos.x + d.x, d.y, tank.pos.z + d.z); camera.lookAt(tank.pos.x, 1, tank.pos.z); camera.updateMatrixWorld(); }
   const kind = Q.get('fx');
@@ -138,7 +139,7 @@ async function single() {
       for (let k = 0; k < 3; k++) world.shells.push({ id: 50 + k, alive: true, tracer: true, type: 'AP', cal: 75 + k * 20, pos: { x: -4 + k * 4, y: 2.5 + k, z: -5 - k * 3 }, vel: { x: 500, y: 4, z: 60 } });
     }
     const FT = num('ft', 0.03);
-    for (let t = 0; t < FT; t += 1 / 60) step(1 / 60);
+    for (let t = 0; t < FT; t += Math.min(FDT, 1 / 60)) step(Math.min(FDT, 1 / 60));
     step(1e-4);
   }
   renderer.render(scene, camera);
@@ -193,7 +194,8 @@ async function battle() {
 
 async function grid() {
   const nation = Q.get('nation');
-  const list = ids.filter((id) => !nation || TANKS[id].nation === nation).sort((a, b) => TANKS[a].tier - TANKS[b].tier);
+  const only = Q.get('ids') && Q.get('ids').split(',');
+  const list = (only || ids).filter((id) => !nation || TANKS[id].nation === nation).sort((a, b) => TANKS[a].tier - TANKS[b].tier);
   const per = num('per', 12), page = num('page', 0);
   const show = list.slice(page * per, page * per + per);
   const cols = num('cols', show.length <= 4 ? 2 : show.length <= 9 ? 3 : 4), rows = Math.ceil(show.length / cols);

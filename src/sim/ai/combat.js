@@ -61,7 +61,9 @@ export function bestAim(world, b, tg) {
   const d = hyp(tg.pos.x - t.pos.x, tg.pos.z - t.pos.z);
   const R = t.gunDef.disp * d / 100;
   const know = b.skill < 0.3 ? 0 : b.skill < 0.58 ? 1 : 2;
-  let best = null;
+  let best = null, chC = -1;
+  const h = tg.def.hull, cx = tg.pos.x, cy = tg.pos.y + h.clr + h.H * 0.6, cz = tg.pos.z;
+  const half = Math.max(1.2, Math.min(1.8, (h.W + h.H) * 0.4));    // rough radius of the silhouette
   for (const c of candidates(tg, _m.pos)) {
     if (c.tier > know) continue;
     candWorld(tg, c, _p);
@@ -69,8 +71,12 @@ export function bestAim(world, b, tg) {
     const pv = penPreview(world, t, _p, tg.id);
     if (!pv) continue;
     const ch = pv.chance;
-    // expected value: pen chance × chance to hit that area; potatoes just want centre mass
-    const ev = know === 0 ? (c.k === 'hull' ? 1 : 0.8) : (0.05 + ch) * pHit(c.size, R, b.aimErrBase);
+    if (c.k === 'hull') chC = ch;
+    // Expected pen-hits: the spot itself, plus the rest of the tank the shot may land on
+    // instead (aiming at an edge — lower plate, cupola — also means more clean misses).
+    const off = Math.hypot(_p.x - cx, _p.y - cy, _p.z - cz);
+    const pSpot = pHit(c.size, R, b.aimErrBase), pTank = pHit(Math.max(0.3, half - off * 0.8), R, b.aimErrBase);
+    const ev = know === 0 ? (c.k === 'hull' ? 1 : 0.8) : pSpot * ch + Math.max(0, pTank - pSpot) * (chC >= 0 ? chC : ch) * 0.8;
     if (!best || ev > best.ev) best = { cand: c, chance: ch, ev, eff: pv.eff, plate: pv.plate };
   }
   return best;

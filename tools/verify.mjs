@@ -2,7 +2,8 @@
 // hangar → pick a tank → BATTLE! → loading → countdown (skipped with Space) → drive (W), turn the
 // turret (mouse), fire (LMB), switch shells (1/3), sniper mode (Shift + wheel), score panel (Tab),
 // minimap size (M), Esc menu → resume, then wait for the battle to end → results → garage.
-// ?fast=1 makes the battle short (150 s of sim), runs the sim 3× and gives the player god mode.
+// ?fast=1 gives the player god mode and lets slow frames advance the sim further; the input tests
+// run at speed 1, then the rest of the battle (limit 400 s) runs at 12× through __sf.setSpeed.
 // Fails on any console error or page error. Screenshots: shots/verify/<quality>/NN-step.png.
 //   tools/capped.sh -- node tools/verify.mjs [low|medium|high]
 // Run one quality at a time (one browser on the machine).
@@ -10,7 +11,7 @@ import { startServer, openBrowser, PORT } from './lib-browser.mjs';
 import { mkdirSync, rmSync } from 'fs';
 
 const q = process.argv[2] || 'low';
-const W = 1280, H = 720;
+const W = 1024, H = 576;   // smaller than 720p: SwiftShader renders every pixel on the CPU
 const dir = `shots/verify/${q}`;
 rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true });
 const T0 = Date.now();
@@ -44,7 +45,7 @@ const perfNote = (s) => s.perf && s.perf.fps ? `${s.perf.fps.toFixed(1)} fps, fr
 
 try {
   await check('boot → hangar', async () => {
-    await page.goto(`http://127.0.0.1:${PORT}/index.html?fast=1&q=${q}&perf=1`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`http://127.0.0.1:${PORT}/index.html?fast=1&speed=1&limit=400&q=${q}&perf=1`, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.hangar .sf-battle', { timeout: 120000 });
     await wait(1500);
     await shot('hangar');
@@ -65,6 +66,7 @@ try {
 
   await check('BATTLE! → loading screen', async () => {
     await page.click('.sf-battle', { timeout: 60000 });
+    await page.mouse.move(mx, my); // park the mouse at the centre before the battle takes input
     await page.waitForSelector('.loading', { timeout: 60000 });
     await until(async () => (await page.evaluate(() => { const b = document.querySelector('.ld-pct'); return b && parseInt(b.textContent) >= 15; })), 60000, 100);
     await shot('loading');
@@ -79,7 +81,6 @@ try {
   });
 
   await check('Space skips the countdown', async () => {
-    await page.mouse.move(mx, my);
     await page.keyboard.press('Space');
     const s = await until(async () => { const s = await st(); return s.phase === 'play' ? s : null; }, 20000);
     return { ok: !!s, detail: s && `t=${s.time}` };
@@ -171,8 +172,7 @@ try {
   await check('M cycles the minimap size', async () => {
     const w0 = await page.evaluate(() => document.querySelector('.hud-mini-cv').clientWidth);
     await page.keyboard.press('KeyM');
-    await wait(400);
-    const w1 = await page.evaluate(() => document.querySelector('.hud-mini-cv').clientWidth);
+    const w1 = await until(() => page.evaluate((a) => { const w = document.querySelector('.hud-mini-cv').clientWidth; return w !== a ? w : 0; }, w0), 15000);
     return { ok: w1 !== w0, detail: `${w0} → ${w1} px` };
   });
 
@@ -186,14 +186,15 @@ try {
     return { ok: !!a && !!b, detail: '' };
   });
 
-  let mid = null;
+  let mid = null, mid0 = 0;
   await check('battle plays out to the end (god mode, fast sim)', async () => {
-    // keep driving and shooting a little on the way
+    // keep driving; the rest of the battle runs at 12× (?fast allows up to 150 steps per frame)
     await page.keyboard.down('KeyW');
-    let shotMid = false;
+    await page.evaluate(() => window.__sf.setSpeed(12));
+    let shotMid = false; mid0 = (await st()).time;
     const end = await until(async () => {
       const s = await st();
-      if (!shotMid && s.time > 60) { shotMid = true; mid = s; await page.keyboard.up('KeyW'); await shot('mid-battle'); log('  mid-battle:', perfNote(s)); }
+      if (!shotMid && s.time > mid0 + 40) { shotMid = true; mid = s; await page.keyboard.up('KeyW'); await shot('mid-battle'); log('  mid-battle:', perfNote(s)); }
       if (s.phase === 'ending' && !mid?.endShot) { mid = { ...(mid || {}), endShot: true }; await shot('result-banner'); }
       return s.state === 'results' ? s : null;
     }, 420000, 400);

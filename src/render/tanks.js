@@ -114,13 +114,19 @@ export class TankRenderer {
         e.dmgKey = key;
       }
       // ---- suspension: pitch with acceleration, roll in turns, kick when firing
-      const acc = (speed - e.lastSpeed) / Math.max(dt, 1e-3); e.lastSpeed = speed;
-      e.accel += (acc - e.accel) * Math.min(1, dt * 8);
+      const acc = (speed - e.lastSpeed) / Math.max(dt, 1 / 60); e.lastSpeed = speed;
+      e.accel += (Math.max(-30, Math.min(30, acc)) - e.accel) * Math.min(1, dt * 8);
       const sp = e.susp, k = 70, c = 7;
       const tp = dead ? 0 : Math.max(-0.045, Math.min(0.045, e.accel * 0.006));
       const tr = dead ? 0 : Math.max(-0.035, Math.min(0.035, yawRate * speed * 0.006));
-      sp.pv += (k * (tp - sp.p) - c * sp.pv) * dt; sp.p += sp.pv * dt;
-      sp.rv += (k * (tr - sp.r) - c * sp.rv) * dt; sp.r += sp.rv * dt;
+      // sub-stepped (stable at any frame rate) and clamped: a slow frame must never spin the hull
+      const hdt = Math.min(Math.max(dt, 0), 0.25), ns = Math.max(1, Math.ceil(hdt / (1 / 120))), h = hdt / ns;
+      for (let i = 0; i < ns; i++) {
+        sp.pv += (k * (tp - sp.p) - c * sp.pv) * h; sp.p += sp.pv * h;
+        sp.rv += (k * (tr - sp.r) - c * sp.rv) * h; sp.r += sp.rv * h;
+      }
+      const cl = (v, m) => (Number.isFinite(v) ? Math.max(-m, Math.min(m, v)) : 0);
+      sp.p = cl(sp.p, 0.08); sp.r = cl(sp.r, 0.08); sp.pv = cl(sp.pv, 2); sp.rv = cl(sp.rv, 2);
       const bump = dead ? 0 : Math.sin(this.time * 9 + t.id) * 0.006 * Math.min(1, Math.abs(speed) / 8);
       // ---- recoil
       e.recoilT += dt;

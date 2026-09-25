@@ -19,12 +19,13 @@ export class GameCamera {
     this.pos = { x: 0, y: 0, z: 0 }; this.dir = { x: 0, y: 0, z: 1 }; this.look = { x: 0, y: 0, z: 1 };
     this.pivot = { x: 0, y: 0, z: 0 };
     this.fov = fov; this.fovNow = fov;
-    this.shake = 0;
+    this.shake = 0; this.sniperLim = null;
   }
   get zoom() { return this.sniper ? ZOOMS[this.zoomIdx] : 1; }
 
   setYawPitch(yaw, pitch) { this.yaw = yaw; this.pitch = pitch; this._clampPitch(); }
-  _clampPitch() { const [a, b] = this.sniper ? PITCH_SNIPER : PITCH_ARCADE; this.pitch = Math.max(a, Math.min(b, this.pitch)); }
+  // sniperLim: [min, max] look pitch in sniper mode (the gun's depression/elevation band plus hull pitch)
+  _clampPitch() { const [a, b] = this.sniper ? this.sniperLim || PITCH_SNIPER : PITCH_ARCADE; this.pitch = Math.max(a, Math.min(b, this.pitch)); }
 
   // Mouse: radians per pixel scaled by sensitivity; in sniper by the zoom's fov too.
   turn(dx, dy, sens = 1, invertY = false) {
@@ -62,6 +63,7 @@ export class GameCamera {
 
   // focus: { pivot: {x,y,z} (arcade orbit centre), eye: {x,y,z} (sniper, at the gun) }, map
   update(focus, map, dt) {
+    if (this.sniper) this._clampPitch();
     const cp = Math.cos(this.pitch), d = this.dir;
     d.x = Math.sin(this.yaw) * cp; d.y = Math.sin(this.pitch); d.z = Math.cos(this.yaw) * cp;
     const targetFov = this.sniper ? 2 * Math.atan(Math.tan(this.baseFov * DEG / 2) / ZOOMS[this.zoomIdx]) / DEG : this.baseFov;

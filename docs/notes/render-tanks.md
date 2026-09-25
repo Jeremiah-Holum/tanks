@@ -110,3 +110,9 @@ tracks, small turret), M3 Lee (taller hull, `look.hullGun` = right-sponson 75 mm
 T25 AT (low casemate), MS-1 / T-26 / AT-1 / BT-7 (narrow low hulls, taller tracks, smaller turrets;
 BT-7 four big Christie wheels), T-28 (exposed tracks, main turret back so the MG sub-turrets fit).
 rules-test 91/91, meta-test 38/38. M6 near LOD is now ~29k tris (twin HVSS wheels).
+
+## Fix: hull vanishing at low frame rates (PM bug, Leichttraktor at 'low')
+The suspension spring on the model body (hull + turret; the tracks aren't under it) was integrated
+with the raw frame dt; at ~7 fps it went unstable and spun the body out of view. It is now
+sub-stepped at 1/120 s, dt is capped at 0.25 s, and pitch, roll and their rates are clamped (NaN-safe).
+Lab: `fdt=<s>` simulates a slow frame rate; `grid=1&ids=a,b,…` shows chosen tanks.

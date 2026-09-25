@@ -26,8 +26,8 @@ export class BattleSession {
     const P = params;
     this.fast = P.get('fast') === '1';
     this.god = this.fast || P.get('god') === '1';
-    this.speed = +(P.get('speed') || (this.fast ? 3 : 1));
-    this.maxSteps = this.fast ? 40 : 8;               // catch-up cap per rendered frame
+    this.speed = +(P.get('speed') || (this.fast ? 4 : 1));
+    this.maxSteps = this.fast ? 150 : 5;               // catch-up cap per rendered frame (the game slows down instead)
     this.qFixed = P.get('q') || (settings.quality !== 'auto' ? settings.quality : null);
     this.quality = this.qFixed || 'medium';
     this.phase = 'loading';                            // loading → countdown → play → (dead) → ending → done
@@ -64,7 +64,7 @@ export class BattleSession {
     progress(0.58, 'Crews boarding…'); await nextFrame();
     await view.ready;
     let timeLimit = b.timeLimit || 900;
-    if (P.get('limit')) timeLimit = +P.get('limit'); else if (this.fast) timeLimit = 150;
+    if (P.get('limit')) timeLimit = +P.get('limit'); else if (this.fast) timeLimit = 100;
     const world = this.world = createBattle({ ...b, map, timeLimit });
     const me = this.player = world.tanks.find((t) => t.player) || world.tanks[0];
     this.team = me.team;
@@ -134,8 +134,8 @@ export class BattleSession {
   // ------------------------------------------------------------------ per frame
   frame(dt) {
     if (this.phase === 'loading' || this.phase === 'done') return;
-    const f0 = performance.now();
-    dt = Math.min(dt, 0.25);
+    const f0 = performance.now(), rawDt = dt;
+    dt = Math.min(dt, this.fast ? 1 : 0.25);   // ?fast: let a slow (headless) frame advance up to 1 s × speed
     const world = this.world, me = this.player, inp = this.input;
     this.events.length = 0;
     // --- input (not while a menu is open)
@@ -190,7 +190,7 @@ export class BattleSession {
     this.hud.update(this._hudState(dt));
     for (const e of this.events) this.hud.event(e, world);
     const h1 = performance.now();
-    this._perf(dt, sim, ai, r1 - r0, h1 - r1, steps, performance.now() - f0);
+    this._perf(rawDt, sim, ai, r1 - r0, h1 - r1, steps, performance.now() - f0);
   }
 
   _handleInput(dt) {
@@ -299,6 +299,11 @@ export class BattleSession {
     const t = this._focusTank();
     if (!t) return;
     if (this.phase === 'dead' && this.cam.sniper) this.cam.sniper = false;
+    if (this.cam.sniper) {
+      // look pitch limited to what the gun can reach: depression/elevation plus the hull's pitch along the view
+      const g = t.gunDef, along = t.pitch * Math.cos(this.cam.yaw - t.yaw);
+      this.cam.sniperLim = [along + (g.dep - 3) * DEG, along + (g.elev + 3) * DEG];
+    }
     this.cam.update(this._focus(t), this.world.map, dt);
   }
   _updateAim() {
@@ -441,7 +446,9 @@ export class BattleSession {
     A.t = (A.t || 0) + dt;
     if (A.t >= 1) {
       const P = this.perf, n = A.n;
-      P.fps = n / A.t; P.frame = A.frame / n; P.sim = A.sim / n; P.ai = A.ai / n; P.render = A.render / n; P.hud = A.hud / n; P.cpu = A.cpu / n; P.steps = A.steps / n;
+      // sim and AI per step (ms), the rest per frame
+      P.fps = n / A.t; P.frame = A.frame / n; P.sim = A.steps ? A.sim / A.steps : 0; P.ai = A.steps ? A.ai / A.steps : 0;
+      P.render = A.render / n; P.hud = A.hud / n; P.cpu = A.cpu / n; P.steps = A.steps / n;
       const st = this.view.stats(); P.calls = st.calls; P.tris = st.tris;
       P.frames += n;
       if (this.phase === 'play' || this.phase === 'dead') P.win.push(P.frame);

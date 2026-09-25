@@ -207,6 +207,14 @@ export class Brain {
       const cv = this.findCover(world);
       if (cv) this.cover = { x: cv.x, z: cv.z, until: now + 5 + 6 * this.rng(), geo: this.post.geo };
     }
+    // positioning: seen by several enemies at once → slide to a spot nearby that only one (or
+    // none) of them can see (fight them one at a time), using the team's danger map
+    if (this.knows.cover && !this.cover && (this.arrived || this.hold) && now > this.coverAt + 4 && !this.defending
+      && (t.spotted || now - this.lastHitT < 5) && T.dangerAt2(pos.x, pos.z) >= 2) {
+      this.coverAt = now;
+      const cv = this.saferSpot(world);
+      if (cv) this.cover = { x: cv.x, z: cv.z, until: now + 8 + 6 * this.rng(), geo: this.post ? this.post.geo : 0 };
+    }
     const range = ENGAGE_RANGE[this.cls];
     const g = this.post ? this.post.geo : T.info.brawlLane;
     const prog = T.prog(pos.x, pos.z, g);
@@ -441,22 +449,38 @@ export class Brain {
     let ax = 0, az = 0;
     for (const e of eyes) { const d = hyp(e.x - t.pos.x, e.z - t.pos.z) || 1; ax += (e.x - t.pos.x) / d; az += (e.z - t.pos.z) / d; }
     const top = t.def.hull.clr + t.def.hull.H + t.def.turret.H * 0.8, B = {};
-    const a0 = this.rng() * TAU;
-    for (const r of [10, 18, 28, 40]) {
+    // only behind us (±50°): reversing into cover keeps the front to the enemy and needs no turn
+    const back = t.yaw + Math.PI;
+    for (const r of [9, 15, 22]) {
       let best = null, bs = -Infinity;
-      for (let i = 0; i < 10; i++) {
-        const a = a0 + i * TAU / 10, px = t.pos.x + Math.cos(a) * r, pz = t.pos.z + Math.sin(a) * r;
-        if (!passable(nav, px, pz, 2.2)) continue;
+      for (let i = -3; i <= 3; i++) {
+        const a = back + i * 0.29, px = t.pos.x + Math.sin(a) * r, pz = t.pos.z + Math.cos(a) * r;
+        if (!passable(nav, px, pz, 2.2) || !segClear(nav, t.pos.x, t.pos.z, px, pz)) continue;
         B.x = px; B.z = pz; B.y = heightAt(map, px, pz) + top;
         let hidden = true;
         for (const E of eyes) if (lineClear(map, E, B)) { hidden = false; break; }
         if (!hidden) continue;
-        const sc = -((px - t.pos.x) * ax + (pz - t.pos.z) * az) / r;
+        const sc = -((px - t.pos.x) * ax + (pz - t.pos.z) * az) / r - Math.abs(i) * 0.1;
         if (sc > bs) { bs = sc; best = { x: px, z: pz }; }
       }
       if (best) return best;
     }
     return null;
+  }
+
+  // Nearby spot (≤ 40 m) where about one known enemy can see us (or none), from the danger map.
+  saferSpot(world) {
+    const t = this.t, T = this.team, here = T.dangerAt2(t.pos.x, t.pos.z);
+    let best = null, bs = Infinity;
+    for (let i = 0; i < 16; i++) {
+      const a = i * TAU / 16, r = i % 2 ? 18 : 34, x = t.pos.x + Math.cos(a) * r, z = t.pos.z + Math.sin(a) * r;
+      if (!passable(T.navS, x, z, 2.2)) continue;
+      const dg = T.dangerAt2(x, z);
+      if (dg > here - 1) continue;
+      const sc = Math.abs(dg - 0.8) + r / 40 + this.rng() * 0.2;
+      if (sc < bs) { bs = sc; best = { x, z }; }
+    }
+    return best;
   }
 
   // Would backing up `dist` metres hide us from the enemies that can see us now?

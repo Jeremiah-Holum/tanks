@@ -61,7 +61,7 @@ function endBattle({ world, playerId, battle }) {
 }
 
 function loop(now) {
-  const dt = Math.min(0.25, Math.max(0, (now - lastT) / 1000));
+  const dt = Math.min(5, Math.max(0, (now - lastT) / 1000)); // the session clamps it
   lastT = now;
   if (session && state === 'battle') {
     try { session.frame(dt); }
@@ -87,6 +87,7 @@ window.__sf = {
     };
   },
   lastReport: null,
+  setSpeed(n) { if (session) session.speed = n; },   // test hook: sim speed multiplier
 };
 
 // boot
