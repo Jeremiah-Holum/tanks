@@ -51,8 +51,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0d0c; }
 .enemy .tl-row.spot .tl-name { opacity: .9; }
 .tl-row.me { background: linear-gradient(90deg, rgba(240,168,48,.35), rgba(240,168,48,0)); }
 .tl-row.me .tl-tank, .tl-row.me .tl-name { color: var(--amber2); opacity: 1; }
-.tl-row.dead { opacity: .45; }
-.tl-row.dead .tl-tank, .tl-row.dead .tl-name { text-decoration: line-through; color: var(--muted); }
+.tl-row.dead { opacity: .6; }
+.tl-row.dead .tl-tank, .tl-row.dead .tl-name { text-decoration: line-through; color: var(--muted); text-shadow: 0 1px 2px #000; }
 
 /* ---------------------------------------------------------------- markers & floating damage */
 .mk { position: absolute; left: 0; top: 0; will-change: transform; display: flex; flex-direction: column; align-items: center; gap: 2px;

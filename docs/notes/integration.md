@@ -64,7 +64,8 @@ Owner of `src/main.js`, `src/game/*`, `src/ui/hud.js`, `src/ui/hud.css`, `index.
 - Death: "Destroyed by X · tank · cause" banner, then spectating allies (LMB/RMB next/previous).
 - Esc menu: Resume / Settings (the Screens settings dialog shown over the battle: the root gets
   `.sf-overlay`) / Leave battle. The sim pauses while the menu or settings are open. Losing pointer lock
-  (browser Esc) opens the menu. Leaving = defeat with the tank destroyed (`deathCause 'left'`).
+  (browser Esc) opens the menu. Leaving = defeat with the tank destroyed (`deathCause 'left'`); leaving after death has no penalty: the rest of
+  the battle is resolved at ×40 without sound (`session.resolving`), then the results.
 
 ## Audio
 `audio.music('battle')` at start; per frame the listener is the camera (pos, forward, playerId);

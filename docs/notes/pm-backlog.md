@@ -1,9 +1,9 @@
 # PM backlog: items for later phases
-- INTEGRATION: delete old src/ui.js, src/ui.css, src/garage3d.js, old src/main.js; tools/build.mjs → copy src/ui/ui.css; index.html loads src/ui/ui.css.
-- INTEGRATION: set world.firstKill (the id of the first killer) from kill events if SIM hasn't (Spearhead medal).
+- ☑ Old toy files removed.
+- ☑ world.firstKill set in session.js (Spearhead medal).
 - META follow-up: Sell button in the hangar/details (economy.sell exists).
 - SIM: a pivot buried underground on a steep crest is unhandled (rare).
-- SIM: delete old toy sim files (world.js, tanks.js, levels.js, game.js, director.js, mapgen.js, maps.js, ai.js) once main.js is replaced.
+- ☑ Old toy sim files removed.
 - RENDER-TANKS polish (later): early boxy silhouettes (MS-1, T-26, AT-1) need glacis frac/shape tweaks; M6 near LOD 29k tris (trim twin wheels); tracers not interpolated; track hitbox taper (SIM).
 
 ## Token ledger (cap 3.5M counted, hard ceiling 3.75M; uncounted work is free per the owner)
@@ -11,4 +11,5 @@ Counted (reported agents): SIM 357k, MAPS 291k, AUDIO 192k, SIM-review 198k, MET
 Free: AI up to 421.8k and INTEGRATION up to 334k (their usage when the cap was set); anything beyond those counts.
 Counted overage: AI +16k (final 438k).
 Counted overage: INTEGRATION +20k (final 354k).
-Remaining: ~1.16M (to 3.5M) covers AI/INTEGRATION overage plus phase 3; wiggle to ~1.45M.
+Counted: QA+FIX 188k.
+Total counted ≈ 2.51M of the 3.5M cap (PM usage not tallied, per the owner). Stopped at a good point with ~1M unspent.

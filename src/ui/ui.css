@@ -568,3 +568,12 @@ kbd { font: 600 11px/1 var(--cond); color: var(--muted); border: 1px solid var(-
 .rs-kchip i { font: 11px/1 var(--head); font-style: normal; color: var(--amber); }
 .rs-kchip small { font-weight: 500; color: var(--muted); }
 .rs-kchip .cls-ico { color: var(--red2); }
+/* short windows (≤ 640 px high): a tighter results header so the credit ledger fits */
+@media (max-height: 640px) {
+  .rs-banner { height: 84px; gap: 3px; }
+  .rs-title { font-size: 40px; }
+  .rs-tabs { top: 80px; }
+  .rs-body { top: 114px; bottom: 58px; }
+  .rs-tank { height: 90px; }
+  .rs-img { height: 86px; }
+}

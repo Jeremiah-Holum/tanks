@@ -48,7 +48,7 @@ export function buildSettings(S) {
       row('Commander name', h('input.st-text', { value: draft.name, maxlength: 24, oninput: (e) => { draft.name = e.target.value.replace(/[^\w\-. ]/g, '').slice(0, 24); } })),
       row('Default battle size', seg('battleSize', [[15, '15 vs 15'], [7, '7 vs 7']])),
       row('Damage log in battle', toggle('damageLog')),
-      h('div.st-danger', h('div', h('b', 'Reset progress'), h('small', 'Deletes all vehicles, experience, credits and statistics. Settings are kept.')),
+      S.root.classList.contains('sf-overlay') ? null : h('div.st-danger', h('div', h('b', 'Reset progress'), h('small', 'Deletes all vehicles, experience, credits and statistics. Settings are kept.')),
         h('button.sf-btn.danger.small', { onclick: async () => {
           if (await S.confirm({ title: 'Reset progress?', body: [h('p', 'Everything you have earned will be lost. This cannot be undone.')], ok: 'Reset', danger: true })) {
             const np = newProfile(S.profile.name); np.settings = S.profile.settings;
@@ -60,7 +60,7 @@ export function buildSettings(S) {
   const render = () => {
     clear(tabs).append(...[['graphics', 'Graphics'], ['controls', 'Controls'], ['audio', 'Audio'], ['game', 'Game']]
       .map(([k, l]) => h('button.st-tab' + (k === cur ? '.on' : ''), { onclick: () => { cur = k; render(); } }, l)));
-    clear(body).append(...pages[cur]());
+    clear(body).append(...pages[cur]().filter(Boolean));
   };
   render();
   const apply = () => {

@@ -142,9 +142,10 @@ export class BattleSession {
     this.events.length = 0;
     // --- input (not while a menu is open)
     if (this.settingsOpen && !this.screens.modals?.children.length) this._closeSettings();
-    if (this._lockLost) { this._lockLost = false; if (this.phase === 'play' || this.phase === 'dead' || this.phase === 'countdown') this._openMenu(); }
-    if (inp.take('Escape')) { if (this.settingsOpen) { /* the settings modal closes itself */ } else if (this.menuOpen) this._closeMenu(); else if (this.phase !== 'ending') this._openMenu(); }
-    const menu = this.menuOpen || this.settingsOpen;
+    if (this._lockLost) { this._lockLost = false; inp.take('Escape'); if (!this.resolving && (this.phase === 'play' || this.phase === 'dead' || this.phase === 'countdown')) this._openMenu(); }
+    if (this.resolving) inp.flush();
+    else if (inp.take('Escape')) { if (this.settingsOpen) { /* the settings modal closes itself */ } else if (this.menuOpen) this._closeMenu(); else if (this.phase !== 'ending') this._openMenu(); }
+    const menu = !this.resolving && (this.menuOpen || this.settingsOpen);
     if (!menu) this._handleInput(dt);
     else inp.flush();
     // --- countdown
@@ -190,7 +191,7 @@ export class BattleSession {
     this._render(running && this.speed !== 1 ? Math.min(0.5, dt * this.speed) : dt);
     const r1 = performance.now();
     // --- audio
-    this._audio();
+    if (!this.resolving) this._audio();
     const a1 = performance.now();
     // --- HUD
     this.hud.update(this._hudState(dt));
@@ -223,7 +224,8 @@ export class BattleSession {
     }
     for (let k = 0; k < 3; k++) if (inp.take('Digit' + (k + 4)) || inp.take('Numpad' + (k + 4))) {
       const c = me.consumables[k];
-      if (c && c.ready) this.useQueued = c.kind; else if (c) this.hud.toast(`${label(c.kind)} is not ready`);
+      if (c && c.ready) { if (needs(me, c.kind)) this.useQueued = c.kind; else this.hud.toast(NOTHING[c.kind] || 'Nothing to fix', 'dim'); }
+      else if (c) this.hud.toast(`${label(c.kind)} is not ready`);
     }
     if (inp.take('KeyR') && me.gunDef.shells.length > 1) this.reloadHack = 2;
     if (this.phase !== 'play') { inp.takeBtn(0); inp.takeBtn(2); return; }
@@ -427,6 +429,13 @@ export class BattleSession {
   leave() {
     const w = this.world, me = this.player;
     this.left = true; this.menuOpen = false; this.hud.menu(false);
+    if (!w.result && !me.alive) {
+      // already destroyed: no desertion penalty, the rest of the battle plays out at speed (no sound)
+      this.resolving = true; this.speed = Math.max(this.speed, 40); this.maxSteps = Math.max(this.maxSteps, 400);
+      try { this.audio?.stopAll?.(); } catch { /* */ }
+      this.hud.toast('Leaving: the battle is being resolved…', 'dim');
+      return;
+    }
     if (!w.result) {
       if (this.god) this._godOff();
       if (me.alive) { me.alive = false; me.hp = 0; me.deathCause = 'left'; }
@@ -449,6 +458,9 @@ export class BattleSession {
   // ------------------------------------------------------------------ perf & auto-quality
   _perf(dt, sim, ai, render, hud, steps, frame, audio) {
     const A = this._perfAcc;
+    // a hidden tab / alt-tab / debugger pause is not a slow frame: drop the window so auto-quality
+    // doesn't lower the graphics after every tab switch
+    if (dt > 0.5 && !this.fast) { Object.assign(A, { n: 0, sim: 0, ai: 0, render: 0, hud: 0, frame: 0, steps: 0, cpu: 0, t: 0, audio: 0 }); return; }
     A.audio = (A.audio || 0) + audio;
     A.n++; A.sim += sim; A.ai += ai; A.render += render; A.hud += hud; A.frame += dt * 1000; A.steps += steps; A.cpu = (A.cpu || 0) + frame;
     A.t = (A.t || 0) + dt;
@@ -467,7 +479,7 @@ export class BattleSession {
   }
   _autoQuality() {
     const P = this.perf;
-    if (this.qFixed || P.win.length < 5 || this.menuOpen) return;
+    if (this.qFixed || P.win.length < 5 || this.menuOpen || this.resolving) return;
     const avg = P.win.reduce((a, b) => a + b, 0) / P.win.length;
     const i = TIERS.indexOf(this.quality);
     if (avg > 22 && i > 0) { this._setQuality(TIERS[i - 1]); P.drops.push({ at: this.world.time, to: this.quality, avg }); this.hud.toast(`Graphics quality lowered to ${this.quality} (${avg.toFixed(0)} ms/frame)`, 'dim'); }
@@ -488,3 +500,7 @@ export class BattleSession {
 }
 
 const label = (k) => ({ repair: 'Repair kit', medkit: 'First aid kit', extinguisher: 'Fire extinguisher' }[k] || k);
+// Would a consumable do anything right now? (the sim refuses it silently otherwise)
+const needs = (t, k) => (k === 'repair' ? Object.values(t.modules).some((m) => m.state !== 'ok')
+  : k === 'medkit' ? Object.values(t.crew).some((c) => !c.alive) : k === 'extinguisher' ? !!t.fire : true);
+const NOTHING = { repair: 'No damaged modules to repair', medkit: 'No injured crew', extinguisher: 'No fire to put out' };
