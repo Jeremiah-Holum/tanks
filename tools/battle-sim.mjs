@@ -71,8 +71,8 @@ async function runBattle({ mapId, seed, limit, verbose }) {
   }
   const tanks = world.tanks.map((t) => ({
     team: t.team, cls: t.def.cls, tier: t.def.tier, hp: t.maxHp, skill: t.bot ? t.bot.skill : 0.5, alive: t.alive,
-    life: t.alive ? world.time : deathT[t.id] ?? world.time, dmg: t.stats.dmg, shots: t.stats.shots, hits: t.stats.hits, pens: t.stats.pens,
-    kills: t.stats.kills, unsticks: brains.get(t.id).stats.unsticks, spotted: t.stats.spotted,
+    life: t.alive ? world.time : deathT[t.id] ?? world.time, share: (t.alive ? world.time : deathT[t.id] ?? world.time) / world.time, dmg: t.stats.dmg, shots: t.stats.shots, hits: t.stats.hits, pens: t.stats.pens,
+    kills: t.stats.kills, received: t.stats.received, unsticks: brains.get(t.id).stats.unsticks, spotted: t.stats.spotted,
   }));
   const bots = world.tanks.length;
   return {
@@ -146,11 +146,12 @@ function report(R, secs) {
     return a / Math.sqrt(b * c || 1);
   };
   const sk = T.map((t) => t.skill);
-  console.log(`\nskill correlation: r(skill, dmg/hp) = ${corr(sk, T.map((t) => t.dmg / t.hp)).toFixed(2)}, r(skill, lifetime share) = ${corr(sk, T.map((t, i) => t.life / 1)).toFixed(2)}, r(skill, survived) = ${corr(sk, T.map((t) => (t.alive ? 1 : 0))).toFixed(2)}, r(skill, hit%) = ${corr(sk.filter((_, i) => T[i].shots > 2), T.filter((t) => t.shots > 2).map((t) => t.hits / t.shots)).toFixed(2)}`);
+  console.log(`\nskill correlation: r(skill, dmg/hp) = ${corr(sk, T.map((t) => t.dmg / t.hp)).toFixed(2)}, r(skill, lifetime share) = ${corr(sk, T.map((t) => t.share)).toFixed(2)}, r(skill, survived) = ${corr(sk, T.map((t) => (t.alive ? 1 : 0))).toFixed(2)}, r(skill, hit%) = ${corr(sk.filter((_, i) => T[i].shots > 2), T.filter((t) => t.shots > 2).map((t) => t.hits / t.shots)).toFixed(2)}`);
   for (const [lo, hi, name] of [[0, 0.35, 'potato (<0.35)'], [0.35, 0.65, 'average'], [0.65, 1.01, 'unicum (>0.65)']]) {
     const L = T.filter((t) => t.skill >= lo && t.skill < hi);
     const sh = L.reduce((a, t) => a + t.shots, 0), hi2 = L.reduce((a, t) => a + t.hits, 0);
-    console.log(`  ${name.padEnd(15)} n=${String(L.length).padStart(4)}  dmg/hp ${mean(L.map((t) => t.dmg / t.hp)).toFixed(2)}  survived ${pct(L.filter((t) => t.alive).length, L.length)}  hit ${pct(hi2, sh)}  kills ${mean(L.map((t) => t.kills)).toFixed(2)}`);
+    const pe2 = L.reduce((a, t) => a + t.pens, 0);
+    console.log(`  ${name.padEnd(15)} n=${String(L.length).padStart(4)}  dmg/hp ${mean(L.map((t) => t.dmg / t.hp)).toFixed(2)}  survived ${pct(L.filter((t) => t.alive).length, L.length)}  life ${mean(L.map((t) => t.life / 60)).toFixed(1)} min  shots ${(sh / Math.max(1, L.length)).toFixed(1)}  hit ${pct(hi2, sh)}  pen ${pct(pe2, hi2)}  kills ${mean(L.map((t) => t.kills)).toFixed(2)}  recv/hp ${mean(L.map((t) => t.received / t.hp)).toFixed(2)}`);
   }
   const ai = mean(R.map((r) => r.aiMsPerBotTick)), sim = mean(R.map((r) => r.simMsPerTick));
   console.log(`\nAI ${ai.toFixed(3)} ms per bot per tick (max ${Math.max(...R.map((r) => r.aiMsPerBotTick)).toFixed(3)}), ${mean(R.map((r) => r.aiMsPerTick)).toFixed(2)} ms per tick; sim ${sim.toFixed(2)} ms per tick; unsticks/tank ${mean(T.map((t) => t.unsticks)).toFixed(2)}`);

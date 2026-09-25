@@ -34,6 +34,19 @@ export function makeOuterHeight(map, h) {
   for (let k = 0; k <= 64; k++) { const t = (k / 64) * S; sum += h(t, 0) + h(t, S) + h(0, t) + h(S, t); n += 4; }
   let base = sum / n;
   if (map.water) base = Math.max(base, map.water.level + 4);
+  // rivers leaving the map carry on as channels cut through the outer hills
+  const chans = [];
+  for (const rv of map.rivers || []) {
+    const pts = rv.path; if (!pts || pts.length < 2) continue;
+    for (const [a, b] of [[pts[1], pts[0]], [pts[pts.length - 2], pts[pts.length - 1]]]) {
+      let dx = b[0] - a[0], dz = b[1] - a[1]; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
+      const ox = Math.min(S, Math.max(0, a[0])), oz = Math.min(S, Math.max(0, a[1]));
+      let bed = h(ox, oz), half = 6;
+      if (map.water) for (let k = 1; k < 60; k++) { const px = ox - dz * k, pz = oz + dx * k, qx = ox + dz * k, qz = oz - dx * k; if (h(px, pz) < map.water.level || h(qx, qz) < map.water.level) half = k; else break; }
+      for (let k = -half; k <= half; k++) bed = Math.min(bed, h(Math.min(S, Math.max(0, ox - dz * k)), Math.min(S, Math.max(0, oz + dx * k))));
+      chans.push({ ox, oz, dx, dz, bed, half: Math.max(8, rv.halfW || half) });
+    }
+  }
   const P = 1 << 16;
   const fbm = (x, z, sc, oct) => { let s = 0, a = 1, f = 1 / sc, no = 0; for (let o = 0; o < oct; o++) { s += a * (N.vn(x * f + 5000 + o * 31, z * f + 5000 - o * 17, P) - 0.5); no += a; a *= 0.5; f *= 2.03; } return s / no; };
   return (x, z) => {
@@ -49,7 +62,15 @@ export function makeOuterHeight(map, h) {
     const w = smooth(0, 380, d);
     const amp = 10 + Math.min(d, 4000) * 0.06;
     const hills = base + fbm(x, z, 900, 5) * amp * 2.2 + Math.pow(Math.min(d, 5000) / 1000, 1.6) * 38 + fbm(x, z, 180, 3) * 6 * w;
-    return he + (hills - he) * w;
+    let out = he + (hills - he) * w;
+    for (const c of chans) {
+      const rx = x - c.ox, rz = z - c.oz, t = rx * c.dx + rz * c.dz;
+      if (t < 0) continue;
+      const perp = Math.abs(-rx * c.dz + rz * c.dx - Math.sin(t / 160) * Math.min(40, t * 0.15));
+      const wb = c.half * (1 + t / 900);
+      if (perp < wb * 3) out = Math.min(out, c.bed + (out - c.bed) * smooth(wb * 0.75, wb * 3, perp));
+    }
+    return out;
   };
 }
 

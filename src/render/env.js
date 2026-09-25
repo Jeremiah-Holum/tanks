@@ -38,7 +38,7 @@ function variant(base, over) {
 export const THEMES = {
   summer: SUMMER,
   autumn: variant(SUMMER, {
-    ground: { grass: [[92, 90, 42], [112, 104, 50], [150, 126, 70], [80, 86, 40], [176, 140, 80]], field: [[112, 86, 60], [86, 66, 48], [150, 124, 72], [170, 140, 84]], fieldCover: 0.25 },
+    ground: { grass: [[92, 90, 42], [112, 104, 50], [150, 126, 70], [80, 86, 40], [176, 140, 80]], field: [[132, 104, 76], [108, 86, 64], [150, 124, 72], [170, 140, 84]], fieldCover: 0.25 },
     foliage: { leaf: [[168, 92, 30], [196, 132, 40], [132, 60, 26], [150, 128, 44], [110, 96, 40]], leaf2: [[206, 160, 50], [180, 120, 40], [150, 136, 56]],
       blade: [[112, 104, 50], [132, 116, 58], [150, 130, 70], [96, 92, 44]], flowers: [[200, 170, 90]] },
     sky: { zenith: [0.2, 0.34, 0.66], horizon: [0.86, 0.8, 0.72], sun: [1.0, 0.78, 0.54], sunI: 3.0, elev: 18, fog: 1 / 1300, clouds: 0.56 },
@@ -47,7 +47,9 @@ export const THEMES = {
   winter: variant(SUMMER, {
     ground: { grass: [[150, 150, 130], [176, 176, 160], [140, 132, 110], [130, 134, 120], [200, 200, 190]], field: [[210, 214, 222], [170, 170, 176], [226, 230, 238], [196, 200, 210]], fieldCover: 0.6,
       dirt: [[110, 100, 90], [90, 84, 78], [150, 146, 140]], road: [[168, 164, 160], [140, 136, 132], [200, 200, 204]] },
-    foliage: { needle: [[30, 46, 34], [40, 58, 44], [150, 160, 170]], bare: true, blade: [[160, 156, 130], [180, 176, 150]], flowers: [[230, 230, 230]] },
+    foliage: { needle: [[30, 46, 34], [40, 58, 44], [150, 160, 170]], bare: true, blade: [[160, 156, 130], [180, 176, 150]], flowers: [[230, 230, 230]],
+      leaf2: [[92, 82, 64], [110, 96, 74], [76, 70, 58], [200, 206, 214]], leaf: [[70, 76, 56], [84, 88, 64], [196, 204, 214]] },
+    snow: 1,
     sky: { zenith: [0.3, 0.42, 0.66], horizon: [0.84, 0.86, 0.9], sun: [1.0, 0.9, 0.8], sunI: 2.4, elev: 14, fog: 1 / 1100, clouds: 0.62, ground: [0.6, 0.62, 0.66], env: 0.75 },
     grassDensity: 0.25, cropMix: 0,
   }),
@@ -208,7 +210,7 @@ export class Env {
   buildWater(map, terrain) {
     if (this.water) { this.scene.remove(this.water); this.water.geometry.dispose(); this.water.material.dispose(); this.water = null; }
     if (!map.water) return;
-    const size = map.size, ext = 900;
+    const size = map.size, ext = 2600;
     const geo = new THREE.PlaneGeometry(size + ext * 2, size + ext * 2, 1, 1); geo.rotateX(-Math.PI / 2);
     geo.translate(size / 2, map.water.level, size / 2);
     const mat = new THREE.ShaderMaterial({
