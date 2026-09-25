@@ -77,7 +77,10 @@ else if (screen === 'tree') screens.showTree(q.get('nation') || 'germany');
 else if (screen === 'details') screens.showDetails(q.get('tank') || profile.selected);
 else if (screen === 'record') screens.showRecord();
 else if (screen === 'settings') { screens.showHangar(); screens.showSettings(); }
-else if (screen === 'loading') { screens.showLoading(battle); screens.setLoadingProgress(0.62, 'Building terrain…'); }
+else if (screen === 'loading') {
+  screens.showLoading(battle); screens.setLoadingProgress(0.62, 'Building terrain…');
+  if (!q.has('nomap')) { const { loadMap } = await import('../src/sim/map/index.js'); await new Promise((r) => setTimeout(r, 50)); screens.setLoadingMap(loadMap(battle.mapId)); }
+}
 else if (screen === 'results') {
   const world = sampleWorld(profile, battle, q.get('result') || 'victory');
   screens.finishBattle(world, world.tanks.find((t) => t.player).id, battle);

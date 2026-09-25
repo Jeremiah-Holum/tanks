@@ -27,7 +27,7 @@ function rnd(seed) { let s = seed; return () => ((s = (s * 16807) % 2147483647) 
 
 function concrete(ctx, w, h) {
   const r = rnd(7);
-  ctx.fillStyle = '#5d5f5b'; ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = '#4a4c48'; ctx.fillRect(0, 0, w, h);
   for (let i = 0; i < 2600; i++) {
     const x = r() * w, y = r() * h, s = 1 + r() * 3;
     ctx.fillStyle = `rgba(${r() < 0.5 ? '20,20,18' : '120,120,112'},${0.05 + r() * 0.1})`; ctx.fillRect(x, y, s, s);
@@ -76,7 +76,7 @@ export class HangarScene {
     const r = this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: true });
     r.setPixelRatio(Math.min(1.5, window.devicePixelRatio || 1));
     r.outputColorSpace = THREE.SRGBColorSpace;
-    r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.05;
+    r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 0.92;
     r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFShadowMap;
     const scene = this.scene = new THREE.Scene();
     scene.background = new THREE.Color(0x121412);
@@ -161,7 +161,7 @@ export class HangarScene {
     s.add(key, key.target);
     const rim = new THREE.DirectionalLight(0xffd9a0, 1.6); rim.position.set(-2, 5, -12); s.add(rim);
     const fill = new THREE.PointLight(0x8fb4ff, 30, 18, 1.8); fill.position.set(-7, 3.5, 5); s.add(fill);
-    const warm = new THREE.PointLight(0xffb266, 22, 14, 1.8); warm.position.set(8, 2.5, -4); s.add(warm);
+    const warm = new THREE.PointLight(0xffb266, 14, 12, 1.8); warm.position.set(9, 2.5, -6); s.add(warm);
     for (const z of [-14, -6, 2]) { const p = new THREE.PointLight(0xffe2a8, 16, 14, 2); p.position.set(0, 8.8, z); s.add(p); }
   }
 
@@ -236,43 +236,44 @@ export class HangarScene {
     this.renderer.render(this.scene, c);
   }
 
-  // Thumbnail of a tank for the carousel (transparent background, 3/4 front view).
-  async thumb(def, w = 256, h = 128) {
+  // Thumbnail of a tank for the carousel / tech tree: its own small renderer (tone-mapped like the
+  // hangar), one fixed 3/4 front camera framed on the hull so every tank sits at the same scale.
+  async thumb(def, w = 320, h = 160) {
     const mod = await loadTankModel();
     const paint = NATIONS[def.nation]?.paint ?? 0x4b5a32;
     let model = null;
-    if (mod) try { model = mod.buildTankModel(def, { paint, lod: 1 }); } catch { model = null; }
+    if (mod) try { model = mod.buildTankModel(def, { paint, lod: 0 }); } catch { model = null; }
     const group = model ? model.group : armorModel(def, { paint }).group;
-    if (!this._thumbScene) {
+    if (!this._thumbR) {
+      const r = this._thumbR = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+      r.setPixelRatio(1); r.setSize(w, h, false);
+      r.outputColorSpace = THREE.SRGBColorSpace; r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.1;
+      r.setClearColor(0x000000, 0);
       const s = this._thumbScene = new THREE.Scene();
-      s.environment = this.env; s.environmentIntensity = 0.5;
-      s.add(new THREE.HemisphereLight(0xdde6ff, 0x3a3226, 1.2));
-      const d = new THREE.DirectionalLight(0xfff0d8, 2.4); d.position.set(4, 6, 5); s.add(d);
-      this._thumbCam = new THREE.PerspectiveCamera(24, w / h, 0.1, 100);
-      this._rt = new THREE.WebGLRenderTarget(w * 2, h * 2, { samples: 4 });
-      this._rt.texture.colorSpace = THREE.SRGBColorSpace;
+      const pm = new THREE.PMREMGenerator(r);
+      this._thumbEnv = pm.fromScene(new RoomEnvironment(), 0.04).texture; pm.dispose();
+      s.environment = this._thumbEnv; s.environmentIntensity = 0.55;
+      s.add(new THREE.HemisphereLight(0xdde6ff, 0x3a3226, 1.3));
+      const d = new THREE.DirectionalLight(0xfff0d8, 2.6); d.position.set(5, 7, 6); s.add(d);
+      const rim = new THREE.DirectionalLight(0xbcd0ff, 1.0); rim.position.set(-6, 3, -5); s.add(rim);
+      this._thumbCam = new THREE.PerspectiveCamera(22, w / h, 0.1, 100);
     }
     const s = this._thumbScene, cam = this._thumbCam;
     s.add(group);
-    const box = new THREE.Box3().setFromObject(group), size = box.getSize(new THREE.Vector3()), ctr = box.getCenter(new THREE.Vector3());
-    const r = Math.max(size.x, size.y, size.z);
-    cam.position.set(ctr.x + r * 1.25, ctr.y + r * 0.45, ctr.z + r * 1.55); cam.lookAt(ctr.x, ctr.y - r * 0.02, ctr.z);
-    const rr = this.renderer, prevClear = rr.getClearAlpha(), prevColor = rr.getClearColor(new THREE.Color());
-    rr.setRenderTarget(this._rt); rr.setClearColor(0x000000, 0); rr.clear(); rr.render(s, cam);
-    const W = w * 2, H = h * 2, buf = new Uint8Array(W * H * 4);
-    rr.readRenderTargetPixels(this._rt, 0, 0, W, H, buf);
-    rr.setRenderTarget(null); rr.setClearColor(prevColor, prevClear);
+    const box = new THREE.Box3().setFromObject(group), size = box.getSize(new THREE.Vector3());
+    const hull = def.hull, fullW = hull.W + 2 * (hull.track?.w || 0.4);
+    const r = Math.max(hull.L * 1.02, fullW * 1.55, size.y * 2.1);
+    const cy = size.y * 0.42, cz = (box.max.z + box.min.z) / 2 * 0.35;
+    cam.position.set(r * 1.3, cy + r * 0.5, cz + r * 1.62); cam.lookAt(0, cy, cz);
+    this._thumbR.render(s, cam);
+    const url = this._thumbR.domElement.toDataURL('image/png');
     s.remove(group); model?.dispose?.(); disposeTree(group);
-    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
-    const ctx = cv.getContext('2d'), img = ctx.createImageData(W, H);
-    for (let y = 0; y < H; y++) img.data.set(buf.subarray((H - 1 - y) * W * 4, (H - y) * W * 4), y * W * 4);
-    ctx.putImageData(img, 0, 0);
-    return cv.toDataURL('image/png');
+    return url;
   }
 
   dispose() {
     this.stop(); this._ro.disconnect();
-    disposeTree(this.scene); this.env.dispose(); this._rt?.dispose();
+    disposeTree(this.scene); this.env.dispose(); this._thumbEnv?.dispose(); this._thumbR?.dispose(); this._thumbR?.forceContextLoss?.();
     this.renderer.dispose(); this.renderer.forceContextLoss?.();
     this.canvas.remove();
   }

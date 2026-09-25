@@ -70,7 +70,7 @@ export function buildSettings(S) {
     S.profile.settings = draft;
     S.battleSize = draft.battleSize === 7 ? 7 : 15;
     S.save();
-    try { S.audio?.setVolumes?.(draft.volumes); } catch { /* optional */ }
+    try { S.audio?.setVolumes?.({ ...draft.volumes, voiceOn: draft.voice }); } catch { /* optional */ }
     S.opts.onSettings?.(draft);
     close();
     if (S.current === 'hangar') S.showHangar();

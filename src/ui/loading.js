@@ -55,6 +55,7 @@ export function buildLoading(S, battle, mapMeta) {
   const row = (e) => h('div.ld-row' + (e.player ? '.me' : ''),
     flag(e.def.nation, 'flag ld-flag'), h('span.ld-name', e.name), h('span.ld-tank', e.def.short || e.def.name),
     h('span.ld-tier', roman(e.def.tier)), classIcon(e.def.cls, 13));
+  const mini = h('div.ld-mini', { html: contours((battle.seed || 3) * 7, pal) }, h('span.ld-mini-l', 'Awaiting recon…'));
   const fill = h('i'), label = h('span.ld-plabel', 'Preparing battle…'), pctEl = h('span.ld-pct', '0%');
   const el = h('section.loading',
     h('div.ld-art', { html: contours((battle.seed || 1) + map.name.length, pal) }),
@@ -66,7 +67,7 @@ export function buildLoading(S, battle, mapMeta) {
       h('div.ld-cond', `Tiers ${roman(meta.tiers?.[0] ?? 1)}–${roman(meta.tiers?.[1] ?? 1)} · Win: destroy all enemies or capture their base · 15:00`)),
     h('div.ld-teams',
       h('div.ld-team.ally', h('h3', h('span', 'Your team')), ally.map((e) => row(e, 0))),
-      h('div.ld-vs', 'VS'),
+      h('div.ld-mid', mini, h('div.ld-vs', 'VS')),
       h('div.ld-team.enemy', h('h3', h('span', 'Enemy team')), enemy.map((e) => row(e, 1)))),
     h('div.ld-bottom',
       h('div.ld-tip', h('b', 'Tip'), h('span', tip)),
@@ -76,5 +77,46 @@ export function buildLoading(S, battle, mapMeta) {
     pctEl.textContent = Math.round(p * 100) + '%';
     if (text) label.textContent = text;
   };
-  return { el, progress };
+  // Once INTEGRATION has loaded the MapData: a hill-shaded top-down map with both bases (own base at the bottom).
+  const setMap = (m) => {
+    try {
+      clear(mini).append(renderMinimap(m, pt), h('span.ld-mini-l', m.name || map.name));
+    } catch (e) { console.warn('[ui] minimap', e); }
+  };
+  return { el, progress, setMap };
+}
+
+// Ground colours by GROUND id (GRASS, DIRT, ROAD, SAND, ROCK, MUD, SHALLOW, DEEP, FIELD, SNOW).
+const GROUND_RGB = [[92, 116, 58], [122, 102, 70], [150, 138, 112], [196, 176, 128], [128, 124, 116], [92, 78, 56], [70, 104, 118], [44, 70, 92], [170, 150, 80], [226, 232, 236]];
+export function renderMinimap(m, playerTeam = 0, px = 256) {
+  const c = document.createElement('canvas'); c.width = c.height = px; c.className = 'ld-minimap';
+  const ctx = c.getContext('2d'), img = ctx.createImageData(px, px), res = m.res, hts = m.heights;
+  const flip = playerTeam === 1 ? false : true; // own base at the bottom of the picture
+  const base0 = m.bases?.find((b) => b.team === playerTeam);
+  const upsideDown = base0 ? (base0.z < m.size / 2) === flip : false;
+  for (let y = 0; y < px; y++) for (let x = 0; x < px; x++) {
+    let i = Math.min(res - 2, Math.floor(x / px * (res - 1))), j = Math.min(res - 2, Math.floor(y / px * (res - 1)));
+    if (upsideDown) { i = res - 2 - i; j = res - 2 - j; }
+    const k = j * res + i, hgt = hts[k];
+    const dx = hts[k + 1] - hgt, dz = hts[k + res] - hgt;
+    const shade = Math.max(0.45, Math.min(1.35, 1 + (upsideDown ? 1 : -1) * (dx + dz) * 0.18));
+    const g = GROUND_RGB[m.ground?.[k] ?? 0] || GROUND_RGB[0];
+    let [r, gg, b] = g;
+    if (m.water && hgt < m.water.level) { r = 52; gg = 86; b = 108; }
+    const o = (y * px + x) * 4;
+    img.data[o] = r * shade; img.data[o + 1] = gg * shade; img.data[o + 2] = b * shade; img.data[o + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  const sx = (x) => (upsideDown ? m.size - x : x) / m.size * px, sz = (z) => (upsideDown ? m.size - z : z) / m.size * px;
+  ctx.fillStyle = 'rgba(40,40,30,0.55)';
+  for (const o of m.objects || []) if (/house|building|church|barn|station|ruin|wall/.test(o.kind)) ctx.fillRect(sx(o.x) - 1.5, sz(o.z) - 1.5, 3, 3);
+  for (const b of m.bases || []) {
+    const own = b.team === playerTeam;
+    ctx.beginPath(); ctx.arc(sx(b.x), sz(b.z), b.r / m.size * px, 0, 7);
+    ctx.fillStyle = own ? 'rgba(143,194,90,0.3)' : 'rgba(216,84,58,0.3)'; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = own ? '#8fc25a' : '#ff7a5c'; ctx.stroke();
+  }
+  ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 1;
+  for (let k = 1; k < 10; k++) { ctx.beginPath(); ctx.moveTo(k * px / 10, 0); ctx.lineTo(k * px / 10, px); ctx.moveTo(0, k * px / 10); ctx.lineTo(px, k * px / 10); ctx.stroke(); }
+  return c;
 }

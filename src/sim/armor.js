@@ -26,7 +26,9 @@ function hullPieces(h) {
   const noseY = clr + H * (1 - up.frac);
   const au = up.a * DEG, al = lo.a * DEG, ar = (h.rear.a || 0) * DEG, as = (h.side.a || 0) * DEG;
   const trackTop = Math.min(tr.h, top - 0.05);
-  const fullW = W + 2 * tr.w;
+  // Upper hull width: over the tracks (sponsons, default) or, with hull.sponson === false, just
+  // the body between them (narrow early designs: the tracks are exposed from above).
+  const fullW = h.sponson === false ? W : W + 2 * tr.w;
   const front = [
     plane(0, Math.sin(au), Math.cos(au), 0, noseY, L / 2, up.t, 'hull.front.upper'),
     plane(0, -Math.sin(al), Math.cos(al), 0, noseY, L / 2, lo.t, 'hull.front.lower'),
@@ -40,7 +42,7 @@ function hullPieces(h) {
     plane(0, -1, 0, 0, clr, 0, h.floor, 'hull.floor'),
     plane(0, 1, 0, 0, trackTop, 0, h.roof, 'hull.roof'), // internal seam; covered by the upper piece
   ];
-  // Upper hull: full width over the tracks (sponsons / fenders), from track top to the roof.
+  // Upper hull: from track top to the roof, full width over the tracks unless sponson === false.
   const tUp = h.side.tUpper ?? h.side.t;
   const upper = [
     ...front.map((p) => ({ ...p })),

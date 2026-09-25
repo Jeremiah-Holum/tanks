@@ -81,7 +81,12 @@ export function classIcon(cls, size = 16) {
 const FLAG = {
   usa: '',
   germany: '<rect width="30" height="20" fill="#5f6668"/><path d="M15 3.2v13.6M8.2 10h13.6" stroke="#fff" stroke-width="6.4"/><path d="M15 3.2v13.6M8.2 10h13.6" stroke="#161616" stroke-width="3.6"/>',
-  ussr: '<rect width="30" height="20" fill="#b3261e"/><path d="M8 3.2l1.1 2.4 2.6.3-1.9 1.8.5 2.6L8 9l-2.3 1.3.5-2.6-1.9-1.8 2.6-.3z" fill="#f4c542"/>',
+  // Soviet red banner: gold star outline above a hammer and sickle in the canton.
+  ussr: '<rect width="30" height="20" fill="#c4231b"/>' +
+    '<path d="M6.2 1.3l.55 1.2 1.3.14-.97.9.27 1.28-1.15-.66-1.15.66.27-1.28-.97-.9 1.3-.14z" fill="none" stroke="#f4c542" stroke-width=".45"/>' +
+    '<path d="M4.3 6.6a3.1 3.1 0 0 0 4.9 3.3" fill="none" stroke="#f4c542" stroke-width="1.05" stroke-linecap="round"/>' +
+    '<path d="M8.9 10.1l.9.9" stroke="#f4c542" stroke-width="1.1" stroke-linecap="round"/>' +
+    '<path d="M4.7 10.3l3.8-3.9" stroke="#f4c542" stroke-width=".9" stroke-linecap="round"/><path d="M7.4 5.4l2 2-.8.8-2-2z" fill="#f4c542"/>',
 };
 export function flag(nation, cls = 'flag') {
   return svg(`<svg viewBox="0 0 30 20" preserveAspectRatio="none" aria-hidden="true">${FLAG[nation] || '<rect width="30" height="20" fill="#555"/>'}</svg>`, cls);

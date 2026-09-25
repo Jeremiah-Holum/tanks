@@ -2,7 +2,7 @@
 //
 //   const screens = new Screens(rootEl, { onBattle(tankId, { size, battle }), onSettings(settings), audio })
 //   screens.showHangar() · showTree(nation?) · showDetails(tankId?) · showRecord() · showSettings()
-//   screens.showLoading(battle, mapMeta?) · setLoadingProgress(0..1, label?)
+//   screens.showLoading(battle, mapMeta?) · setLoadingProgress(0..1, label?) · setLoadingMap(mapData)
 //   screens.finishBattle(world, playerTankId, battle) → report (summarize + apply + save + showResults)
 //   screens.showResults(report) (applies it to the profile if report.applied is false)
 //   screens.hideAll() · screens.profile · screens.settings · screens.save() · screens.toast(msg)
@@ -38,6 +38,7 @@ export class Screens {
     this.current = null; this.cleanup = null;
     this.thumbs = new Map();
     this.battleSize = this.profile.settings.battleSize === 7 ? 7 : 15;
+    try { this.audio?.setVolumes?.({ ...this.settings.volumes, voiceOn: this.settings.voice }); } catch { /* optional */ }
     this.hideAll();
     // UI click sounds for every button
     root.addEventListener('click', (e) => { if (e.target.closest('button, .clickable')) this.sfx('click'); });
@@ -124,6 +125,7 @@ export class Screens {
     return r;
   }
   setLoadingProgress(p, label) { this._loading?.progress?.(p, label); }
+  setLoadingMap(map) { this._loading?.setMap?.(map); }
   showResults(report) {
     if (!report.applied) { applyReport(this.profile, report); this.save(); }
     this.sfxMusic(true);

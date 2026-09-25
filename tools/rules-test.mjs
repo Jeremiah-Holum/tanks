@@ -102,6 +102,11 @@ console.log('Armour solids');
     }
   }
   check('every piece is a closed convex solid', !bad.closed.length, bad.closed.join(' '));
+  // hull.sponson === false: the upper hull stays between the tracks (narrower than with sponsons)
+  const narrow = Object.values(TANKS).filter((d) => d.hull.sponson === false);
+  const wideX = (d) => Math.max(...solidFaces(buildArmor(d).pieces.find((p) => p.name === 'hullUpper').planes).flatMap((f) => f.verts.map((v) => Math.abs(v[0]))));
+  const badN = narrow.filter((d) => wideX(d) > d.hull.W / 2 + 1e-6 || wideX(d) >= wideX({ ...d, _armor: undefined, hull: { ...d.hull, sponson: true } }) - 0.05);
+  check(`sponson:false hulls are closed and sit between the tracks (${narrow.length} tanks)`, narrow.length >= 8 && !badN.length, badN.map((d) => d.id).join(' '));
   check('turret footprint sits on the hull roof', !bad.roof.length && !bad.seat.length, [...bad.roof, ...bad.seat].join(' '));
   check('gun pivot at the turret front (mantlet face)', !bad.pivot.length, bad.pivot.join(' '));
   check('module and crew boxes inside the armour', !bad.modules.length, bad.modules.join(' '));
@@ -140,7 +145,7 @@ console.log('Armour');
     const w3 = battle(['ger_pz38t', 'usa_m4'], ['ger_pz2']); const [lt, m4b, pz2] = w3.tanks;
     place(w3, pz2, 500, 500, 105); // left side (+x hull) faces the shooter at ~75°
     place(w3, lt, 380, 500, 90); place(w3, m4b, 380, 506, 90);
-    const sideP = () => onTank(pz2, pz2.def.hull.W / 2 + pz2.def.hull.track.w - 0.02, 1.2, 1.2);
+    const sideP = () => onTank(pz2, pz2.def.hull.W / 2 + (pz2.def.hull.sponson === false ? 0 : pz2.def.hull.track.w) - 0.02, 1.2, 1.2);
     const e37 = hits(shoot(w3, lt, sideP()), pz2.id)[0];
     check('37 mm AP at ~75° on the Pz II side: ricochet', e37 && e37.result === 'ricochet', e37 && `${e37.plate} ${e37.angle}°`);
     pz2.hp = pz2.maxHp;

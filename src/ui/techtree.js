@@ -95,7 +95,7 @@ function node(S, d, box, tip, rerender) {
   else if (st === 'researched') foot = h('div.tn-foot.buy' + (b.ok ? '' : '.short'), svg(ICON.credits), fmt(d.price));
   else foot = h('div.tn-foot.' + st, svg(st === 'locked' ? ICON.lock : ICON.xp), fmt(d.xp));
   const img = h('img.tn-img', { alt: '' });
-  if (st !== 'locked') S.thumb(d).then((u) => { if (u) { img.src = u; img.classList.add('ok'); } });
+  S.thumb(d).then((u) => { if (u) { img.src = u; img.classList.add('ok'); } });
   const el = h('button.tn.' + st + (d.id === p.selected ? '.sel' : ''), {
     style: { left: box.left + 'px', top: box.top + 'px', width: box.w + 'px', height: box.h + 'px' },
     onclick: () => act(S, d, st, rerender),
