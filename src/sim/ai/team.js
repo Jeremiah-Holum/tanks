@@ -48,9 +48,12 @@ export class TeamBrain {
     // nav cost overlay: base cost + congestion (decays)
     const nav = this.info.nav;
     if (nav) {
-      this.navCost = Float32Array.from(nav.cost);
+      this.navStatic = Float32Array.from(nav.cost);   // base + wrecks (permanent)
+      this.navCost = Float32Array.from(nav.cost);     // static + congestion / blocked marks (decay)
       this.nav = { cell: nav.cell, cols: nav.cols, rows: nav.rows, cost: this.navCost };
-    } else this.nav = null;
+      this.navS = { cell: nav.cell, cols: nav.cols, rows: nav.rows, cost: this.navStatic };
+    } else this.nav = this.navS = null;
+    this.wrecks = new Set();
     this.lastDecay = 0;
     this.assigned = false;
   }
@@ -70,7 +73,11 @@ export class TeamBrain {
     let sA = 0, sE = 0, aA = 0, aE = 0;
     this.focus.clear();
     for (const t of world.tanks) {
-      if (!t.alive) { if (t.team !== this.team) this.known.delete(t.id); continue; }
+      if (!t.alive) {
+        if (t.team !== this.team) this.known.delete(t.id);
+        if (!this.wrecks.has(t.id)) { this.wrecks.add(t.id); this.addWreck(t.pos.x, t.pos.z); }
+        continue;
+      }
       if (t.team === this.team) {
         aA++; sA += value(t.def, t.hp / t.maxHp);
         this.laneA[this.info.geo(t.pos.x, t.pos.z)]++;
@@ -105,7 +112,7 @@ export class TeamBrain {
     // congestion decay every 10 s
     if (this.nav && T - this.lastDecay > 10) {
       this.lastDecay = T;
-      const base = this.info.nav.cost, c = this.navCost;
+      const base = this.navStatic, c = this.navCost;
       for (let i = 0; i < c.length; i++) if (c[i] !== base[i]) c[i] = base[i] + (c[i] - base[i]) * 0.55;
     }
   }
@@ -140,6 +147,20 @@ export class TeamBrain {
         if (seen.has(k) || !isFinite(c[k])) continue;
         seen.add(k); c[k] += dr || dc ? 0.12 : 0.3;
       }
+    }
+  }
+  // A wreck is a permanent obstacle: its cell (and the ones it overlaps) get dearer.
+  addWreck(x, z) {
+    if (!this.nav) return;
+    const { cell, cols, rows } = this.nav, cc = Math.floor(x / cell), rr = Math.floor(z / cell);
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+      const r = rr + dr, q = cc + dc;
+      if (r < 0 || q < 0 || r >= rows || q >= cols) continue;
+      // overlap of a ~4.5 m wreck circle with the neighbouring cell
+      const nx = Math.max(q * cell, Math.min(x, (q + 1) * cell)), nz = Math.max(r * cell, Math.min(z, (r + 1) * cell));
+      if (Math.hypot(nx - x, nz - z) > 4.5) continue;
+      const k = r * cols + q, add = dr || dc ? 1.5 : 4;
+      if (isFinite(this.navStatic[k])) { this.navStatic[k] += add; this.navCost[k] += add; }
     }
   }
   // A cell where a bot got stuck: make it expensive for a while.
@@ -198,8 +219,10 @@ export class TeamBrain {
       let post = null;
       const potato = this.rng() < 0.35 - b.skill;       // bad players pick odd spots
       if (potato) {
+        // bad players pick odd spots: a random point, or the open middle of a random lane
         const any = this.ownPoints(['sniper', 'bush', 'hulldown', 'brawl', 'flank', 'scout']);
-        post = this.postAt(any[Math.floor(this.rng() * any.length)]);
+        post = this.rng() < 0.5 ? this.lanePost(Math.floor(this.rng() * this.info.lanes.length), 0.4 + this.rng() * 0.12, 'open')
+          : this.postAt(any[Math.floor(this.rng() * any.length)]);
       } else if (b.cls === 'light') {
         const p = this.leastUsed(this.ownPoints(['scout'])) || this.leastUsed(this.ownPoints(['bush', 'flank']));
         post = p && this.postAt(p);

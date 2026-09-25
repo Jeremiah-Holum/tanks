@@ -128,6 +128,9 @@ void terrainShade() {
     float t = smoothstep(40.0, 260.0, dOut);
     A = mix(A, PA, t); B = mix(B, PB, t);
     float ang = 0.35 + step(0.5, hc2) * 1.5708;
+    // far out the patchwork dissolves into pasture and dark woods (distant hills read green-blue)
+    float t2 = smoothstep(600.0, 1600.0, dOut);
+    A = mix(A, vec4(1.0, 0.0, 0.0, 0.0), t2); B = mix(B, vec4(0.0), t2);
     float oc = hc2 < 0.3 ? 2.0 : hc2 < 0.5 ? 4.0 : hc2 < 0.7 ? 3.0 : hc2 < 0.85 ? 1.0 : 0.0; // mostly green crops far out
     F = mix(F, vec4(0.5 + 0.5 * cos(ang), 0.5 + 0.5 * sin(ang), oc / 4.0, hash12(fc + 3.1)), step(0.5, t));
   }
@@ -210,6 +213,10 @@ void terrainShade() {
   float dash = step(0.35, fract((xz.x + xz.y) / 6.0));
   c = mix(c, vec3(0.55, 0.035, 0.02), line * 0.8 * mix(0.6, 1.0, dash) * (1.0 - smoothstep(250.0, 700.0, dist)));
   c *= mix(1.0, 0.9, smoothstep(0.0, 2.0, -dIn) * (1.0 - smoothstep(4.0, 30.0, -dIn)));
+  if (dOut > 0.0) { // woods on the far hills
+    float wd = smoothstep(0.52, 0.62, texture2D(tNoise, mat2(0.8, 0.6, -0.6, 0.8) * xz / 1500.0).g + texture2D(tNoise, xz / 400.0).b * 0.2);
+    c = mix(c, c * vec3(0.5, 0.62, 0.55), wd * smoothstep(300.0, 900.0, dOut));
+  }
   tAlbedo = c; tRough = rough;
   float ds = uDetail * (1.0 - smoothstep(40.0, 160.0, dist));
   tNormal = normalize(vTN + vec3(dn.x, 0.0, dn.y) * ds);
@@ -594,7 +601,7 @@ export class Terrain {
           transformed.xz += position.y * vec2(0.07, 0.04) * sway * sc;
           transformed += vec3(wp.x, gh(wp) - 0.03, wp.y);
           float m1 = texture2D(tNoise, mat2(0.87, 0.5, -0.5, 0.87) * wp / 520.0).r, m2 = texture2D(tNoise, mat2(0.6, -0.8, 0.8, 0.6) * wp / 190.0 + 0.5).g;
-          vShade = vec3(0.8 + 0.4 * m1) * mix(vec3(1.0), vec3(1.16, 1.08, 0.72), smoothstep(0.42, 0.78, m2) * 0.7) * (0.9 + 0.2 * position.y);
+          vShade = vec3(0.8 + 0.4 * m1) * vec3(0.9 + 0.2 * hh.y, 0.92 + 0.16 * hh.x, 0.9 + 0.1 * hh.z) * mix(vec3(1.0), vec3(1.16, 1.08, 0.72), smoothstep(0.42, 0.78, m2) * 0.7) * (0.9 + 0.2 * position.y);
           vMapUv = vec2((uv.x + (onField > 0.5 ? 2.0 : step(0.93, fract(hh.y * 7.1)))) / 3.0, uv.y);
           if (onField > 0.5) vShade = (crop == 1 ? vec3(1.05, 1.05, 0.85) : crop == 3 ? vec3(1.1, 1.0, 0.85) : vec3(1.0)) * (0.85 + 0.3 * fract(hh.z * 31.0));`)
         .replace('#include <uv_vertex>', '');

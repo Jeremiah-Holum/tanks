@@ -66,12 +66,14 @@ function atlas() {
   };
   at(T.SMOKE, () => puff(0.55)); at(T.SMOKE2, () => puff(0.5)); at(T.SMOKE3, () => puff(0.6));
   at(T.DUST, () => puff(0.35));
-  at(T.FLAME, () => {
-    for (let k = 0; k < 14; k++) {
-      const x = 64 + (r() - 0.5) * 30, y = 70 + (r() - 0.5) * 40, rr = 14 + r() * 22;
-      g.fillStyle = radial(x, y, 0, rr, [[0, 'rgba(255,255,255,0.8)'], [0.5, 'rgba(255,255,255,0.35)'], [1, 'rgba(255,255,255,0)']]);
-      g.fillRect(0, 0, S, S);
+  at(T.FLAME, () => { // tongues: tall soft ellipses rising from a bright base
+    for (let k = 0; k < 9; k++) {
+      const x = 64 + (r() - 0.5) * 44, h = 40 + r() * 50, w = 10 + r() * 12;
+      g.save(); g.translate(x, 104 - h / 2); g.scale(w / h, 1);
+      g.fillStyle = radial(0, h * 0.25, 0, h / 2, [[0, 'rgba(255,255,255,0.75)'], [0.6, 'rgba(255,255,255,0.3)'], [1, 'rgba(255,255,255,0)']]);
+      g.fillRect(-h, -h, 2 * h, 2 * h); g.restore();
     }
+    g.fillStyle = radial(64, 96, 0, 34, [[0, 'rgba(255,255,255,0.8)'], [1, 'rgba(255,255,255,0)']]); g.fillRect(0, 0, S, S);
   });
   at(T.SPARK, () => { // head at the bottom of the tile (v = 0), fading towards the top
     const gr = g.createLinearGradient(0, S, 0, 0); gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.15, 'rgba(255,255,255,0.9)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
@@ -312,7 +314,7 @@ export class FxRenderer {
       this.blast(t.pos, d, cal, this._ground(t.pos.x, t.pos.z));
       if (t.def && t.gunDef?.muzzleBrake !== undefined ? t.gunDef.muzzleBrake : false) this.brakeJets(p, d, cal);
     }
-    this._flash(p, 250 * s * s, 0.07);
+    this._flash(p, 12 * s * s, 0.07);
   }
   // Muzzle: flash core, forward flame tongues, smoke ring and lingering smoke.
   muzzle(p, d, cal = 75) {
@@ -334,12 +336,12 @@ export class FxRenderer {
       const v = (5 + rnd() * 3) * s, fw = (6 + rnd() * 5) * s;
       const g = 0.62 + rnd() * 0.12;
       B.spawn({ x: ox + d.x * 0.6, y: oy + d.y * 0.6, z: oz + d.z * 0.6, vx: rx * v + d.x * fw, vy: ry * v + d.y * fw + 0.3, vz: rz * v + d.z * fw,
-        life: 2 + rnd() * 1.5, s0: 0.5 * s, s1: 2.8 * s, frame: T.SMOKE + (k % 3), r: g, g: g * 0.97, b: g * 0.93, a: 0.7, drag: 2.4, grav: -0.25, fadeIn: 0.03, curve: 1.4 });
+        life: 2.2 + rnd() * 1.6, s0: 0.7 * s, s1: 3.6 * s, frame: T.SMOKE + (k % 3), r: g, g: g * 0.97, b: g * 0.93, a: 0.8, drag: 2.6, grav: -0.25, fadeIn: 0.03, curve: 1.3 });
     }
     for (let k = 0; k < this._n(8); k++) {
       const f = 0.5 + rnd() * 5 * s, g = 0.62 + rnd() * 0.1;
       B.spawn({ x: ox + d.x * f, y: oy + d.y * f, z: oz + d.z * f, vx: d.x * 4 + rs(0.8), vy: 0.4 + rnd() * 0.4, vz: d.z * 4 + rs(0.8),
-        life: 3 + rnd() * 2.5, s0: 1.0 * s, s1: 4.2 * s, frame: T.SMOKE + (k % 3), r: g, g, b: g * 0.95, a: 0.5, drag: 1.2, grav: -0.2, fadeIn: 0.08, curve: 1.3 });
+        life: 3 + rnd() * 2.5, s0: 1.4 * s, s1: 5 * s, frame: T.SMOKE + (k % 3), r: g, g, b: g * 0.95, a: 0.6, drag: 1.4, grav: -0.2, fadeIn: 0.06, curve: 1.3 });
     }
   }
   brakeJets(p, d, cal) {
@@ -442,8 +444,8 @@ export class FxRenderer {
   // Penetration: hot flash, sparks, dark fragments and a puff of smoke from the hole.
   penetration(p, n, cal = 75, big = false) {
     const s = Math.sqrt(cal / 75) * (big ? 1.4 : 1), A = this.add, B = this.alpha;
-    A.spawn({ x: p.x, y: p.y, z: p.z, life: 0.12, s0: 2.2 * s, s1: 3 * s, frame: T.FLASH, r: 7, g: 3.5, b: 1.2, a: 1, drag: 0, fadeIn: 0 });
-    A.spawn({ x: p.x, y: p.y, z: p.z, life: 0.25, s0: 1.2 * s, s1: 2.2 * s, frame: T.FLAME, r: 4, g: 1.6, b: 0.4, a: 1, drag: 0, fadeIn: 0 });
+    A.spawn({ x: p.x + n.x * 0.2, y: p.y + n.y * 0.2, z: p.z + n.z * 0.2, life: 0.1, s0: 1.5 * s, s1: 2.1 * s, frame: T.FLASH, r: 3, g: 1.6, b: 0.6, a: 1, drag: 0, fadeIn: 0 });
+    A.spawn({ x: p.x + n.x * 0.2, y: p.y + n.y * 0.2, z: p.z + n.z * 0.2, life: 0.22, s0: 0.8 * s, s1: 1.4 * s, frame: T.FLAME, r: 1.8, g: 0.7, b: 0.15, a: 1, drag: 0, fadeIn: 0 });
     for (let k = 0; k < this._n(18 * s); k++) {
       cone(n.x, n.y + 0.3, n.z, 1.0, _c); const v = 10 + rnd() * 25;
       A.spawn({ x: p.x, y: p.y, z: p.z, vx: _c.x * v, vy: _c.y * v, vz: _c.z * v, life: 0.3 + rnd() * 0.5, s0: 0.06, s1: 0.03, frame: T.SPARK, streak: 0.04, r: 5, g: 2.4, b: 0.8, drag: 2, grav: 9, fadeIn: 0 });
@@ -456,16 +458,16 @@ export class FxRenderer {
       const g = 0.18 + rnd() * 0.1;
       B.spawn({ x: p.x, y: p.y, z: p.z, vx: n.x * 1.5 + rs(0.5), vy: 1 + rnd(), vz: n.z * 1.5 + rs(0.5), life: 2 + rnd() * 1.5, s0: 0.5 * s, s1: 2.5 * s, frame: T.SMOKE + k % 3, r: g, g, b: g, a: 0.55, drag: 1, grav: -0.6 });
     }
-    this._flash(p, 300 * s * s, 0.12);
+    this._flash(p, 8 * s * s, 0.12);
   }
   // HE / ammo explosion: fireball, dark smoke, dust, debris, ground ring.
   explosion(p, scale = 1, surf = 'dirt') {
     const s = scale, A = this.add, B = this.alpha;
-    A.spawn({ x: p.x, y: p.y + 0.3 * s, z: p.z, life: 0.12, s0: 4 * s, s1: 6 * s, frame: T.FLASH, r: 7, g: 4, b: 1.8, a: 1, drag: 0, fadeIn: 0 });
-    for (let k = 0; k < this._n(10 * s); k++) {
+    A.spawn({ x: p.x, y: p.y + 0.3 * s, z: p.z, life: 0.1, s0: 2.6 * s, s1: 3.6 * s, frame: T.FLASH, r: 2.6, g: 1.6, b: 0.7, a: 1, drag: 0, fadeIn: 0 });
+    for (let k = 0; k < this._n(9 * s); k++) {
       cone(0, 1, 0, 1.2, _c); const v = (3 + rnd() * 6) * s;
-      A.spawn({ x: p.x, y: p.y + 0.4 * s, z: p.z, vx: _c.x * v, vy: Math.abs(_c.y) * v, vz: _c.z * v, life: 0.35 + rnd() * 0.3, s0: 1.2 * s, s1: 2.6 * s,
-        frame: T.FLAME, r: 5, g: 2.2, b: 0.6, r2: 1.5, g2: 0.3, b2: 0.05, a: 1, drag: 3, grav: -2, fadeIn: 0, curve: 1.2 });
+      A.spawn({ x: p.x, y: p.y + 0.4 * s, z: p.z, vx: _c.x * v, vy: Math.abs(_c.y) * v, vz: _c.z * v, life: 0.3 + rnd() * 0.3, s0: 0.9 * s, s1: 2.0 * s,
+        frame: T.FLAME, r: 1.5, g: 0.65, b: 0.18, r2: 0.7, g2: 0.15, b2: 0.02, a: 0.9, drag: 3, grav: -2, fadeIn: 0, curve: 1.2, rotV: rs(3) });
     }
     for (let k = 0; k < this._n(12 * s); k++) {
       cone(0, 1, 0, 1.1, _c); const v = (2 + rnd() * 4) * s, g = 0.12 + rnd() * 0.12;
@@ -479,7 +481,7 @@ export class FxRenderer {
     if (surf && surf !== 'metal') this.groundHit(p, { x: 0, y: 1, z: 0 }, surf, 75 * s * s);
     const S = SURF[surf] || SURF.dirt, c = S.dust;
     B.spawn({ x: p.x, y: p.y + 0.15, z: p.z, life: 0.9, s0: 1 * s, s1: 9 * s, frame: T.RING, r: c[0], g: c[1], b: c[2], a: 0.5, rot: 0, rotV: 0, drag: 0 });
-    this._flash(p, 1500 * s * s, 0.25);
+    this._flash(p, 40 * s * s, 0.25);
   }
   dust(p, surf = 'dirt', s = 1) {
     const S = SURF[surf] || SURF.dirt, c = S.dust;
@@ -516,7 +518,7 @@ export class FxRenderer {
         this.add.spawn({ x: p.x + rs(0.4), y: p.y, z: p.z + rs(0.4), vx: rs(2), vy: v, vz: rs(2), life: 0.5 + rnd() * 0.5, s0: 1.4, s1: 3,
           frame: T.FLAME, r: 6, g: 2.8, b: 0.8, r2: 2, g2: 0.4, b2: 0.05, drag: 1.5, grav: 4, fadeIn: 0, curve: 1.3 });
       }
-      this._flash(p, 5000, 0.5, 0xffb070);
+      this._flash(p, 120, 0.5, 0xffb070);
     } else this.explosion(p, 1.3, null);
   }
 
@@ -526,7 +528,7 @@ export class FxRenderer {
     const sp = Math.abs(speed);
     if (sp < 0.8) return;
     const surf = surfaceKind(ground);
-    const rate = Math.min(14, sp * 0.9) * this.mul * (surf === 'road' ? 0.4 : surf === 'rock' ? 0.3 : surf === 'mud' ? 0.6 : 1);
+    const rate = Math.min(20, sp * 1.4) * this.mul * (surf === 'road' ? 0.4 : surf === 'rock' ? 0.3 : surf === 'mud' ? 0.6 : 1);
     this._acc = (this._acc || 0);
     let n = rate * dt; let cnt = Math.floor(n) + (rnd() < n % 1 ? 1 : 0);
     const back = speed > 0 ? -1 : 1;
@@ -537,7 +539,7 @@ export class FxRenderer {
       }
       const S = SURF[surf] || SURF.dirt, c = S.dust, g = 0.85 + rnd() * 0.3, big = Math.min(1, sp / 12);
       this.alpha.spawn({ x: x + rs(0.3), y: y + 0.25, z: z + rs(0.3), vx: dirX * back * sp * 0.25 + rs(0.8) + this.wind.x * 0.3, vy: 0.3 + rnd() * 0.6, vz: dirZ * back * sp * 0.25 + rs(0.8) + this.wind.z * 0.3,
-        life: 1.5 + rnd() * 1.8 * big, s0: 0.6, s1: (1.6 + 2.2 * big), frame: T.DUST, r: c[0] * g, g: c[1] * g, b: c[2] * g, a: (surf === 'snow' ? 0.5 : 0.32) * (0.5 + big * 0.6), drag: 1.2, grav: -0.05, fadeIn: 0.1 });
+        life: 1.8 + rnd() * 2.2 * big, s0: 0.8, s1: (2 + 3 * big), frame: T.DUST, r: c[0] * g * 1.15, g: c[1] * g * 1.15, b: c[2] * g * 1.15, a: (surf === 'snow' ? 0.6 : 0.45) * (0.5 + big * 0.6), drag: 1.2, grav: -0.05, fadeIn: 0.1 });
       if ((surf === 'mud' || surf === 'field' || surf === 'dirt') && rnd() < 0.3) {
         const cc = S.chunk;
         this.alpha.spawn({ x, y: y + 0.4, z, vx: dirX * back * 2 + rs(1), vy: 2 + rnd() * 2, vz: dirZ * back * 2 + rs(1), life: 0.7, s0: 0.08 + rnd() * 0.06, s1: 0.06, frame: T.CHUNK, r: cc[0], g: cc[1], b: cc[2], a: 1, drag: 0.5, grav: 12, fadeIn: 0, floor: y, curve: 0.2 });
@@ -558,7 +560,7 @@ export class FxRenderer {
     const nf = 30 * s * this.mul * dt, cf = Math.floor(nf) + (rnd() < nf % 1 ? 1 : 0);
     for (let k = 0; k < cf; k++) {
       this.add.spawn({ x: x + rs(0.7 * s), y: y + rnd() * 0.2, z: z + rs(0.7 * s), vx: rs(0.3) + this.wind.x * 0.2, vy: 1.2 + rnd() * 1.6, vz: rs(0.3) + this.wind.z * 0.2,
-        life: 0.45 + rnd() * 0.45, s0: 0.75 * s, s1: 0.2 * s, frame: T.FLAME, r: 2.6, g: 1.05, b: 0.25, r2: 1.4, g2: 0.25, b2: 0.03, a: 0.9, drag: 1, grav: -1.8, fadeIn: 0.1, curve: 0.7, rotV: rs(2) });
+        life: 0.45 + rnd() * 0.45, s0: 0.7 * s, s1: 0.2 * s, frame: T.FLAME, r: 1.7, g: 0.62, b: 0.12, r2: 0.9, g2: 0.15, b2: 0.02, a: 0.85, drag: 1, grav: -1.8, fadeIn: 0.1, curve: 0.7, rotV: rs(2) });
     }
     const ns = 6 * s * this.mul * dt, cs = Math.floor(ns) + (rnd() < ns % 1 ? 1 : 0);
     for (let k = 0; k < cs; k++) {

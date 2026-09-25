@@ -1417,8 +1417,12 @@ export function buildTankModel(def, opts = {}) {
     if (ng === undefined) { ng = numberMesh(G.tFaces, D, num, D.turretPos[1]); _numCache.set(k, ng); }
     if (ng) numbers = mk(ng, base, turret, 'numbers');
   }
+  // Casemates traverse the gun and mantlet about the gun pivot (x, z), turrets about the ring.
+  const P = D.arm.gun.pivot, Cx = D.fixed ? P[0] : 0, Cz = D.fixed ? P[2] : 0;
+  yaw.position.set(Cx, 0, Cz);
   const mantlet = G.mantlet ? mk(G.mantlet, base, yaw, 'mantlet') : null;
-  const pivot = new THREE.Group(); pivot.name = 'gunPivot'; pivot.position.fromArray(D.arm.gun.pivot); yaw.add(pivot);
+  if (mantlet) mantlet.position.set(-Cx, 0, -Cz);
+  const pivot = new THREE.Group(); pivot.name = 'gunPivot'; pivot.position.set(P[0] - Cx, P[1], P[2] - Cz); yaw.add(pivot);
   const gun = mk(G.gun, base, pivot, 'gun');
   Object.assign(parts, { turret: D.fixed ? yaw : yaw, turretMesh: turret, mantlet, gun: pivot, gunMesh: gun, yaw, turretBase: base3, numbers });
   const meshes = []; group.traverse((o) => o.isMesh && meshes.push(o));

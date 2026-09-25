@@ -725,15 +725,20 @@ function solidMaterial(U) {
   const m = new THREE.MeshStandardMaterial({ map: buildingAtlas(), vertexColors: true, roughness: 0.88, metalness: 0 });
   m.onBeforeCompile = (sh) => {
     patchFarShadow(sh, U);
+    sh.uniforms.uSnow = U.uSnow;
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute vec4 aRect; attribute float aRough; varying vec4 vRect; varying float vRough;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvRect = aRect; vRough = aRough;');
+      .replace('#include <common>', '#include <common>\nattribute vec4 aRect; attribute float aRough; varying vec4 vRect; varying float vRough; varying vec3 vWN;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvRect = aRect; vRough = aRough;')
+      .replace('#include <defaultnormal_vertex>', '#include <defaultnormal_vertex>\nvWN = normalize((vec4(transformedNormal, 0.0) * viewMatrix).xyz);');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec4 vRect; varying float vRough;')
+      .replace('#include <common>', '#include <common>\nvarying vec4 vRect; varying float vRough; varying vec3 vWN; uniform float uSnow;')
       .replace('#include <map_fragment>', `{
         vec2 t = vMapUv; vec2 gx = dFdx(t) * vRect.zw, gy = dFdy(t) * vRect.zw;
         vec4 tc = textureGrad(map, vRect.xy + fract(t) * vRect.zw, gx, gy);
-        diffuseColor *= tc; }`)
+        diffuseColor *= tc;
+        // winter: snow settles on roofs, wall tops and boulders
+        float sn = uSnow * smoothstep(0.45, 0.75, normalize(vWN).y) * (0.75 + 0.25 * tc.g);
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.89, 0.94), sn); }`)
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = vRough;');
   };
   m.customProgramCacheKey = () => 'solid';
@@ -884,6 +889,7 @@ export class Props {
     let sv = 0, si = 0;
     for (const g of solidGeo.values()) { sv += g.attributes.position.count; si += g.index.count; }
     for (const g of Object.values(rubble)) { sv += g.attributes.position.count; si += g.index.count; }
+    this.U.uSnow = { value: theme.snow || 0 };
     const smat = solidMaterial(this.U);
     const solid = new THREE.BatchedMesh(solidList.length * 2 + 16, sv + 16, si + 16, smat);
     solid.castShadow = true; solid.receiveShadow = true; solid.name = 'structures';

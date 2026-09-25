@@ -140,7 +140,23 @@ function census() {
   });
   return out;
 }
-window.__lab = { view, map, world, set, frame, census, st, place };
+// knock over / destroy props near (x, z): trees & fences fall, walls & sheds become rubble,
+// houses are destroyed; then advance the animations. (lab.knock(x, z, r, frames, dt))
+async function knock(x = st.x, z = st.z, r = 30, n = 8, dt = 0.25) {
+  const q = await import('../src/sim/map/query.js').catch(() => null);
+  const evs = [];
+  for (const o of map.objects) {
+    if ((o.x - x) ** 2 + (o.z - z) ** 2 > r * r) continue;
+    const a = Math.atan2(o.x - x, o.z - z);
+    if (q && q.breakObject(map, o, Math.sin(a), Math.cos(a))) evs.push({ type: 'treeFall', obj: o, dir: o.fallDir });
+    else if (['house', 'barn', 'church', 'ruin', 'station', 'silo', 'windmill'].includes(o.kind) && !o.destroyed) { o.destroyed = true; evs.push({ type: 'objectBreak', obj: o }); }
+  }
+  view.frame(world, { cam, dt: 0, sniper: st.sniper, events: evs });
+  for (let k = 0; k < n; k++) view.frame(world, { cam, dt, sniper: st.sniper, events: [] });
+  return evs.length;
+}
+window.__lab = { view, map, world, set, frame, census, st, place, knock };
+if (P.get('knock')) await knock(num('kx', st.x), num('kz', st.z), num('kr', 30));
 if (P.get('live')) {
   let drag = false, mx = 0, my = 0; const keys = {};
   canvas.onmousedown = (e) => { drag = true; mx = e.clientX; my = e.clientY; };

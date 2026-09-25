@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url';
 
 const arg = (k, d) => { const i = process.argv.indexOf('--' + k); return i > 0 ? process.argv[i + 1] : d; };
 
-async function runBattle({ mapId, seed, limit, verbose }) {
+async function runBattle({ mapId, seed, limit, verbose, skills }) {
   const { loadMap } = await import('../src/sim/map/index.js');
   const { createBattle, stepBattle } = await import('../src/sim/battle.js');
   const { createBrain } = await import('../src/sim/ai/index.js');
@@ -23,12 +23,14 @@ async function runBattle({ mapId, seed, limit, verbose }) {
   const anchor = anchorPool[Math.floor(rng() * anchorPool.length)];
   const opts = buildBattle(null, anchor.id, { seed, mapId, timeLimit: limit });
   for (const tm of opts.teams) for (const e of tm) if (e.player) { e.player = false; e.bot = { skill: 0.5, role: 'x' }; e.crewSkill = 0.76; }
+  // --skills a,b: force every bot of team 0 / 1 to that skill (crew follows like the matchmaker)
+  if (skills) opts.teams.forEach((tm, k) => tm.forEach((e) => { e.bot.skill = skills[k]; e.crewSkill = +(0.55 + 0.42 * skills[k]).toFixed(2); }));
   const map = loadMap(mapId);
   const world = createBattle({ map, seed, timeLimit: limit, teams: opts.teams });
   const brains = new Map(world.tanks.map((t) => [t.id, createBrain(world, t)]));
   const ctrl = new Map();
   let aiMs = 0, simMs = 0, steps = 0;
-  const deathT = {}, shots = {}, hits = {}, pens = {};
+  const deathT = {}, deaths = [];
   // stuck tracking: samples every 5 s: [x, z, wantMove]
   const hist = new Map(world.tanks.map((t) => [t.id, []]));
   const stuck = new Map();
@@ -43,6 +45,8 @@ async function runBattle({ mapId, seed, limit, verbose }) {
     for (const e of world.events) {
       if (e.type === 'kill') {
         deathT[e.victim] = world.time;
+        { const v = world.byId[e.victim], k = world.byId[e.killer], bv = brains.get(v.id);
+          deaths.push({ skill: bv.skill, cls: v.def.cls, state: bv.mode + (bv.hold ? '/hold' : bv.arrived ? '/at' : '/move') + (bv.peek ? '/peek' : ''), d: k ? Math.hypot(k.pos.x - v.pos.x, k.pos.z - v.pos.z) : -1, t: world.time }); }
         if (verbose) {
           const v = world.byId[e.victim], k = world.byId[e.killer], bv = brains.get(v.id), bk = k && brains.get(k.id);
           const d = k ? Math.hypot(k.pos.x - v.pos.x, k.pos.z - v.pos.z).toFixed(0) : '-';
@@ -64,7 +68,10 @@ async function runBattle({ mapId, seed, limit, verbose }) {
         if (h.length === 13 && !stuck.has(t.id)) {
           let maxD = 0, want = 0;
           for (const p of h) { maxD = Math.max(maxD, Math.hypot(p[0] - h[0][0], p[1] - h[0][1])); want += p[2]; }
-          if (maxD < 8 && want >= 10) stuck.set(t.id, { x: Math.round(t.pos.x), z: Math.round(t.pos.z), t: Math.round(world.time), mode: br.mode, cls: t.def.cls });
+          if (maxD < 8 && want >= 10) {
+            stuck.set(t.id, { x: Math.round(t.pos.x), z: Math.round(t.pos.z), t: Math.round(world.time), mode: br.mode, cls: t.def.cls });
+            if (verbose) { const c = br.c, g = br.goal; console.log(`  STUCK ${t.id} ${t.def.id} at ${t.pos.x.toFixed(1)},${t.pos.z.toFixed(1)} yaw ${t.yaw.toFixed(2)} speed ${t.speed.toFixed(2)} goal ${g && g.x.toFixed(0)},${g && g.z.toFixed(0)} hold ${br.hold} arrived ${br.arrived} rev ${br.reverseT.toFixed(2)} thr ${c.throttle.toFixed(2)} steer ${c.steer.toFixed(2)} brake ${c.brake} carrot ${br.carrot.x.toFixed(0)},${br.carrot.z.toFixed(0)} path ${br.follow.pts && br.follow.pts.map((p) => p.x.toFixed(0) + ',' + p.z.toFixed(0)).join(' ')} i=${br.follow.i} unsticks ${br.stats.unsticks} plans ${br.stats.plans} tracks ${t.modules.trackL.state}/${t.modules.trackR.state} engine ${t.modules.engine.state}`); }
+          }
         }
       }
     }
@@ -76,7 +83,7 @@ async function runBattle({ mapId, seed, limit, verbose }) {
   }));
   const bots = world.tanks.length;
   return {
-    mapId, seed, result: world.result, time: world.time, tanks, stuck: [...stuck.values()],
+    mapId, seed, result: world.result, time: world.time, tanks, deaths, stuck: [...stuck.values()],
     aiMsPerBotTick: aiMs / steps / bots, aiMsPerTick: aiMs / steps, simMsPerTick: simMs / steps,
     alive: [0, 1].map((k) => world.tanks.filter((t) => t.team === k && t.alive).length),
   };
@@ -92,8 +99,9 @@ if (!isMainThread) {
   const n = +arg('n', 3), workers = +arg('workers', 2), seed0 = +arg('seed', 1), limit = +arg('limit', 900);
   const maps = (arg('maps', MAPS.map((m) => m.id).join(','))).split(',');
   const verbose = process.argv.includes('--v');
+  const skills = arg('skills', null) ? arg('skills').split(',').map(Number) : null;
   const jobs = [];
-  for (let i = 0; i < n; i++) for (const mapId of maps) jobs.push({ mapId, seed: seed0 + i * 101 + mapId.length * 7, limit, verbose });
+  for (let i = 0; i < n; i++) for (const mapId of maps) jobs.push({ mapId, seed: seed0 + i * 101 + mapId.length * 7, limit, verbose, skills });
   const results = [];
   const t0 = performance.now();
   await new Promise((resolve) => {
@@ -152,6 +160,13 @@ function report(R, secs) {
     const sh = L.reduce((a, t) => a + t.shots, 0), hi2 = L.reduce((a, t) => a + t.hits, 0);
     const pe2 = L.reduce((a, t) => a + t.pens, 0);
     console.log(`  ${name.padEnd(15)} n=${String(L.length).padStart(4)}  dmg/hp ${mean(L.map((t) => t.dmg / t.hp)).toFixed(2)}  survived ${pct(L.filter((t) => t.alive).length, L.length)}  life ${mean(L.map((t) => t.life / 60)).toFixed(1)} min  shots ${(sh / Math.max(1, L.length)).toFixed(1)}  hit ${pct(hi2, sh)}  pen ${pct(pe2, hi2)}  kills ${mean(L.map((t) => t.kills)).toFixed(2)}  recv/hp ${mean(L.map((t) => t.received / t.hp)).toFixed(2)}`);
+  }
+  // how bots die (state at death) by skill bucket
+  const D = R.flatMap((r) => r.deaths || []);
+  for (const [lo, hi, name] of [[0, 0.35, 'potato'], [0.65, 1.01, 'unicum']]) {
+    const L = D.filter((x) => x.skill >= lo && x.skill < hi), c = {};
+    for (const x of L) c[x.state] = (c[x.state] || 0) + 1;
+    console.log(`  deaths ${name}: ${Object.entries(c).sort((a, b) => b[1] - a[1]).map(([k, v]) => k + ' ' + pct(v, L.length)).join(', ')}; killer dist ${mean(L.filter((x) => x.d >= 0).map((x) => x.d)).toFixed(0)} m; t ${mean(L.map((x) => x.t)).toFixed(0)} s`);
   }
   const ai = mean(R.map((r) => r.aiMsPerBotTick)), sim = mean(R.map((r) => r.simMsPerTick));
   console.log(`\nAI ${ai.toFixed(3)} ms per bot per tick (max ${Math.max(...R.map((r) => r.aiMsPerBotTick)).toFixed(3)}), ${mean(R.map((r) => r.aiMsPerTick)).toFixed(2)} ms per tick; sim ${sim.toFixed(2)} ms per tick; unsticks/tank ${mean(T.map((t) => t.unsticks)).toFixed(2)}`);

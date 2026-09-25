@@ -35,7 +35,7 @@ sun.position.set(-30, 26, 18);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
 Object.assign(sun.shadow.camera, { left: -9, right: 9, top: 9, bottom: -9, near: 1, far: 120 });
-sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.02;
+sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.05;
 scene.add(sun, sun.target);
 
 // neutral ground: dry grass / dirt noise
@@ -135,7 +135,7 @@ async function single() {
       fx.shells.set(98, { type: Q.get('shell') || 'AP', cal: 88 });
       world.events.push({ type: 'impact', shell: 98, pos: { x: 3, y: 0, z: 5 }, normal: { x: 0, y: 1, z: 0 }, surface: surf, shellType: Q.get('shell') || 'AP', cal: 88 });
     } else if (kind === 'tracer') {
-      for (let k = 0; k < 3; k++) world.shells.push({ id: 50 + k, alive: true, tracer: true, type: 'AP', cal: 75 + k * 20, pos: { x: -6 + k * 3, y: 2 + k, z: 8 + k * 2 }, vel: { x: 500, y: 5, z: -120 } });
+      for (let k = 0; k < 3; k++) world.shells.push({ id: 50 + k, alive: true, tracer: true, type: 'AP', cal: 75 + k * 20, pos: { x: -4 + k * 4, y: 2.5 + k, z: -5 - k * 3 }, vel: { x: 500, y: 4, z: 60 } });
     }
     const FT = num('ft', 0.03);
     for (let t = 0; t < FT; t += 1 / 60) step(1 / 60);

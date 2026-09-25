@@ -41,10 +41,11 @@ export class BattleView {
   // module or class just means no tanks / FX are drawn.
   async _loadRenderers() {
     const qn = this.q.name;
-    try { const m = await import('./tanks.js'); if (m.TankRenderer) this.tanks = new m.TankRenderer(this.scene, qn); }
-    catch (e) { console.warn('BattleView: TankRenderer unavailable:', e.message); }
+    // FxRenderer first: TankRenderer finds it through scene.userData.steelFx
     try { const m = await import('./fx.js'); if (m.FxRenderer) this.fx = new m.FxRenderer(this.scene, qn); }
     catch (e) { console.warn('BattleView: FxRenderer unavailable:', e.message); }
+    try { const m = await import('./tanks.js'); if (m.TankRenderer) this.tanks = new m.TankRenderer(this.scene, qn); }
+    catch (e) { console.warn('BattleView: TankRenderer unavailable:', e.message); }
     if (this.map) { this.tanks?.setMap?.(this.map, this); this.fx?.setMap?.(this.map, this); }
   }
 
@@ -109,8 +110,8 @@ export class BattleView {
       if (this.tanks) this.tanks.handle(ev);
       if (this.fx) this.fx.handle(ev, world);
     }
-    if (world && this.tanks) this.tanks.sync(world, { visible, alpha, playerId, dt });
-    if (this.fx) this.fx.update(dt, camera);
+    if (world && this.tanks) this.tanks.sync(world, { visible, alpha, playerId, dt, camera });
+    if (this.fx) this.fx.update(dt, camera, world);
     // shadow focus: ahead of the camera (third person), or the looked-at area (sniper)
     const R = this.q.shadowRange, f = this._focus, fwd = this._fwd;
     camera.getWorldDirection(fwd);
