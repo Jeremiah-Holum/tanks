@@ -9,4 +9,5 @@
 ## Token ledger (cap 3.5M counted, hard ceiling 3.75M; uncounted work is free per the owner)
 Counted (reported agents): SIM 357k, MAPS 291k, AUDIO 192k, SIM-review 198k, META 317k, RENDER-WORLD 430k, RENDER-TANKS 504k = ~2.29M
 Free: AI up to 421.8k and INTEGRATION up to 334k (their usage when the cap was set); anything beyond those counts.
-Remaining: ~1.2M (to 3.5M) covers AI/INTEGRATION overage plus phase 3; wiggle to ~1.45M.
+Counted overage: AI +16k (final 438k).
+Remaining: ~1.18M (to 3.5M) covers AI/INTEGRATION overage plus phase 3; wiggle to ~1.45M.

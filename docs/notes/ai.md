@@ -1,6 +1,6 @@
 # AI notes (src/sim/ai/, tools/battle-sim.mjs)
 
-Status: working, tuning in progress. See "Battle-sim results" for the latest numbers.
+Status: done for phase 2 (tuning can continue with the knobs below). Latest numbers under "Battle-sim results".
 
 ## API
 ```js
@@ -47,9 +47,12 @@ lights go straight to their spots. Unspotted non-TDs hold fire beyond 220 m for 
 
 **Lanes.** Heavies commit to the brawl lane at 80–140 s (mediums at 120–180 s, needing +1
 numbers) when their lane is not outnumbered: next objective = the next point on the enemy side
-of the lane, then their base. Mediums flex every 20 s to a lane that is winning (to push) or
+of the lane, then their base. Pushing heavies / mediums only stop to fight inside brawl range
+(170 m, up to 230 m when damaged) or when hit; TDs and lights keep their range. Mediums flex every 20 s to a lane that is winning (to push) or
 collapsing (to hold). Pushing bots hunt the nearest remembered enemy (seen ≤ 30 s ago, sticky
-target, a reached empty spot is "cleared") and cap when deep in enemy ground.
+target, a reached empty spot is "cleared") and cap when deep in enemy ground. A clearly winning
+team (all-in, ratio > 1.8) sends every third tank straight to the enemy base, and after 9:20
+everyone in all-in goes to cap (a capture rather than a time-out).
 
 **Pathfinding.** A* over the team overlay: base nav + wrecks (permanent) + congestion (each
 planned path adds cost to its cells, decays ×0.55 / 10 s, so teammates spread over parallel
@@ -100,8 +103,9 @@ off after the shot while lit, return when nearly loaded), `bush` (snipers sit ~1
 bush so the muzzle flash doesn't cost the bush), `angle` (heavies / thick mediums angle the hull
 25–50° to the threat), `relocate` (TDs / passive lights move when lit and shot without an
 answer), `retreat` (< 25% hp → fall back), `discipline` (range and opening fire discipline,
-no low-odds snap shots on the move), `stopEnRoute` (bad players stop to trade anywhere on the
-way; good ones only for close threats).
+no low-odds snap shots on the move). Everyone stops to fight back when a target is inside
+engage range on the way to a post (A/B: better than driving on through fire); skilled bots then
+use cover. A sniper sitting behind its bush may shoot out to 445 m (the shot keeps its camo).
 
 **Consumables.** Extinguisher on fire, repair on a destroyed track under fire / destroyed
 engine / destroyed gun in combat / damaged ammo rack (unicums), medkit on a dead crew member;
@@ -126,24 +130,54 @@ Duel check (1v1 M4 vs M4, 260 m, stationary): skill 0.9 beats 0.15 59:1, beats 0
 0.5 beats 0.15 56:4. Tiger vs Tiger 0.9 vs 0.5: 32:8.
 
 ## Battle-sim results
-(64 battles, 16 per map, seed 1)
-- Endings: destroyed 57, capture 3, time-out 4 (6%). Duration mean 7.1 min, median 6.0,
-  80% within 4–10 min. Kessel is the quickest (median 4.7), Ashford the slowest (9.1).
-- Wins: team 0 27, team 1 33, draws 4.
-- Stuck: 5 of 1920 tanks (0.3%). Unsticks 0.36 per tank per battle.
-- Per class dmg/hp: light 0.51, medium 0.75, heavy 0.75, TD 1.29. Hit 51%, pen 73% of hits.
-- Deaths by time: < 1 min 4%, 1–2 min 21%, 2–3 min 29%, 3–4 min 20%, later 26%.
-  Kill distance < 100 m 19%, 100–200 22%, 200–300 27%, 300–400 23%, 400+ 9%.
-- Skill: potato / average / unicum dmg/hp 0.65 / 0.89 / 1.14, survival 11 / 17 / 23%,
-  hit 37 / 52 / 60%, pen 70 / 70 / 79%. r(skill, dmg/hp) = 0.20 (within class: medium 0.20,
-  heavy 0.27, TD 0.22), r(skill, lifetime) = 0.19. Team-level: all-0.85 vs all-0.2 teams: 14:2.
-- AI cost 0.003 ms per bot per tick (0.10 ms per tick for 30 bots); sim 0.10 ms per tick.
+Final run: `node tools/battle-sim.mjs --n 16 --workers 2` (64 battles, 16 per map, seed 1).
+| map | t0 / t1 / draw | destroyed / capture / time | median min (range) | in 4–10 min | stuck |
+|---|---|---|---|---|---|
+| kessel | 9 / 7 / 0 | 10 / 6 / 0 | 5.3 (3.6–6.9) | 75% | 0 |
+| ashford | 6 / 9 / 1 | 14 / 1 / 1 | 9.4 (5.1–15) | 69% | 1 |
+| steppe | 7 / 9 / 0 | 16 / 0 / 0 | 6.0 (4.8–9.4) | 100% | 0 |
+| kolvik | 7 / 8 / 1 | 15 / 0 / 1 | 6.7 (3.5–15) | 81% | 1 |
+| all | 29 / 33 / 2 | 55 / 7 / 2 (3%) | 6.5 (mean 7.1) | 81% | 2 of 1920 |
+- Per class dmg/hp, survival: light 0.44 / 6%, medium 0.77 / 10%, heavy 0.73 / 10%, TD 1.33 / 26%.
+  Hit 49%, pen 72% of hits, 11.8 shots per tank.
+- Deaths by time: < 1 min 4%, 1–2 min 18%, 2–3 min 30%, 3–4 min 22%, 4–6 min 16%, later 11%.
+  Kill distance < 100 m 18%, 100–200 25%, 200–300 28%, 300–400 20%, 400+ 9%.
+- Skill (potato < 0.35 / average / unicum > 0.65): dmg/hp 0.57 / 0.92 / 1.20, survival
+  8 / 15 / 20%, lifetime 3.3 / 3.8 / 4.5 min, hit 34 / 51 / 59%, pen 65 / 70 / 78%, kills
+  0.48 / 0.89 / 1.07. r(skill, dmg/hp) = 0.26 (0.27 with class and tier factored out; within
+  class: heavy 0.31, TD 0.32, medium 0.24), r(skill, lifetime) 0.19, r(skill, survived) 0.12,
+  r(skill, hit%) 0.37. Team level: an all-0.85 team beats an all-0.2 team 14:2.
+- AI cost 0.004 ms per bot per tick on average (worst battle 0.013), 0.12 ms per tick for 30
+  bots; sim 0.12 ms per tick. A* is budgeted at 2 per team per tick (~1 ms each).
+- Duels (1v1 M4, 260 m, stationary): 0.9 beats 0.15 59:1 and 0.5 39:21; 0.5 beats 0.15 56:4.
 
-## Known gaps
-- Skill correlation per tank is ~0.2 (target 0.3): mixed teams dilute it (team outcome and
-  class/tier dominate the variance); duels and team-vs-team show a strong effect.
-- No real side-scraping (only angling), no hull-down seeking beyond the map's hull-down points.
-- Kessel battles are short (open fields on both banks).
+History (what moved the numbers): danger-aware routing + staging → deaths in the first minute
+from 26% to 4%; pHit model matched to the sim's half-normal dispersion → unicums stopped
+over-waiting (duel 0.9 vs 0.5 went from 21:39 to 39:21); per-team A* budget fixed a team-0
+bias (20:5 → even); "give up on an unshootable target" fixed embankment stand-offs (kolvik
+time-outs 38% → 6%); hull-width pinch check + right of way + water-aware smoothing took stuck
+tanks from ~15 to ~2 per 48 battles.
+
+## What's still off (priority order, best guess at the fix)
+1. **Skill correlation ~0.26, survival ~0.12 (target 0.3).** Unicums still die moving to /
+   in cover (≈45% of their deaths are `cover/*`). Fix: pick cover from the danger map before
+   leaving (only spots reachable by reversing ≤ 15 m, else stay and fight), time peeks to the
+   enemy's reload (shot events of visible enemies give their reload window), and choose posts
+   by prior danger (skilled bots take the less exposed bush of a pair).
+2. **Long-range bias: 29% of kills at 300 m+, 43% under 200 m.** The maps are open and
+   view ranges reach 400 m; TD sniper points see across the map. Fix: TD fire range 450 → 380
+   unless hidden behind a bush, and move medium posts to the brawl side of their lane after
+   the opening (flex mediums currently sit on hull-down points 250–350 m from the enemy's).
+3. **Kessel is short (median 5.3 min, 6 of 16 by capture) and Ashford long (9.4).** Kessel's
+   banks are open pasture; Ashford's village stalls pushes. Fix: per-map push timers (earlier
+   all-in on Ashford), and on Kessel stage behind the town rather than in the fields.
+4. **Lights die (6% survive, 0.44 dmg/hp).** They sit on the scout point too long. Fix: leave
+   the scout point as soon as anything is spotted, and only passive-spot from bush points with
+   foliage between them and the enemy.
+5. **Landslides**: most battles end 15:3–15:8, a few 15:0–15:1. Mostly a snowball of early
+   trades; a "don't push alone" rule (wait for 2+ allies in the lane) would slow it.
+6. **Stuck: ~1 per 30 battles**, all at blocked goals next to buildings (arrived via the
+   "can't reach it" rule, then idle). Fix: pick a new post when a goal is declared unreachable.
 
 ## CONTRACT CHANGE REQUESTS
 - None. (The AI uses only exported sim / map functions; no sim edits.)

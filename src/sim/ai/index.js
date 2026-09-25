@@ -186,6 +186,7 @@ export class Brain {
     const pos = t.pos;
     let goal = null, mode = 'post', hold = false;
     const tgt = this.targetLos ? this.target : null;
+    if (!this.post) this.setPost(T.lanePost(T.info.brawlLane, 0.3));   // brain created after the team split
     // over-exposed (skilled bots): several guns on us, or losing hp fast → duck out for a bit
     if (this.knows.duck && t.spotted && now > this.duckUntil + 4 && this.peek === 0) {
       let aimed = 0;
@@ -268,8 +269,14 @@ export class Brain {
         this.huntId = hunt ? hunt.id : null;
         if (!(T.push >= 1 || this.yolo)) this.capping = false;
         if (prog > 0.72 || (T.push >= 2 && prog > 0.6)) this.capping = true;
-        if (tgt && this.targetD < range) hold = true;
-        else if (hunt) { goal = this.jitterGoal(hunt.x, hunt.z, 10, 'h' + hunt.id); this.why = 'hunt' + hunt.id + '@' + hunt.d.toFixed(0); }
+        // a clearly winning team sends every third tank straight to their base, and late in the
+        // battle everyone goes (a capture ends it rather than a time-out)
+        if (T.push >= 2 && ((T.ratio > 1.8 && t.id % 3 === 0) || now > 560)) { this.capping = true; hunt = null; }
+        // pushing brawlers close the distance: stop to fight only inside brawl range
+        // (or when they're taking hits), TDs and lights keep their range
+        const brawl = this.cls === 'heavy' || this.cls === 'medium' ? 170 + 60 * (1 - hpF) : range;
+        if (tgt && (this.targetD < brawl || (this.targetD < range && now - this.lastHitT < 2))) hold = true;
+        else if (hunt) { goal = this.jitterGoal(hunt.x, hunt.z, 10, 'h' + hunt.id); if (this.log) this.why = 'hunt' + hunt.id; }
         else if (this.capping) { goal = this.jitterGoal(T.eBase.x, T.eBase.z, 22, 'cap'); mode = 'cap'; this.why = 'cap'; }
         else {
           // lane objectives only ever move forward
@@ -278,7 +285,7 @@ export class Brain {
             if (this.pushGoal) this.pushS = this.pushGoal.s; else this.capping = true;
           }
           goal = this.pushGoal || this.jitterGoal(T.eBase.x, T.eBase.z, 22, 'cap');
-          this.why = 'pg' + (this.pushS || 0).toFixed(2);
+          if (this.log) this.why = 'push';
         }
       } else {
         goal = this.post;
