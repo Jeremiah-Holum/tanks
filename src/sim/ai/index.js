@@ -7,7 +7,7 @@
 import { aimSolution, predictImpact, DT, makeRng, penPreview, hullToWorld } from '../battle.js';
 import { heightAt, lineClear } from '../map/query.js';
 import { teamBrain, planBudget } from './team.js';
-import { plan, Follower } from './path.js';
+import { plan, Follower, segClear } from './path.js';
 import { bestAim, candWorld, lineTo, gunFacing, alphaOf, chooseShell, chanceWith, pHit } from './combat.js';
 import { wrap, clamp, hyp, headingTo, shellSlots, snapPassable, passable, TAU } from './util.js';
 
@@ -53,7 +53,7 @@ export class Brain {
     this.nextShot = 0; this.checkAt = 0; this.curErr = 0; this.readyAt = 0;
     this.lastHitT = -99; this.hitDir = null; this.recentDmg = 0;
     this.stuckT = 0; this.reverseT = 0; this.revSteer = 0; this.unsticks = []; this.jitter = null;
-    this.progX = tank.pos.x; this.progZ = tank.pos.z; this.progT = 0;
+    this.progT = 0; this.pushT = 0; this.stall = 0; this.lastRemain = Infinity; this.progYaw = 0; this.escape = null; this.pivoting = false; this.intent = 0;
     this.peek = 0; this.peekT = 0; this.peekDur = 0; this.peekWhy = ''; this.duckUntil = -1;
     this.scoutPhase = 0; this.scoutAt = -1; this.relocAt = -99; this.flexAt = 40 + this.rng() * 30;
     this.brawlPushAt = 70 + this.rng() * 50;
@@ -235,11 +235,16 @@ export class Brain {
       }
     }
     if (this.jitter && goal) goal = { ...goal, x: goal.x + this.jitter.x, z: goal.z + this.jitter.z };
+    if (this.escape) {
+      if (now > this.escape.until || hyp(this.escape.x - pos.x, this.escape.z - pos.z) < 6) { this.escape = null; this.goalKey = ''; }
+      else { goal = this.escape; hold = false; mode = 'escape'; }
+    }
     this.mode = mode; this.hold = hold;
     if (goal) {
       const key = mode + ':' + Math.round(goal.x / 10) + ',' + Math.round(goal.z / 10);
-      if (key !== this.goalKey && (!this.goal || hyp(goal.x - this.goal.x, goal.z - this.goal.z) > 12)) {
+      if (key !== this.goalKey && (!this.goal || this.goalKey === '' || hyp(goal.x - this.goal.x, goal.z - this.goal.z) > 12)) {
         this.goalKey = key; this.needPlan = true; this.arrived = false;
+        if (this.log) { this.log.push(now.toFixed(0) + ':' + key); if (this.log.length > 12) this.log.shift(); }
       }
       this.goal = goal;
     }
@@ -266,31 +271,35 @@ export class Brain {
     if (this.needPlan && planBudget(world)) {
       const r = plan(T.nav, T.navS, t.pos.x, t.pos.z, goal.x, goal.z);
       this.stats.plans++;
-      if (r) { this.follow.set(r.pts); T.notePath(r.raw); this.needPlan = false; this.planFail = 0; }
+      if (r) { this.follow.set(r.pts); T.notePath(r.raw); this.needPlan = false; this.planFail = 0; this.lastRemain = Infinity; }
       else { this.follow.set([{ x: t.pos.x, z: t.pos.z }, { x: goal.x, z: goal.z }]); this.needPlan = false; if (++this.planFail > 2) this.jitter = { x: (this.rng() - 0.5) * 40, z: (this.rng() - 0.5) * 40 }; }
     }
     const spd = Math.abs(t.speed);
     const car = this.follow.carrot(t.pos.x, t.pos.z, CRUISE_LOOK + spd * 0.8, this.carrot);
     const tx = car ? car.x : goal.x, tz = car ? car.z : goal.z;
     const remain = car ? car.remain + hyp(tx - t.pos.x, tz - t.pos.z) : hyp(goal.x - t.pos.x, goal.z - t.pos.z);
-    if (remain < 6 || (car && this.follow.done && hyp(goal.x - t.pos.x, goal.z - t.pos.z) < 8)) {
+    const dg = hyp(goal.x - t.pos.x, goal.z - t.pos.z);
+    // arrived: close to the goal, or near it and repeatedly blocked (goal hugging a wall)
+    if (remain < 6 || dg < 7 || (dg < 22 && this.unsticks.length >= 2)) {
       this.arrived = true; this.holdStill(world); return;
     }
     this.wantMove = true; this.peek = 0;
     this.steerTo(tx, tz, Math.min(1, 0.3 + remain / 30));
-    this.avoid(world);
-    this.unstick(world);
+    this.intent = this.pivoting ? 0 : Math.abs(c.throttle);  // what we meant before avoidance
+    if (!this.pivoting) this.avoid(world);
+    this.unstick(world, remain);
   }
 
   steerTo(x, z, maxTh) {
     const t = this.t, c = this.c;
+    this.pivoting = false;
     const want = headingTo(t.pos.x, t.pos.z, x, z), diff = wrap(want - t.yaw), d = hyp(x - t.pos.x, z - t.pos.z);
     const ad = Math.abs(diff);
     if (ad > 2.4 && d < 25) {                 // just behind us: reverse onto it
       const d2 = wrap(want + Math.PI - t.yaw);
       c.steer = clamp(-d2 * 2.5, -1, 1); c.throttle = -0.8;
     } else if (ad > 0.85) {                   // pivot
-      c.steer = diff > 0 ? -1 : 1; c.throttle = t.speed > 3 ? 0 : 0.12;
+      c.steer = diff > 0 ? -1 : 1; c.throttle = t.speed > 3 ? 0 : 0.12; this.pivoting = true; return;
     } else {
       c.steer = clamp(-diff * 2.8, -1, 1);
       c.throttle = maxTh * (1 - ad * 0.55);
@@ -323,27 +332,46 @@ export class Brain {
   }
 
   // Unstick: no progress while trying to drive → reverse, turn, mark the spot and replan.
-  unstick(world) {
+  unstick(world, remain) {
     const t = this.t, c = this.c, T = this.team, now = world.time;
-    if (Math.abs(c.throttle) > 0.1 && Math.abs(t.speed) < 0.5) this.stuckT += DT;
-    else this.stuckT = Math.max(0, this.stuckT - DT * 2);
-    // slow creep check: under 3 m in 6 s of driving
+    // Progress = the remaining route length shrinking. Checked over 2 s windows in which we
+    // really tried to drive (pivots and avoidance slow-downs still count as trying).
     this.progT += DT;
-    let slow = false;
-    if (this.progT > 6) {
-      slow = hyp(t.pos.x - this.progX, t.pos.z - this.progZ) < 3;
-      this.progX = t.pos.x; this.progZ = t.pos.z; this.progT = 0;
+    if (this.intent > 0.3 || this.pivoting) this.pushT += DT;
+    if (this.progT < 2) return;
+    const gained = this.lastRemain - remain, tried = this.pushT > 1.4, turned = Math.abs(wrap(t.yaw - this.progYaw));
+    this.progT = 0; this.pushT = 0; this.lastRemain = remain; this.progYaw = t.yaw;
+    if (!tried || gained > 1.5 || (this.pivoting && turned > 0.15)) { this.stall = 0; return; }
+    if (++this.stall < 2) return;          // two windows (4 s) without progress
+    this.stall = 0; this.stats.unsticks++;
+    this.unsticks.push(now);
+    while (this.unsticks.length && now - this.unsticks[0] > 45) this.unsticks.shift();
+    const n = this.unsticks.length;
+    this.reverseT = 1.1 + this.rng() * 0.9;
+    this.revSteer = (this.rng() < 0.5 ? -1 : 1) * (0.4 + this.rng() * 0.6);
+    T.noteBlocked(t.pos.x + Math.sin(t.yaw) * 7, t.pos.z + Math.cos(t.yaw) * 7);
+    if (this.cover) { this.cover = null; this.coverAt = now; }
+    if (n >= 2) this.escape = this.escapePoint(world);             // drive somewhere clear first
+    if (n >= 4) { this.jitter = { x: (this.rng() - 0.5) * 50, z: (this.rng() - 0.5) * 50 }; this.goalKey = ''; }
+    c.throttle = -1; c.steer = this.revSteer;
+  }
+  // A clear spot ~12–24 m away (straight line drivable, no tank or wreck near it), preferring
+  // directions away from where we were facing and towards the goal.
+  escapePoint(world) {
+    const t = this.t, nav = this.team.navS, fx = Math.sin(t.yaw), fz = Math.cos(t.yaw), g = this.goal;
+    const gd = g ? hyp(g.x - t.pos.x, g.z - t.pos.z) || 1 : 1;
+    let best = null, bs = -Infinity;
+    for (let i = 0; i < 16; i++) {
+      const a = i * TAU / 16, r = i % 2 ? 14 : 24, dx = Math.sin(a), dz = Math.cos(a);
+      const x = t.pos.x + dx * r, z = t.pos.z + dz * r;
+      if (!passable(nav, x, z, 2.2) || !segClear(nav, t.pos.x, t.pos.z, x, z)) continue;
+      let near = false;
+      for (const o of world.tanks) if (o !== t && hyp(o.pos.x - x, o.pos.z - z) < 7) { near = true; break; }
+      if (near) continue;
+      const sc = -(dx * fx + dz * fz) * 0.6 + (g ? (dx * (g.x - t.pos.x) + dz * (g.z - t.pos.z)) / gd : 0) + this.rng() * 0.4;
+      if (sc > bs) { bs = sc; best = { x, z, until: world.time + 12 }; }
     }
-    if (this.stuckT > 1.5 || slow) {
-      this.stuckT = 0; this.stats.unsticks++;
-      this.unsticks.push(now);
-      while (this.unsticks.length && now - this.unsticks[0] > 45) this.unsticks.shift();
-      this.reverseT = 1.1 + this.rng() * 0.9;
-      this.revSteer = (this.rng() < 0.5 ? -1 : 1) * (0.4 + this.rng() * 0.6);
-      T.noteBlocked(t.pos.x + Math.sin(t.yaw) * 7, t.pos.z + Math.cos(t.yaw) * 7);
-      if (this.unsticks.length >= 3) { this.jitter = { x: (this.rng() - 0.5) * 50, z: (this.rng() - 0.5) * 50 }; this.goalKey = ''; }
-      c.throttle = -1; c.steer = this.revSteer;
-    }
+    return best;
   }
 
   // A spot within ~40 m that no enemy currently shooting at us can see (closest ring first,
@@ -394,7 +422,7 @@ export class Brain {
   // Standing: face the threat (angled for armoured tanks), peek on long reloads.
   holdStill(world) {
     const t = this.t, c = this.c, now = world.time;
-    this.wantMove = false; this.stuckT = 0; this.progT = 0; this.progX = t.pos.x; this.progZ = t.pos.z;
+    this.wantMove = false; this.progT = 0; this.pushT = 0; this.stall = 0; this.lastRemain = Infinity;
     c.throttle = 0; c.steer = 0; c.brake = true;
     // peek-a-boo: back off behind cover after a shot on a long reload (come back when nearly
     // loaded), or duck out when over-exposed (come back after the duck timer)

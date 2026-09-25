@@ -207,7 +207,7 @@ async function grid() {
     const c = k % cols, r = Math.floor(k / cols);
     const x = c * tw, y = H - (r + 1) * th;
     models.forEach((m, j) => (m.group.visible = j === k));
-    frame(TANKS[id], num('yaw', 35), num('elev', 16), 0);
+    frame(TANKS[id], num('yaw', 35), num('elev', 16), 0); camera.position.lerp(new THREE.Vector3(0, 1, 0), 1 - 1 / num('zoom', 1.45)); camera.updateMatrixWorld();
     renderer.setViewport(x, y, tw, th); renderer.setScissor(x, y, tw, th);
     renderer.render(scene, camera);
     const el = document.createElement('div');

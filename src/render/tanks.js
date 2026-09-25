@@ -181,6 +181,8 @@ export class TankRenderer {
       this.scars.add(part, ev.pos, ev.normal, 0.12 + cal / 1000 * (kind === 'pen' ? 2.5 : 3.2), kind);
     }
   }
+  // Build both LODs of every tank up front (≈35 ms per new tank type) to avoid hitches later.
+  prewarm(world) { for (const t of world.tanks) { const e = this.entries.get(t.id) || this._entry(t); this._model(e, 0); this._model(e, 1); } }
   modelOf(id) { const e = this.entries.get(id); return e ? e.models[Math.max(0, e.lod)] : null; }
   _remove(id) {
     const e = this.entries.get(id);

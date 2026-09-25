@@ -22,6 +22,7 @@ m.dispose()
 new TankRenderer(scene, quality)       // src/render/tanks.js
   .sync(world, { visible, alpha, playerId, dt, camera? })   // camera optional (else learned from the render pass)
   .handle(event)                        // shot → recoil + hull kick, hit → scar decal on hull/turret
+  .prewarm(world)   // build both LODs now (~35 ms per new tank type), else built lazily on first sight
   .modelOf(id), .setQuality(q), .clear(), .dispose(), .stats()
 new FxRenderer(scene, quality)          // src/render/fx.js (registers itself as scene.userData.steelFx)
   .handle(event, world)                 // shot, impact, hit, kill, treeFall, objectBreak
@@ -59,7 +60,11 @@ TankRenderer finds the FxRenderer through `scene.userData.steelFx`.
   (US star, Balkenkreuz, red star, slogans, digits), track texture + bump. Geometry is cached per
   (def, lod, gun) and shared by all instances; materials are shared per paint scheme; the only
   per-instance materials are the two running-gear clones carrying uTravel (same program).
-- Triangles: near LOD 13–25k (Tiger 22k, M4 15.6k, T29 ~25k), far LOD 0.9–1.4k. Draw calls per
+- Paint defaults: US Olive Drab, Soviet 4BO, German Panzergrau (tier ≤ III), Dunkelgelb (IV),
+  3-tone camo (≥ V, pattern seeded per tank id). Markings: US star (hull sides, glacis), Balkenkreuz
+  (hull sides, rear), Soviet slogans (hull sides) + red star (large turrets); tactical numbers.
+- Triangles: near LOD 13–25k (Tiger 22k, M4 15.6k, T29 ~25k), far LOD 0.9–1.4k. Geometry build ≈ 35 ms
+  per tank type (both LODs), cached. Draw calls per
   near tank ≈ 9 (hull, turret, mantlet, gun, numbers, 2×track, 2×wheels), far ≈ 4.
   LOD switch at 75 m (medium; 45 low / 110 high), scaled by camera fov/55 (sniper zoom keeps LOD0).
 
@@ -79,6 +84,12 @@ spawn counts and lights.
 - `grid=1&nation=usa&per=16` roster tiles with tri counts; `battle=1&ids=a,b,c&t=20&cam=x,y,z,lx,ly,lz`
   runs the real sim (testMap + simpleBot) through TankRenderer/FxRenderer.
 Screenshots: `tools/capped.sh -- node tools/shot-tanks.mjs [--w=1280 --h=720] shots/tanks name='query' …`
+
+## Screenshots (shots/tanks/)
+usa.png, ger.png, ussr.png (roster grids) · m4.png, m4c.png, tiger.png, t34.png, bt7.png, pz2.png,
+lee.png, kv.png, marder.png, m10.png (open tops) · lod1.png · tracks.png (broken tracks) · ammo.png
+(ammo rack) · fire.png, wreck.png · shot.png/shot2.png (muzzle 0.03 s / 0.6 s) · ric.png, nopen.png,
+pen.png, he.png, tracer.png, dust.png · battle.png, battle2.png (real sim through the renderers).
 
 ## Gaps / TODO
 - Track band silhouette differs a little from the armour 'track' piece ends (the piece's end planes

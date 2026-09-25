@@ -631,7 +631,7 @@ function rockGeometry(seed) {
     if (p.y > 0.55) k *= 1 - (p.y - 0.55) * 0.35; // flatter tops
     pos.setXYZ(j, p.x * k, p.y * k, p.z * k);
   }
-  const g0 = base.toNonIndexed(); base.dispose();
+  const g0 = base.index ? base.toNonIndexed() : base.clone(); base.dispose();
   // smooth normals by position hashing
   g0.computeVertexNormals();
   const P = g0.attributes.position, N = new Float32Array(P.count * 3), acc = new Map();

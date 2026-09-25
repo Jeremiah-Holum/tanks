@@ -37,6 +37,7 @@ function resolvePaint(def, paint) {
   if (typeof paint === 'string' && PAINTS[paint]) return PAINTS[paint];
   if (typeof paint === 'string' && paint[0] === '#') return { base: parseInt(paint.slice(1), 16) };
   let key = NATION_PAINT[def.nation] || 'olive';
+  if (def.nation === 'germany' && def.tier <= 3 && def.look?.camo == null) key = 'grey'; // early-war Panzergrau
   if (def.nation === 'germany' && (def.look?.camo ?? def.tier >= 5)) key = 'dunkelgelb_camo';
   if (def.nation === 'germany' && def.look?.camo === false) key = 'dunkelgelb';
   if (def.look?.paint && PAINTS[def.look.paint]) key = def.look.paint;
@@ -310,7 +311,7 @@ const ST = {
   interior: { c: lin(0xb9b6a4), metal: 0.1, rough: 0.8, paint: 0 },
   brass: { c: lin(0xa88442), metal: 0.85, rough: 0.35, paint: 0, dirt: false },
   radio: { c: lin(0x4d5244), metal: 0.2, rough: 0.6, paint: 0 },
-  link: { c: lin(0x3d3934), metal: 0.5, rough: 0.6, paint: 0, dirtK: 0.4 },
+  link: { c: lin(0x574a3e), metal: 0.35, rough: 0.7, paint: 0, dirtK: 0.4 },
   decal: { c: WHITE, metal: 0.1, rough: 0.6, paint: 0, kind: 1 },
 };
 const V = {
@@ -748,7 +749,7 @@ function fenders(gb, D, G, lod) {
         const nb = 4;
         for (let k = 0; k < nb; k++) { const z = z0 + (z1 - z0) * (k + 0.5) / nb; gb.box(M(side * (D.h.W / 2 + 0.05), y - 0.05, z, 0, 0, side * 0.5, 0.1, 0.1, 0.04)); }
         // stowage on the guards: a box on the left, tools on the right
-        gb.st = ST.paint; if (side > 0) gb.box(M(x, y + 0.13, z0 + (z1 - z0) * 0.3, 0, 0, 0, tr.w * 0.8, 0.24, 0.5));
+        gb.st = ST.paint; if (side > 0) gb.box(M(x, y + 0.11, z0 + (z1 - z0) * 0.12, 0, 0, 0, tr.w * 0.8, 0.2, 0.45));
         else { gb.st = ST.wood; gb.cyl(M(x, y + 0.035, (z0 + z1) / 2 - 0.2, Math.PI / 2, 0, 0, 0.018, 1.0, 0.018), null, 6); gb.st = ST.steel; gb.box(M(x, y + 0.03, (z0 + z1) / 2 + 0.4, 0, 0, 0, 0.16, 0.012, 0.22)); }
       }
     }
@@ -1043,7 +1044,7 @@ function turretDetails(gb, D, def) {
       gb.st = ST.steel; gb.box(M(0, y + H * 0.25 + 0.01, z - 0.2, 0, 0, 0, Math.min(Wr * 0.85, 1.4) * 0.9, 0.015, 0.36));
     }
     for (const s of [1, -1]) {
-      const y = H * 0.72, x = s * (D.tSideX(y) + 0.02), z = D.tFrontZ(y) - 0.35;
+      const y = H * 0.72, x = s * (D.tSideX(y) + 0.02), z = D.tFrontZ(y) - Math.min(0.35, t.L * 0.12);
       for (let k = 0; k < 3; k++) {
         gb.st = ST.paint; gb.cyl(M(x + s * 0.06, y + (k - 1) * 0.02, z - k * 0.12, 0.5, 0, -s * 0.6, 0.045, 0.24, 0.045), null, 8);
       }
@@ -1215,7 +1216,10 @@ function hullMarkings(gb, upperFaces, D) {
   }
 }
 function turretMarkings(gb, faces, D) {
-  if (D.nation === 'ussr') for (const f of sideFaces(faces, 'turret.side')) stick(gb, f, f.plane.n[0] > 0 ? 0.8 : 0.2, 0.55, 0.36, 0.36, ATLAS.redStar);
+  if (D.nation === 'ussr') for (const f of sideFaces(faces, 'turret.side')) {
+    const B = faceBasis(f);
+    if (B.u1 - B.u0 > 1.25) stick(gb, f, f.plane.n[0] > 0 ? 0.88 : 0.12, 0.55, 0.3, 0.3, ATLAS.redStar); // room for number + star
+  }
   if (D.nation === 'usa' && D.fixed) for (const f of sideFaces(faces, 'turret.side')) stick(gb, f, 0.5, 0.5, 0.4, 0.4, ATLAS.usStar);
 }
 function numberMesh(faces, D, number, yOff) {
@@ -1227,7 +1231,7 @@ function numberMesh(faces, D, number, yOff) {
     const hgt = Math.min(0.24, (B.v1 - B.v0) * 0.55), wd = hgt * 0.72;
     const tw = wd * digits.length;
     // Soviet/US: number towards the rear; German: centred
-    const fu = D.nation === 'ussr' ? (left ? 0.25 : 0.75) : 0.5;
+    const fu = D.nation === 'ussr' ? (left ? 0.2 : 0.8) : D.nation === 'germany' ? (left ? 0.7 : 0.3) : 0.5;
     const cu = B.u0 + tw / 2 + (B.u1 - B.u0 - tw) * fu, cv = (B.v0 + B.v1) / 2 + (B.v1 - B.v0) * 0.05;
     digits.forEach((d, i) => {
       const r = german ? ATLAS.digitG(d) : ATLAS.digitW(d);
@@ -1317,7 +1321,7 @@ function buildGeometry(def, lod, gunIndex) {
     if (!lod) {
       // broken track: the run lies flat on the ground ahead of the tank, a stub hangs off the sprocket
       const bg = new GB(0, D.dirtH);
-      const z0 = G.zLo - G.R, z1 = G.Lt / 2 + 2.6;
+      const z0 = G.zLo - G.R, z1 = G.Lt / 2 + 1.6;
       trackBand(bg, [[z0, TT / 2], [z1, TT / 2]], false, side > 0 ? xs - D.tr.w / 2 : -xs - D.tr.w / 2, side > 0 ? xs + D.tr.w / 2 : -xs + D.tr.w / 2, G.pitch, G.variant, side, 0);
       const zb = G.front ? G.zS : G.zI, yb = G.front ? G.yS : G.yI, rb = G.front ? G.Rs : G.Ri;
       trackBand(bg, [[zb + rb * 0.3, yb + rb + TT / 2], [zb - rb * 0.6, yb + rb * 0.8], [zb - rb * 1.2, yb - rb * 0.2], [zb - rb * 1.1, yb - rb * 1.6]], false,

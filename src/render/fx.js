@@ -74,7 +74,7 @@ function atlas() {
     }
     g.putImageData(id, (tile % 4) * S, Math.floor(tile / 4) * S);
   };
-  puff(T.SMOKE, 0, 1.0, 1.6); puff(T.SMOKE2, 1, 1.0, 1.5); puff(T.SMOKE3, 2, 1.0, 1.7); puff(T.DUST, 3, 0.8, 1.2);
+  puff(T.SMOKE, 0, 1.0, 2.2); puff(T.SMOKE2, 1, 1.0, 2.1); puff(T.SMOKE3, 2, 1.0, 2.3); puff(T.DUST, 3, 0.85, 1.7);
   at(T.FLAME, () => { // tongues: tall soft ellipses rising from a bright base
     for (let k = 0; k < 9; k++) {
       const x = 64 + (r() - 0.5) * 44, h = 40 + r() * 50, w = 10 + r() * 12;

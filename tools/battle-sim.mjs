@@ -28,6 +28,7 @@ async function runBattle({ mapId, seed, limit, verbose, skills }) {
   const map = loadMap(mapId);
   const world = createBattle({ map, seed, timeLimit: limit, teams: opts.teams });
   const brains = new Map(world.tanks.map((t) => [t.id, createBrain(world, t)]));
+  if (verbose) for (const b of brains.values()) b.log = [];
   const ctrl = new Map();
   let aiMs = 0, simMs = 0, steps = 0;
   const deathT = {}, deaths = [];
@@ -70,7 +71,7 @@ async function runBattle({ mapId, seed, limit, verbose, skills }) {
           for (const p of h) { maxD = Math.max(maxD, Math.hypot(p[0] - h[0][0], p[1] - h[0][1])); want += p[2]; }
           if (maxD < 8 && want >= 10) {
             stuck.set(t.id, { x: Math.round(t.pos.x), z: Math.round(t.pos.z), t: Math.round(world.time), mode: br.mode, cls: t.def.cls });
-            if (verbose) { const c = br.c, g = br.goal; console.log(`  STUCK ${t.id} ${t.def.id} at ${t.pos.x.toFixed(1)},${t.pos.z.toFixed(1)} yaw ${t.yaw.toFixed(2)} speed ${t.speed.toFixed(2)} goal ${g && g.x.toFixed(0)},${g && g.z.toFixed(0)} hold ${br.hold} arrived ${br.arrived} rev ${br.reverseT.toFixed(2)} thr ${c.throttle.toFixed(2)} steer ${c.steer.toFixed(2)} brake ${c.brake} carrot ${br.carrot.x.toFixed(0)},${br.carrot.z.toFixed(0)} path ${br.follow.pts && br.follow.pts.map((p) => p.x.toFixed(0) + ',' + p.z.toFixed(0)).join(' ')} i=${br.follow.i} unsticks ${br.stats.unsticks} plans ${br.stats.plans} tracks ${t.modules.trackL.state}/${t.modules.trackR.state} engine ${t.modules.engine.state}`); }
+            if (verbose) { const c = br.c, g = br.goal; console.log(`  STUCK ${t.id} ${t.def.id} at ${t.pos.x.toFixed(1)},${t.pos.z.toFixed(1)} yaw ${t.yaw.toFixed(2)} speed ${t.speed.toFixed(2)} goal ${g && g.x.toFixed(0)},${g && g.z.toFixed(0)} hold ${br.hold} arrived ${br.arrived} rev ${br.reverseT.toFixed(2)} thr ${c.throttle.toFixed(2)} steer ${c.steer.toFixed(2)} brake ${c.brake} carrot ${br.carrot.x.toFixed(0)},${br.carrot.z.toFixed(0)} path ${br.follow.pts && br.follow.pts.map((p) => p.x.toFixed(0) + ',' + p.z.toFixed(0)).join(' ')} i=${br.follow.i} unsticks ${br.stats.unsticks} plans ${br.stats.plans} tracks ${t.modules.trackL.state}/${t.modules.trackR.state} engine ${t.modules.engine.state} log ${br.log}`); }
           }
         }
       }
@@ -168,6 +169,9 @@ function report(R, secs) {
     for (const x of L) c[x.state] = (c[x.state] || 0) + 1;
     console.log(`  deaths ${name}: ${Object.entries(c).sort((a, b) => b[1] - a[1]).map(([k, v]) => k + ' ' + pct(v, L.length)).join(', ')}; killer dist ${mean(L.filter((x) => x.d >= 0).map((x) => x.d)).toFixed(0)} m; t ${mean(L.map((x) => x.t)).toFixed(0)} s`);
   }
+  const bins = [60, 120, 180, 240, 360, 600, 1e9], bc = bins.map(() => 0);
+  for (const x of D) bc[bins.findIndex((b) => x.t < b)]++;
+  console.log(`  deaths by time: ${bins.map((b, i) => (i ? bins[i - 1] : 0) + '–' + (b > 1e8 ? '' : b) + 's ' + pct(bc[i], D.length)).join(', ')}; kill distance ${['<100', '100–200', '200–300', '300–400', '400+'].map((k, i) => k + ' ' + pct(D.filter((x) => x.d >= i * 100 && (i === 4 || x.d < i * 100 + 100)).length, D.length)).join(', ')}`);
   const ai = mean(R.map((r) => r.aiMsPerBotTick)), sim = mean(R.map((r) => r.simMsPerTick));
   console.log(`\nAI ${ai.toFixed(3)} ms per bot per tick (max ${Math.max(...R.map((r) => r.aiMsPerBotTick)).toFixed(3)}), ${mean(R.map((r) => r.aiMsPerTick)).toFixed(2)} ms per tick; sim ${sim.toFixed(2)} ms per tick; unsticks/tank ${mean(T.map((t) => t.unsticks)).toFixed(2)}`);
 }
