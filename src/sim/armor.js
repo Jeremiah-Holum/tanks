@@ -79,7 +79,9 @@ function turretPieces(t) {
     plane(-Math.cos(as), Math.sin(as), 0, -W / 2, 0, 0, t.side.t, 'turret.side'),
     plane(0, -1, 0, 0, 0, 0, 0, 'turret.floor'), // never an entry face from outside (inside the hull)
   ];
-  if (t.shape !== 'open') ps.push(plane(0, 1, 0, 0, H, 0, t.roof, 'turret.roof'));
+  // Open-topped fighting compartments (shape 'open', or a casemate with open: true) have a
+  // zero-thickness roof: anything, HE splash included, goes straight in.
+  if (t.shape !== 'open' && !t.open) ps.push(plane(0, 1, 0, 0, H, 0, t.roof, 'turret.roof'));
   else ps.push(plane(0, 1, 0, 0, H, 0, 0, 'turret.open'));
   if (t.shape === 'cast' || t.chamfer) {
     // Cut the four vertical corners at 45° so cast turrets read round.

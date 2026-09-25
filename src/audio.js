@@ -1,265 +1,376 @@
-// All sound is synthesised: no audio files. Positional by stereo pan + distance.
+// Steel Front audio: all Web Audio synthesis (no files) + speechSynthesis crew voice.
+// Contract (docs/DESIGN.md): new Audio(); .unlock(); .setVolumes({master,sfx,music,voice});
+// .event(ev, world, listener); .engine(tank, listener); .ui(kind); .music(on); .say(line).
+// Safe to import in node and to call before unlock(): without an AudioContext everything no-ops.
+// Details, event→sound table and tests: docs/notes/audio.md.
+import { Kit, clamp } from './audio/core.js';
+import * as S from './audio/sfx.js';
+import { EnginePool, FirePool } from './audio/engine.js';
+import { Music } from './audio/music.js';
+import { Crew, LINES } from './audio/speech.js';
+
+const SOUND = 343;          // m/s
+const MAX_DELAY = 0.6;      // cap on the speed-of-sound delay, s
+const MAX_ONESHOTS = 40;    // concurrent one-shot sounds before quiet ones are dropped
+const ROLE_LINE = { commander: 'commander', gunner: 'gunner', driver: 'driver', radioman: 'radioman', radio: 'radioman', loader: 'loader' };
+const MODULE_LINE = { engine: ['engineDmg', 'engineDead'], gun: ['gunDmg', 'gunDead'], ammoRack: ['ammoDmg', 'ammoDmg'], fuel: ['fuelDmg', 'fuelDmg'], turretRing: ['ringDmg', 'ringDmg'], trackL: [null, 'trackDead'], trackR: [null, 'trackDead'] };
+
+const idOf = (x) => (x && typeof x === 'object' ? x.id : x);
+
 export class Audio {
-  constructor() {
-    this.ctx = null; this.enabled = true;
-    this.vol = { master: 0.8, sfx: 0.9, music: 0.45 };
-    this.listener = { x: 11, z: 8, yaw: 0 };
-    this.music = { on: false, next: 0, step: 0, layers: 1, tempo: 112 };
+  // opts.context: use this (e.g. OfflineAudioContext) instead of creating one on unlock().
+  constructor(opts = {}) {
+    this.ctx = null; this.offline = false;
+    this.vol = { master: 0.8, sfx: 0.9, music: 0.5, voice: 0.9 };
+    this.listener = { pos: { x: 0, y: 0, z: 0 }, fwd: { x: 0, y: 0, z: 1 }, playerId: null };
+    this.crew = new Crew(this);
+    this.maxEngines = opts.maxEngines ?? 7;
+    this._ends = []; this._cap = new Map(); this._raw = !!opts.raw;
+    if (opts.context) this._init(opts.context, true);
   }
 
+  get ready() { return !!this.ctx && (this.offline || this.ctx.state === 'running'); }
+  get voiceOn() { return this.crew.on; }
+  set voiceOn(v) { this.crew.on = !!v; if (!v) this.crew.cancel(); }
+
+  // Call from a user gesture. Creates/resumes the context. Returns true if audio is available.
   unlock() {
-    if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) { this.enabled = false; return; }
-    const c = this.ctx = new AC();
-    this.master = c.createGain(); this.master.gain.value = this.vol.master;
-    const comp = c.createDynamicsCompressor(); comp.threshold.value = -14; comp.ratio.value = 4;
-    this.master.connect(comp); comp.connect(c.destination);
-    this.sfx = c.createGain(); this.sfx.gain.value = this.vol.sfx; this.sfx.connect(this.master);
-    this.mus = c.createGain(); this.mus.gain.value = this.vol.music; this.mus.connect(this.master);
-    // small room reverb for weight
-    const len = c.sampleRate * 1.2, ir = c.createBuffer(2, len, c.sampleRate);
-    for (let ch = 0; ch < 2; ch++) { const d = ir.getChannelData(ch); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3); }
-    this.verb = c.createConvolver(); this.verb.buffer = ir;
-    this.verbGain = c.createGain(); this.verbGain.gain.value = 0.18;
-    this.verb.connect(this.verbGain); this.verbGain.connect(this.master);
-    this.noise = c.createBuffer(1, c.sampleRate * 2, c.sampleRate);
-    const nd = this.noise.getChannelData(0); for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
-    // engine: two detuned saws through a lowpass, gain follows speed
-    this.eng = c.createGain(); this.eng.gain.value = 0;
-    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 260;
-    this.engOsc = [c.createOscillator(), c.createOscillator()];
-    this.engOsc[0].type = 'sawtooth'; this.engOsc[1].type = 'square';
-    this.engOsc[0].frequency.value = 42; this.engOsc[1].frequency.value = 42.7;
-    for (const o of this.engOsc) { o.connect(lp); o.start(); }
-    lp.connect(this.eng); this.eng.connect(this.sfx);
-    this.engLp = lp;
-    // tread clatter: filtered noise
-    this.clat = c.createGain(); this.clat.gain.value = 0;
-    const src = c.createBufferSource(); src.buffer = this.noise; src.loop = true;
-    const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 900; bp.Q.value = 1.4;
-    src.connect(bp); bp.connect(this.clat); this.clat.connect(this.sfx); src.start();
+    try {
+      if (!this.ctx) {
+        const AC = typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext);
+        if (!AC) return false;
+        this._init(new AC({ latencyHint: 'interactive' }), false);
+      }
+      if (!this.offline && this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
+    } catch (e) { console.warn('audio unavailable', e); this.ctx = null; return false; }
+    this.crew.init();
+    return true;
   }
 
-  setVolumes(v) { Object.assign(this.vol, v); if (!this.ctx) return; this.master.gain.value = this.vol.master; this.sfx.gain.value = this.vol.sfx; this.mus.gain.value = this.vol.music; }
-
-  // Stereo pan + attenuation relative to the listener (the player's tank).
-  _out(x, z, gain = 1) {
-    const c = this.ctx;
-    const g = c.createGain();
-    let pan = 0, att = 1;
-    if (x != null) {
-      const dx = x - this.listener.x, dz = z - this.listener.z;
-      const d = Math.hypot(dx, dz);
-      att = 1 / (1 + d * 0.09);
-      // project onto the listener's right vector
-      const rx = -Math.sin(this.listener.yaw), rz = Math.cos(this.listener.yaw);
-      pan = Math.max(-0.9, Math.min(0.9, (dx * rx + dz * rz) / Math.max(3, d) ));
-    }
-    g.gain.value = gain * att;
-    if (c.createStereoPanner) { const p = c.createStereoPanner(); p.pan.value = pan; g.connect(p); p.connect(this.sfx); p.connect(this.verb); }
-    else { g.connect(this.sfx); }
-    return g;
+  _init(ctx, offline) {
+    this.ctx = ctx; this.offline = offline;
+    const c = ctx, K = this.kit = new Kit(c);
+    const G = (v, to) => { const g = c.createGain(); g.gain.value = v; if (to) g.connect(to); return g; };
+    // master → compressor → tanh soft clip → out (guarantees |x| < 1)
+    this.comp = c.createDynamicsCompressor();
+    this.comp.threshold.value = -10; this.comp.knee.value = 6; this.comp.ratio.value = 8; this.comp.attack.value = 0.002; this.comp.release.value = 0.25;
+    this.clip = c.createWaveShaper(); this.clip.curve = K.curve(1.2); this.clip.oversample = '2x';
+    this.master = G(this.vol.master);
+    if (this._raw) this.master.connect(c.destination); // measurement mode: no limiter (tools/audio-render.mjs)
+    else { this.master.connect(this.comp); this.comp.connect(this.clip); this.clip.connect(c.destination); }
+    this.sfx = G(this.vol.sfx * 0.55, this.master);          // 0.55: headroom for stacked one-shots
+    this.musicBus = G(this.vol.music * 0.8, this.master);
+    this.uiBus = G(0.8, this.sfx); this.amb = G(1, this.sfx);
+    // reverbs: open field (long, echoey) for the world; steel box for inside the player's tank;
+    // a hall for music (same IR, separate so it follows the music volume)
+    const verb = (ir, ret, to) => { const cv = c.createConvolver(); cv.buffer = ir; const send = G(1); send.connect(cv); cv.connect(G(ret, to)); return send; };
+    this.fieldSend = verb(K.fieldIR, 0.55, this.sfx);
+    this.roomSend = verb(K.roomIR, 0.3, this.sfx);
+    this.hallSend = verb(K.fieldIR, 0.4, this.musicBus);
+    // inside-the-tank bus: slightly muffled, with the steel-box room
+    this.inside = G(1); const inLp = c.createBiquadFilter(); inLp.type = 'lowpass'; inLp.frequency.value = 5500;
+    this.inside.connect(inLp); inLp.connect(this.sfx); this.inside.connect(G(0.6, this.roomSend));
+    this.engines = new EnginePool(this, this.maxEngines);
+    this.fires = new FirePool(this);
+    this.mus = new Music(this);
+    if (this._wantMusic) this.music(this._wantMusic);
   }
 
-  _noise(out, t, dur, type, freq, q = 1, gain = 1, sweepTo = null) {
-    const c = this.ctx;
-    const s = c.createBufferSource(); s.buffer = this.noise; s.playbackRate.value = 0.8 + Math.random() * 0.4;
-    const f = c.createBiquadFilter(); f.type = type; f.frequency.setValueAtTime(freq, t); f.Q.value = q;
-    if (sweepTo) f.frequency.exponentialRampToValueAtTime(sweepTo, t + dur);
-    const g = c.createGain(); g.gain.setValueAtTime(gain, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    s.connect(f); f.connect(g); g.connect(out); s.start(t, Math.random()); s.stop(t + dur + 0.05);
-  }
-  _tone(out, t, dur, type, f0, f1, gain = 1, attack = 0.002) {
-    const c = this.ctx;
-    const o = c.createOscillator(); o.type = type; o.frequency.setValueAtTime(f0, t);
-    if (f1) o.frequency.exponentialRampToValueAtTime(f1, t + dur);
-    const g = c.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(gain, t + attack); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(g); g.connect(out); o.start(t); o.stop(t + dur + 0.05);
+  setVolumes(v = {}) {
+    for (const k of ['master', 'sfx', 'music', 'voice']) if (v[k] != null && isFinite(v[k])) this.vol[k] = clamp(+v[k]);
+    if (v.voiceOn != null) this.voiceOn = v.voiceOn;
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    this.master.gain.setTargetAtTime(this.vol.master, now, 0.03);
+    this.sfx.gain.setTargetAtTime(this.vol.sfx * 0.55, now, 0.03);
+    this.musicBus.gain.setTargetAtTime(this.vol.music * 0.8, now, 0.03);
   }
 
-  play(kind, o = {}) {
-    if (!this.ctx || !this.enabled) return;
-    const t = this.ctx.currentTime;
-    switch (kind) {
-      case 'fire': {
-        const out = this._out(o.x, o.z, o.mine ? 1.0 : 0.8);
-        if (o.rocket) { this._noise(out, t, 0.45, 'bandpass', 2500, 2, 0.7, 500); this._tone(out, t, 0.2, 'sawtooth', 300, 80, 0.25); }
-        this._tone(out, t, 0.22, 'sine', 150, 42, 1.0);
-        this._noise(out, t, 0.18, 'lowpass', 2600, 0.7, 0.9, 300);
-        this._tone(out, t, 0.05, 'square', 900, 300, 0.15);
-        break;
-      }
-      case 'bounce': { const out = this._out(o.x, o.z, 0.5); this._tone(out, t, 0.25, 'sine', 2200 + Math.random() * 400, 1700, 0.45); this._tone(out, t, 0.12, 'triangle', 3400, 2600, 0.2); this._noise(out, t, 0.05, 'highpass', 3000, 1, 0.4); break; }
-      case 'pop': { const out = this._out(o.x, o.z, 0.4); this._noise(out, t, 0.14, 'lowpass', 1400, 1, 0.8, 200); break; }
-      // A shell off a tank's armour: a sharp strike, then the whining zing of it flying off.
-      case 'ricochet': {
-        const out = this._out(o.x, o.z, 0.75);
-        this._noise(out, t, 0.04, 'highpass', 3500, 1, 0.7);
-        this._tone(out, t, 0.08, 'square', 1900, 1500, 0.12);
-        const f0 = 3200 + Math.random() * 900, f1 = 700 + Math.random() * 300, d = 0.55 + Math.random() * 0.2;
-        this._tone(out, t + 0.02, d, 'sine', f0, f1, 0.42, 0.01);
-        this._tone(out, t + 0.02, d * 0.9, 'triangle', f0 * 1.013, f1 * 1.02, 0.16, 0.01);
-        this._noise(out, t + 0.02, d * 0.8, 'bandpass', f0 * 0.9, 8, 0.25, f1);
-        break;
-      }
-      // A penetration: a heavy crunch — deep thump, torn metal, grit.
-      case 'pen': {
-        const out = this._out(o.x, o.z, 1.0);
-        this._tone(out, t, 0.35, 'sine', 130, 38, 1.1, 0.003);
-        this._noise(out, t, 0.32, 'lowpass', 1600, 0.9, 1.0, 180);
-        this._tone(out, t, 0.14, 'sawtooth', 240, 70, 0.3);
-        for (let k = 0; k < 6; k++) this._noise(out, t + 0.01 + k * 0.022 + Math.random() * 0.012, 0.035, 'bandpass', 700 + Math.random() * 1600, 2.5, 0.55);
-        this._tone(out, t + 0.02, 0.22, 'square', 410, 360, 0.06);
-        break;
-      }
-      // Stopped by the armour: a dull clank, short and flat.
-      case 'nopen': {
-        const out = this._out(o.x, o.z, 0.8);
-        this._tone(out, t, 0.22, 'triangle', 330, 300, 0.5);
-        this._tone(out, t, 0.16, 'triangle', 523, 480, 0.26);
-        this._tone(out, t, 0.1, 'sine', 160, 90, 0.5);
-        this._noise(out, t, 0.08, 'lowpass', 900, 1, 0.6, 250);
-        break;
-      }
-      // A shell into a block. The renderer says what it hit: wooden toy blocks and the frame
-      // thud, tin cans clang, plastic bricks knock hollow, books and card thump soft, stone cracks.
-      case 'impact': {
-        const out = this._out(o.x, o.z, 0.7), sf = o.surface || 'wood';
-        if (sf === 'metal') {
-          this._tone(out, t, 0.5, 'triangle', 620, 590, 0.35); this._tone(out, t, 0.4, 'sine', 1470, 1400, 0.2); this._tone(out, t, 0.3, 'sine', 2310, 2250, 0.1);
-          this._noise(out, t, 0.06, 'highpass', 2500, 1, 0.5);
-        } else if (sf === 'plastic') {
-          this._tone(out, t, 0.12, 'triangle', 480, 300, 0.5); this._noise(out, t, 0.08, 'bandpass', 1800, 2, 0.6);
-        } else if (sf === 'paper' || sf === 'card') {
-          this._tone(out, t, 0.14, 'sine', 140, 70, 0.6); this._noise(out, t, 0.25, 'bandpass', 900, 0.8, 0.5, 400);
-        } else if (sf === 'stone') {
-          this._tone(out, t, 0.15, 'sine', 200, 70, 0.7); this._noise(out, t, 0.18, 'highpass', 1500, 0.7, 0.7);
-          for (let k = 0; k < 6; k++) this._noise(out, t + 0.03 + Math.random() * 0.2, 0.025, 'bandpass', 3000 + Math.random() * 2000, 3, 0.2);
+  // ---------- geometry ----------
+  _setListener(l) {
+    if (!l) return; const L = this.listener;
+    if (l.pos) L.pos = l.pos; if (l.fwd) L.fwd = l.fwd; if (l.playerId !== undefined) L.playerId = l.playerId;
+  }
+  _dist(p) { if (!p) return 0; const L = this.listener.pos; return Math.hypot(p.x - L.x, (p.y ?? L.y) - L.y, p.z - L.z); }
+  // Distance gain (inverse with rolloff), air-absorption lowpass, pan, reverb wetness, delay.
+  _pos(p, o = {}) {
+    const L = this.listener, ref = o.ref ?? 10, roll = o.roll ?? 1, range = o.range ?? 1;
+    if (!p) return { d: 0, gain: 1, lp: 20000, pan: 0, wet: 0.15, delay: 0 };
+    const dx = p.x - L.pos.x, dz = p.z - L.pos.z, d = Math.hypot(dx, (p.y ?? L.pos.y) - L.pos.y, dz);
+    const fl = Math.hypot(L.fwd.x, L.fwd.z) || 1, fx = L.fwd.x / fl, fz = L.fwd.z / fl;
+    const h = Math.hypot(dx, dz), side = h > 0.5 ? (dx * -fz + dz * fx) / h : 0, front = h > 0.5 ? (dx * fx + dz * fz) / h : 1;
+    const gain = ref / (ref + roll * Math.max(0, d - ref));
+    const lp = clamp(20000 * Math.exp(-d / (220 * range)), 500, 20000) * (front < -0.3 ? 0.7 : 1);
+    return { d, gain, lp, pan: clamp(side, -1, 1) * 0.85 * clamp(h / 4), wet: clamp(0.12 + d / 700, 0.12, 0.85), delay: Math.min(d / SOUND, MAX_DELAY) };
+  }
+  // Build a placement chain for one sound: in → lowpass → pan → sfx, with a field-reverb send.
+  // Returns {node, t} or null if inaudible / over budget. o: _pos opts + gain, wet, minGain, noDelay, bus
+  _place(p, o = {}) {
+    const c = this.ctx, P = this._pos(p, o);
+    const gain = Math.max(P.gain, o.minGain || 0) * (o.gain ?? 1);
+    if (gain < 0.004) return null;
+    const now = c.currentTime + 0.01;
+    this._ends = this._ends.filter((e) => e > now);
+    if (this._ends.length >= MAX_ONESHOTS && gain < 0.25) return null;
+    this._ends.push(now + (o.len || 2));
+    const t = now + (o.noDelay ? 0 : P.delay);
+    const g = c.createGain(); g.gain.value = gain;
+    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = o.lp ?? P.lp; lp.Q.value = 0.5;
+    g.connect(lp);
+    let head = lp;
+    if (c.createStereoPanner && P.d > 0.5) { const pn = c.createStereoPanner(); pn.pan.value = o.pan ?? P.pan; lp.connect(pn); head = pn; }
+    head.connect(o.bus || this.sfx);
+    const wet = (o.wet ?? 0.25) * (o.wetScale ?? 1) * (0.5 + P.wet);
+    if (wet > 0.01) { const s = c.createGain(); s.gain.value = wet; head.connect(s); s.connect(this.fieldSend); }
+    return { node: g, t, P };
+  }
+  // Non-positional one-shot straight into a bus.
+  _direct(bus, len = 2) {
+    const c = this.ctx, now = c.currentTime + 0.01; this._ends = this._ends.filter((e) => e > now); this._ends.push(now + len);
+    return { node: bus, t: now };
+  }
+
+  // ---------- world helpers ----------
+  _isPlayer(x) { const id = idOf(x); return id != null && id === this.listener.playerId; }
+  _tank(world, x) { if (x && typeof x === 'object') return x; return world && world.tanks ? world.tanks.find((t) => t.id === x) || null : null; }
+  _shell(world, x) { if (x && typeof x === 'object') return x; return world && world.shells ? world.shells.find((s) => s.id === x) || null : null; }
+  _playerTeam(world) { const t = this._tank(world, this.listener.playerId); return t ? t.team : 0; }
+  _obj(world, x) {
+    if (x && typeof x === 'object') return x;
+    const objs = world && world.map && world.map.objects; if (!objs) return null;
+    return (objs[x] && objs[x].id === x) ? objs[x] : objs.find((o) => o.id === x) || null;
+  }
+
+  // ---------- contract: events ----------
+  event(ev, world, listener) {
+    if (listener) this._setListener(listener);
+    if (!ev) return;
+    const type = ev.type || ev.kind || ev.e;
+    // voice lines work even with no AudioContext (speechSynthesis is separate)
+    try { if (type === 'capture') this._lastCap = this._capState(ev, world || {}); if (this.ready) this._sound(type, ev, world || {}); this._voice(type, ev, world || {}); }
+    catch (e) { if (!this._warned) { this._warned = true; console.warn('audio event failed', type, e); } }
+  }
+
+  _sound(type, ev, world) {
+    const K = this.kit;
+    switch (type) {
+      case 'shot': {
+        const tk = this._tank(world, ev.tank), sh = this._shell(world, ev.shell);
+        const cal = ev.cal ?? sh?.cal ?? tk?.gunDef?.cal ?? 75, brake = !!tk?.gunDef?.muzzleBrake, k = S.size(cal);
+        if (this._isPlayer(ev.tank)) {
+          const p = this._direct(this.sfx, 3); const s = this.ctx.createGain(); s.gain.value = 0.25 + 0.35 * k; s.connect(this.fieldSend);
+          const g = this.ctx.createGain(); g.gain.value = 1; g.connect(this.sfx); g.connect(s);
+          S.cannon(K, g, p.t, cal, { player: true, brake });
         } else {
-          this._tone(out, t, 0.2, 'sine', 170, 55, 0.8);
-          this._noise(out, t, 0.22, 'lowpass', 1100, 0.8, 0.8, 200);
-          for (let k = 0; k < 4; k++) this._noise(out, t + 0.04 + Math.random() * 0.15, 0.03, 'bandpass', 2400 + Math.random() * 1800, 3, 0.18);
+          const p = this._place(ev.pos || tk?.pos, { ref: 15, roll: 0.45, range: 1.4, wet: 0.35 + 0.5 * k, len: 1 + 2 * k, gain: 0.55 + 0.45 * k });
+          if (p) S.cannon(K, p.node, p.t, cal, { brake });
         }
         break;
       }
-      // A cardboard crate giving way: a thump then a papery crumple.
-      case 'crate': {
-        const out = this._out(o.x, o.z, 0.7);
-        this._tone(out, t, 0.14, 'sine', 120, 60, 0.6);
-        for (let k = 0; k < 11; k++) this._noise(out, t + 0.01 + k * 0.03 + Math.random() * 0.03, 0.045 + Math.random() * 0.04, 'bandpass', 500 + Math.random() * 1400, 1.6, 0.5 - k * 0.03);
-        this._noise(out, t, 0.4, 'highpass', 2500, 0.7, 0.12);
+      case 'impact': {
+        const sh = this._shell(world, ev.shell), cal = sh?.cal ?? ev.cal ?? 75, st = ev.type ?? sh?.type;
+        const p = this._place(ev.pos, { ref: 10, roll: 0.8, wet: 0.3, len: 1.5 });
+        if (!p) break;
+        if (st === 'HE') S.explosion(K, p.node, p.t, 0.3 + 1.2 * S.size(cal), { gain: 0.8 });
+        else S.impact(K, p.node, p.t, ev.surface, cal);
+        // near miss: a shell landing close to us that we didn't fire
+        if (p.P.d < 30 && sh && !this._isPlayer(sh.owner)) { const q = this._place(ev.pos, { ref: 10, noDelay: true, gain: 0.8 }); if (q) S.snap(K, q.node, q.t); }
         break;
       }
-      // Fire on a tank. The world-driven loop (burning()) is the real sound; this covers a
-      // renderer that reports fire ticks for a tank the loop doesn't know about yet.
-      case 'burn': {
-        if (o.tank != null && this.burns && this.burns.has(o.tank)) { this.burns.get(o.tank).until = t + 0.8; break; }
-        if (this.burns) { for (const b of this.burns.values()) if (o.x != null && Math.hypot(b.x - o.x, b.z - o.z) < 1.5) { b.until = t + 0.8; return; } }
-        const out = this._out(o.x, o.z, 0.45);
-        for (let k = 0; k < 8; k++) this._noise(out, t + Math.random() * 0.5, 0.02 + Math.random() * 0.02, 'bandpass', 1500 + Math.random() * 2500, 2, 0.5);
-        this._noise(out, t, 0.55, 'lowpass', 500, 0.7, 0.35);
+      case 'hit': {
+        const sh = this._shell(world, ev.shell), cal = sh?.cal ?? ev.cal ?? 75, st = sh?.type ?? ev.shellType, r = ev.result || 'pen';
+        const tgt = this._tank(world, ev.target), pos = ev.pos || tgt?.pos;
+        if (this._isPlayer(ev.target)) {
+          const p = this._direct(this.inside, 3); S.hitInside(K, p.node, p.t, r, cal, { gain: 0.9 });
+          if (st === 'HE') S.explosion(K, p.node, p.t, 0.4 + S.size(cal), { gain: 0.5 });
+        } else {
+          // the shooter hears his own hit confirmed right away (no delay, floor on level)
+          const mine = this._isPlayer(ev.shooter);
+          const p = this._place(pos, mine ? { ref: 10, roll: 0.6, minGain: 0.4, noDelay: true, lp: 12000, wet: 0.25, len: 1.5 } : { ref: 10, roll: 0.8, wet: 0.3, len: 1.5 });
+          if (!p) break;
+          S.hitOutside(K, p.node, p.t, r, cal, { gain: mine ? 0.9 : 1 });
+          if (st === 'HE' && r !== 'splash') S.explosion(K, p.node, p.t, 0.3 + S.size(cal), { gain: 0.6 });
+        }
         break;
       }
-      case 'clash': { const out = this._out(o.x, o.z, 0.6); this._tone(out, t, 0.3, 'triangle', 1500, 700, 0.5); this._noise(out, t, 0.2, 'bandpass', 2000, 1.5, 0.8); break; }
-      case 'dud': { const out = this._out(o.x, o.z, 0.3); this._tone(out, t, 0.08, 'square', 180, 120, 0.2); this._noise(out, t, 0.06, 'lowpass', 600, 1, 0.3); break; }
-      case 'mine': { const out = this._out(o.x, o.z, 0.5); this._tone(out, t, 0.06, 'square', 600, 600, 0.2); this._tone(out, t + 0.09, 0.06, 'square', 800, 800, 0.2); this._noise(out, t, 0.05, 'highpass', 2000, 1, 0.4); break; }
-      case 'trip': { const out = this._out(o.x, o.z, 0.35); for (let k = 0; k < 3; k++) this._tone(out, t + k * 0.07, 0.05, 'square', 1400, 1400, 0.25); break; }
-      // UI-side cues (not positional): you took a penetration, you got a kill, enemy spotted.
-      case 'hitme': { const out = this._out(null, null, 0.6); this._tone(out, t, 0.4, 'sine', 90, 40, 0.9); this._tone(out, t, 0.5, 'triangle', 740, 690, 0.12); this._noise(out, t, 0.2, 'lowpass', 700, 1, 0.5); break; }
-      case 'kill': { const out = this._out(null, null, 0.4); this._tone(out, t, 0.18, 'triangle', 988, 988, 0.3); this._tone(out, t + 0.09, 0.3, 'triangle', 1319, 1319, 0.3); break; }
-      case 'spot': { const out = this._out(null, null, 0.3); this._noise(out, t, 0.05, 'bandpass', 2400, 2, 0.4); this._tone(out, t + 0.02, 0.07, 'square', 1175, 1175, 0.12); this._tone(out, t + 0.12, 0.07, 'square', 1568, 1568, 0.12); break; }
-      case 'boom': {
-        const out = this._out(o.x, o.z, o.human ? 1.3 : o.ammo ? 1.25 : 1.1);
-        this._tone(out, t, 1.1, 'sine', 90, 28, 1.3, 0.005);
-        this._noise(out, t, 1.4, 'lowpass', 1800, 0.8, 1.2, 120);
-        this._noise(out, t, 0.25, 'highpass', 1500, 0.7, 0.6);
-        for (let k = 0; k < 7; k++) this._noise(out, t + 0.05 + Math.random() * 0.5, 0.05, 'bandpass', 2500 + Math.random() * 2000, 3, 0.25);
-        if (o.big || o.ammo) this._tone(out, t, 1.6, 'sine', 55, 22, 0.9, 0.01);
-        if (o.ammo) for (let k = 0; k < 10; k++) this._noise(out, t + 0.15 + Math.random() * 0.9, 0.06, 'bandpass', 800 + Math.random() * 2500, 2, 0.35); // cook-off
+      case 'kill': {
+        const v = this._tank(world, ev.victim), pos = v?.pos || ev.pos, big = ev.cause === 'ammorack';
+        const pl = this._isPlayer(ev.victim);
+        const p = pl ? this._direct(this.inside, 4) : this._place(pos, { ref: 15, roll: 0.5, range: 1.3, wet: big ? 0.8 : 0.5, len: 3, gain: big ? 1 : 0.8 });
+        if (p) { if (big) S.ammorack(K, p.node, p.t, { gain: pl ? 0.8 : 1 }); else S.explosion(K, p.node, p.t, ev.cause === 'ram' ? 1 : 1.6, { gain: 0.8 }); }
+        // wreck burns for a while
+        if (pos) { this.fires.linger(idOf(ev.victim), 20); if (big) this.fires.start(idOf(ev.victim), pos, false, 20, 0.7); }
         break;
       }
-      case 'ui': { const out = this._out(null, null, 0.35); this._tone(out, t, 0.06, 'triangle', 880, 660, 0.4); break; }
-      case 'uiBig': { const out = this._out(null, null, 0.4); this._tone(out, t, 0.12, 'square', 440, 440, 0.2); this._tone(out, t + 0.1, 0.18, 'square', 660, 660, 0.2); break; }
-      case 'win': { const out = this._out(null, null, 0.5); [523, 659, 784, 1047].forEach((f, k) => this._tone(out, t + k * 0.11, 0.35, 'square', f, f, 0.18)); this._tone(out, t + 0.44, 0.7, 'triangle', 1047, 1047, 0.3); break; }
-      case 'lose': { const out = this._out(null, null, 0.5); [392, 330, 262, 196].forEach((f, k) => this._tone(out, t + k * 0.18, 0.4, 'triangle', f, f * 0.98, 0.3)); break; }
-      case 'banner': { const out = this._out(null, null, 0.45); for (let k = 0; k < 6; k++) this._noise(out, t + k * 0.09, 0.08, 'bandpass', 1800, 1.2, 0.8 - k * 0.08); this._tone(out, t + 0.55, 0.5, 'square', 392, 392, 0.12); break; }
+      case 'fire': {
+        const tk = this._tank(world, ev.tank), pl = this._isPlayer(ev.tank);
+        if (ev.on === false) { this.fires.stop(idOf(ev.tank)); break; }
+        if (!tk) break;
+        const p = pl ? this._direct(this.inside) : this._place(tk.pos, { ref: 8, roll: 1, wet: 0.2 });
+        if (p) S.ignite(K, p.node, p.t);
+        this.fires.start(tk.id, tk.pos, pl);
+        break;
+      }
+      case 'module': {
+        if (!this._isPlayer(ev.tank)) break;
+        const p = this._direct(this.inside);
+        if (ev.module === 'engine' && ev.state !== 'ok') S.engineCough(K, p.node, p.t);
+        else if ((ev.module === 'trackL' || ev.module === 'trackR') && ev.state === 'destroyed') S.trackBreak(K, p.node, p.t);
+        break;
+      }
+      case 'spot': {
+        if (this._isPlayer(ev.tank) && ev.on !== false && ev.team !== this._playerTeam(world)) { const p = this._direct(this.uiBus); S.alert(K, p.node, p.t, 'spotted'); }
+        break;
+      }
+      case 'treeFall': case 'objectBreak': {
+        const o = this._obj(world, ev.obj), pos = o ? { x: o.x, y: o.y ?? 0, z: o.z } : ev.pos;
+        const p = this._place(pos, { ref: 8, roll: 1, wet: 0.3, len: 2 });
+        if (p) (type === 'treeFall' ? S.treeFall : S.crash)(K, p.node, p.t);
+        break;
+      }
+      case 'ram': {
+        const a = this._tank(world, ev.a), b = this._tank(world, ev.b);
+        const pl = this._isPlayer(ev.a) || this._isPlayer(ev.b);
+        const pos = a && b ? { x: (a.pos.x + b.pos.x) / 2, y: (a.pos.y + b.pos.y) / 2, z: (a.pos.z + b.pos.z) / 2 } : (a || b)?.pos;
+        const p = pl ? this._direct(this.inside) : this._place(pos, { ref: 10, roll: 0.9, wet: 0.25 });
+        if (p) S.ram(K, p.node, p.t, ev.dmg);
+        break;
+      }
+      case 'capture': {
+        const c = this._lastCap;
+        if (c) { const p = this._direct(this.uiBus); S.alert(K, p.node, p.t, c); }
+        break;
+      }
+      case 'consumable': {
+        if (!this._isPlayer(ev.tank)) break;
+        const p = this._direct(this.inside); S.consumable(K, p.node, p.t, ev.kind);
+        if (ev.kind === 'extinguisher') this.fires.stop(idOf(ev.tank));
+        break;
+      }
+      case 'reloaded': {
+        if (!this._isPlayer(ev.tank)) break;
+        const tk = this._tank(world, ev.tank), p = this._direct(this.inside);
+        S.reload(K, p.node, p.t, tk?.gunDef?.cal ?? 75);
+        break;
+      }
+      case 'end': {
+        const w = ev.result?.winner, pt = this._playerTeam(world);
+        this.engines.stopAll(); this.fires.stopAll();
+        this.mus.stinger(w === pt);
+        break;
+      }
     }
   }
 
-  // One crackling loop per burning tank, positioned every frame. Pass the world (or null to stop all).
-  burning(world) {
+  // Capture state machine: announce when a base starts being captured (points leave 0).
+  // capture.team is taken as the base's owner (see notes: contract clarification requested).
+  _capState(ev, world) {
+    const team = ev.team, pts = ev.points ?? 0, prev = this._cap.get(team) ?? 0;
+    this._cap.set(team, pts);
+    if (pts <= 0.01 || prev > 0.01) return null;
+    return team === this._playerTeam(world) ? 'baseLost' : 'baseWin';
+  }
+
+  _voice(type, ev, world) {
+    const say = (k) => this.crew.say(k);
+    switch (type) {
+      case 'hit': {
+        const r = ev.result;
+        if (this._isPlayer(ev.shooter) && !this._isPlayer(ev.target)) {
+          const k = { pen: 'pen', nopen: 'nopen', ricochet: 'ricochet', crit: 'crit', track: 'track' }[r] || (r === 'splash' && ev.dmg > 0 ? 'hit' : null);
+          if (k) say(k);
+        } else if (this._isPlayer(ev.target)) {
+          const k = { ricochet: 'bounceUs', nopen: 'heldUs', pen: 'hitUs', splash: ev.dmg > 0 ? 'hitUs' : null }[r];
+          if (k) say(k);
+        }
+        break;
+      }
+      case 'kill':
+        if (this._isPlayer(ev.victim)) say('killed');
+        else if (this._isPlayer(ev.killer)) say('kill');
+        break;
+      case 'fire':
+        if (this._isPlayer(ev.tank)) say(ev.on === false ? 'fireOut' : 'fire');
+        break;
+      case 'module': {
+        if (!this._isPlayer(ev.tank)) break;
+        if (ev.state === 'ok') { say('repaired'); break; }
+        const m = MODULE_LINE[ev.module]; const k = m && m[ev.state === 'destroyed' ? 1 : 0];
+        if (k) say(k);
+        break;
+      }
+      case 'crew':
+        if (this._isPlayer(ev.tank) && ev.alive === false) { const k = ROLE_LINE[String(ev.role).replace(/\d+$/, '')]; if (k) say(k); }
+        break;
+      case 'spot': {
+        if (ev.on === false) break;
+        const pt = this._playerTeam(world);
+        if (this._isPlayer(ev.tank) && ev.team !== pt) say('spotted');
+        else if (ev.team === pt) { const t = this._tank(world, ev.tank); if (t && t.team !== pt) say('enemySpotted'); }
+        break;
+      }
+      case 'capture': {
+        if (this._lastCap) say(this._lastCap);
+        break;
+      }
+      case 'consumable':
+        if (this._isPlayer(ev.tank) && ev.kind === 'medkit') say('healed');
+        break;
+      case 'reloaded': {
+        if (!this._isPlayer(ev.tank)) break;
+        const tk = this._tank(world, ev.tank);
+        if ((tk?.gunDef?.reload ?? 0) >= 4.5) say('reloaded');
+        break;
+      }
+      case 'end': {
+        const w = ev.result?.winner, pt = this._playerTeam(world);
+        say(w === -1 || w == null ? 'draw' : w === pt ? 'victory' : 'defeat');
+        break;
+      }
+    }
+  }
+
+  // ---------- contract: continuous sounds ----------
+  // Call every frame for each tank you want audible (at least the player + nearby tanks).
+  // Voice budget: the player + the nearest others (maxEngines total); the rest are culled.
+  engine(tank, listener) {
+    if (listener) this._setListener(listener);
+    if (!this.ready || !tank || !tank.pos) return;
+    try {
+      const pl = this._isPlayer(tank);
+      this.engines.update(tank, pl);
+      this.fires.refresh(tank, pl);
+    } catch (e) { if (!this._warnedE) { this._warnedE = true; console.warn('audio engine failed', e); } }
+  }
+
+  ui(kind) {
+    if (!this.ready) return;
+    if (kind === 'hover') { const n = this.ctx.currentTime; if (n - (this._hoverAt || 0) < 0.04) return; this._hoverAt = n; }
+    const p = this._direct(this.uiBus, 2); S.ui(this.kit, p.node, p.t, kind);
+  }
+
+  // music(true | 'menu') → menu loop; music('battle') → battle ambience; music(false) → stop.
+  music(on) {
+    const mode = on === true ? 'menu' : on || null;
+    this._wantMusic = mode;
     if (!this.ctx) return;
-    const c = this.ctx, t = c.currentTime;
-    if (!this.burns) {
-      this.burns = new Map();
-      // a crackle bed: sparse sharp pops over a low roar
-      const len = c.sampleRate * 2, b = c.createBuffer(1, len, c.sampleRate), d = b.getChannelData(0);
-      let pop = 0, amp = 0;
-      for (let i = 0; i < len; i++) {
-        if (pop <= 0 && Math.random() < 0.0016) { pop = 60 + Math.random() * 260; amp = 0.4 + Math.random() * 0.6; }
-        let v = (Math.random() * 2 - 1) * 0.06;
-        if (pop > 0) { v += (Math.random() * 2 - 1) * amp * (pop / 300); pop--; }
-        d[i] = v;
-      }
-      this.crackle = b;
-    }
-    const want = new Set();
-    if (world) for (const tk of world.tanks) if (tk.alive && tk.modules && tk.modules.fire > 0) {
-      want.add(tk.id);
-      let L = this.burns.get(tk.id);
-      if (!L) {
-        const src = c.createBufferSource(); src.buffer = this.crackle; src.loop = true; src.playbackRate.value = 0.9 + Math.random() * 0.2;
-        const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 180;
-        const g = c.createGain(); g.gain.value = 0;
-        const p = c.createStereoPanner ? c.createStereoPanner() : null;
-        src.connect(hp); hp.connect(g);
-        if (p) { g.connect(p); p.connect(this.sfx); } else g.connect(this.sfx);
-        src.start(t, Math.random() * 1.5);
-        L = { src, g, p, x: tk.x, z: tk.z, until: 0 };
-        this.burns.set(tk.id, L);
-      }
-      L.x = tk.x; L.z = tk.z;
-      const dx = tk.x - this.listener.x, dz = tk.z - this.listener.z, dd = Math.hypot(dx, dz);
-      const rx = -Math.sin(this.listener.yaw), rz = Math.cos(this.listener.yaw);
-      L.g.gain.setTargetAtTime(0.55 / (1 + dd * 0.09), t, 0.08);
-      if (L.p) L.p.pan.setTargetAtTime(Math.max(-0.9, Math.min(0.9, (dx * rx + dz * rz) / Math.max(3, dd))), t, 0.08);
-    }
-    for (const [id, L] of this.burns) {
-      if (want.has(id) || L.until > t) continue;
-      L.g.gain.setTargetAtTime(0, t, 0.12);
-      try { L.src.stop(t + 0.6); } catch {}
-      this.burns.delete(id);
-    }
+    if (!mode) this.mus.stop(); else this.mus.start(mode);
   }
 
-  engine(speed, active) {
-    if (!this.ctx) return;
-    const t = this.ctx.currentTime;
-    const s = Math.min(1, Math.abs(speed) / 2.3);
-    this.eng.gain.setTargetAtTime(active ? 0.05 + s * 0.12 : 0, t, 0.1);
-    this.clat.gain.setTargetAtTime(active ? s * 0.06 : 0, t, 0.08);
-    for (const o of this.engOsc) o.frequency.setTargetAtTime(40 + s * 28, t, 0.15);
-    this.engLp.frequency.setTargetAtTime(200 + s * 500, t, 0.15);
-  }
+  // Crew voice line: a LINES key ('pen', 'spotted', …) or free text. Toggle with voiceOn.
+  say(line, prio) { return this.crew.say(line, prio); }
 
-  // A marching snare cadence; layers add kick, bass and a fife line as the enemy mix grows.
-  startMusic(layers = 1, tempo = 112) { this.music.on = true; this.music.layers = layers; this.music.tempo = tempo; if (this.ctx) this.music.next = this.ctx.currentTime + 0.1; this.music.step = 0; }
-  stopMusic() { this.music.on = false; }
-  tickMusic() {
-    if (!this.ctx || !this.music.on) return;
-    const c = this.ctx, m = this.music, sixteenth = 60 / m.tempo / 4;
-    const SN = [1, 0, 0, 1, 1, 0, 1, 0, 1, 0, 0, 1, 1, 1, 1, 0];
-    const KI = [1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0];
-    const BASS = [55, 0, 0, 0, 55, 0, 0, 0, 41.2, 0, 0, 0, 49, 0, 0, 0];
-    const FIFE = [784, 0, 784, 880, 988, 0, 880, 0, 784, 0, 659, 0, 587, 0, 0, 0, 659, 0, 659, 740, 784, 0, 740, 0, 659, 0, 587, 0, 523, 0, 0, 0];
-    while (m.next < c.currentTime + 0.12) {
-      const s = m.step % 16, t = m.next;
-      if (SN[s]) this._noise(this.mus, t, 0.09, 'bandpass', 2600, 0.9, s % 4 === 0 ? 0.45 : 0.25);
-      if (m.layers >= 2 && KI[s]) this._tone(this.mus, t, 0.25, 'sine', 110, 45, 0.7);
-      if (m.layers >= 3 && BASS[s]) this._tone(this.mus, t, sixteenth * 3.5, 'triangle', BASS[s] * 2, BASS[s] * 2, 0.22, 0.01);
-      if (m.layers >= 4) { const f = FIFE[m.step % 32]; if (f) this._tone(this.mus, t, sixteenth * 1.8, 'square', f, f, 0.045, 0.01); }
-      m.next += sixteenth; m.step++;
-    }
-  }
+  // Radio click before a crew line.
+  _squelch() { if (this.ready && this.vol.voice > 0) { const p = this._direct(this.uiBus, 0.2); S.ui(this.kit, p.node, p.t, 'squelch'); } }
+
+  // Stop all loops (leaving a battle).
+  stopAll() { if (!this.ctx) return; this.engines.stopAll(); this.fires.stopAll(); this.crew.cancel(); }
+  stats() { return { ctx: this.ctx ? this.ctx.state : 'none', engines: this.ctx ? this.engines.active : 0, voices: this.ctx ? this.engines.voices.length : 0, oneshots: this._ends.length, music: this.ctx ? this.mus.mode : null }; }
+
+  // --- legacy shims for the old toy-game main.js until INTEGRATION replaces it ---
+  play(kind) { this.ui({ uiBig: 'battleStart', banner: 'battleStart', win: 'research', lose: 'error' }[kind] || 'click'); }
+  startMusic() { this.music('menu'); }
+  stopMusic() { this.music(false); }
 }
+
+export { LINES };
