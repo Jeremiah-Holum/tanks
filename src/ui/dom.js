@@ -6,7 +6,7 @@ export function h(tag, attrs, ...kids) {
   const [name, ...cls] = tag.split('.');
   const el = document.createElement(name || 'div');
   if (cls.length) el.className = cls.join(' ');
-  if (attrs && (typeof attrs !== 'object' || attrs instanceof Node || Array.isArray(attrs))) { kids.unshift(attrs); attrs = null; }
+  if (attrs != null && (typeof attrs !== 'object' || attrs instanceof Node || Array.isArray(attrs))) { kids.unshift(attrs); attrs = null; }
   if (attrs) for (const [k, v] of Object.entries(attrs)) {
     if (v == null || v === false) continue;
     if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v);

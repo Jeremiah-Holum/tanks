@@ -217,7 +217,7 @@ export function setModuleState(world, tank, name, state) {
 export function damageModule(world, tank, name, amount, byId, crits) {
   const m = tank.modules[name];
   if (!m || m.state === 'destroyed' || !tank.alive) return;
-  m.hp = Math.max(0, m.hp - amount);
+  m.hp = Math.max(0, Math.round(m.hp - amount));
   const rng = world.rng;
   const state = m.hp <= 0 ? 'destroyed' : m.hp < m.max * 0.7 ? 'damaged' : m.state;
   if (state === m.state) return;

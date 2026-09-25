@@ -25,6 +25,8 @@ export function kessel(seed) {
   B.bumpBoth(140, 330, 50, 50, 5);
   B.bumpBoth(780, 240, 120, 80, 4);                       // farm rise (SE, and NW)
   B.bumpBoth(640, 200, 60, 50, 6);                        // low knoll behind the town
+  B.bermBoth(197, 282, 0.1, 2.6);                          // hull-down banks
+  B.bermBoth(640, 205, -0.2, 2.0);
   B.rim(22, 8);
   // town terraces at quay level on both banks
   B.add((x, z) => 0);
@@ -83,6 +85,22 @@ export function kessel(seed) {
   B.lane('west ford', [[600, 120], [330, 240], [185, 395], [fordX, fordZ], [185, 540], [250, 700], [400, 880]]);
   B.lane('town', [[600, 120], [430, 300], [440, riverZ(440) - 40], [440, riverZ(440) + 40], [470, 640], [560, 780], [400, 880]]);
   B.lane('east ford', [[600, 120], [770, 250], [830, 440], [1000 - fordX, 1000 - fordZ], [820, 600], [670, 760], [400, 880]]);
+  // ---------------- points
+  B.point('sniper', 225, 330, 0, 0.35);
+  B.point('sniper', 520, 300, 1, -0.1);
+  B.point('sniper', 700, 330, 2, 0.35);
+  B.point('sniper', 105, 360, 0, 0.2);
+  B.point('hulldown', 197, 282, 0, 0.1, { snap: 8 });
+  B.point('hulldown', 640, 205, 1, -0.2, { snap: 8 });
+  B.point('brawl', 450, 420, 1);
+  B.point('brawl', 530, 445, 1);
+  B.point('brawl', 600, 470, 1);
+  B.point('scout', 300, 400, 0, 0.3);
+  B.point('scout', 690, 450, 2, 0);
+  B.point('bush', 130, 400, 0, 0.2);
+  B.point('bush', 880, 470, 2, -0.3);
+  B.point('flank', fordX + 5, fordZ - 40, 0);
+  B.point('flank', 1000 - fordX - 5, 1000 - fordZ - 40, 2);
 
   // ---------------- bridges (deck top at quay level)
   for (const b of bridges) {
@@ -116,22 +134,6 @@ export function kessel(seed) {
     for (let x = 870; x <= 925; x += 11) for (let z = 330; z <= 420; z += 11) { const [a, b] = P(x, z); B.tree(a, b, 'tree', 0.7); }
     for (let i = 0; i < 8; i++) { const [a, b] = P(r.range(700, 900), r.range(120, 200)); if (B.free(a, b, 4)) { B.obj('haystack', a, b, 0, [2.3, 1.7, 2.3], 0); B.mark(a, b, 3, SOLID); } }
   });
-  // ---------------- points
-  B.point('sniper', 225, 330, 0, 0.35);
-  B.point('sniper', 520, 300, 1, -0.1);
-  B.point('sniper', 700, 330, 2, 0.35);
-  B.point('sniper', 105, 360, 0, 0.2);
-  B.point('hulldown', 205, 345, 0, 0.1, { snap: 30 });
-  B.point('hulldown', 640, 240, 1, -0.2);
-  B.point('brawl', 450, 420, 1);
-  B.point('brawl', 530, 445, 1);
-  B.point('brawl', 600, 470, 1);
-  B.point('scout', 300, 400, 0, 0.3);
-  B.point('scout', 690, 450, 2, 0);
-  B.point('bush', 130, 400, 0, 0.2);
-  B.point('bush', 880, 470, 2, -0.3);
-  B.point('flank', fordX + 5, fordZ - 40, 0);
-  B.point('flank', 1000 - fordX - 5, 1000 - fordZ - 40, 2);
   B.dressPointDefs();
   // ---------------- woods and riverbank vegetation
   B.both((T) => {

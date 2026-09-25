@@ -111,22 +111,28 @@ function turretPieces(t) {
   return pieces;
 }
 
-// Commander's cupola (optional, def.look.cupola): an octagonal prism on the turret roof above
-// the commander, thinner than the turret face, a classic weak spot. Not in `pieces` (so older
-// renderers are unaffected): renderers should build it from armor.cupola.planes.
-function cupolaPiece(t) {
-  const r = Math.min(0.3, t.W * 0.16), hgt = 0.24;
-  const topHalfW = t.W / 2 - t.H * Math.tan((t.side.a || 0) * DEG);
-  const cx = Math.max(0, Math.min(t.W * 0.2, topHalfW - r - 0.05)), cz = (t.zOff || 0) - t.L * 0.2;
+// Commander's cupola (def.look.cupola: true | 'left' | 'right' | 'center'; false = none; open
+// tops have none): an octagonal prism on the turret roof above the commander, thinner than the
+// turret face, a classic weak spot. Placement matches src/render/tankModel.js turretDetails
+// (US cupolas on the right, others on the left, 30% of the roof length from the rear).
+// Not in `pieces` (older consumers are unaffected); armor.cupola = { planes, c, r, h, … }.
+function cupolaPiece(t, def) {
+  const look = def.look || {};
+  const side = look.cupola === 'right' ? -1 : look.cupola === 'center' ? 0 : look.cupola === 'left' ? 1 : def.nation === 'usa' ? -1 : 1;
+  const H = t.H, zo = t.zOff || 0;
+  const Wr = t.W - 2 * H * Math.tan((t.side.a || 0) * DEG);
+  const zF = zo + t.L / 2 - (H / 2) * Math.tan(t.front.a * DEG), zR = zo - t.L / 2 + (H / 2) * Math.tan((t.rear.a || 0) * DEG);
+  const r = Math.min(0.36, Math.max(0.24, Wr * 0.17)) + 0.03, hc = (def.nation === 'germany' ? 0.24 : 0.18) + 0.02;
+  const cx = side * Math.max(0, Wr / 2 - r - 0.05), cz = zR + (zF - zR) * 0.3;
   const tt = Math.max(Math.round((t.roof || 10) * 2), Math.round(t.side.t * 0.6));
   const ps = [];
   for (let k = 0; k < 8; k++) {
     const f = (k + 0.5) * Math.PI / 4, nx = Math.cos(f), nz = Math.sin(f);
     ps.push(plane(nx, 0, nz, cx + nx * r, 0, cz + nz * r, tt, 'cupola'));
   }
-  ps.push(plane(0, 1, 0, 0, t.H + hgt, 0, Math.round((t.roof || 10) * 0.8), 'cupola'));
-  ps.push(plane(0, -1, 0, 0, t.H - 0.05, 0, 0, 'cupola.floor'));
-  return { name: 'cupola', frame: 'turret', kind: 'cupola', planes: ps, fixed: t.shape === 'casemate' };
+  ps.push(plane(0, 1, 0, 0, H + hc, 0, Math.round((t.roof || 10) * 0.8), 'cupola'));
+  ps.push(plane(0, -1, 0, 0, H - 0.05, 0, 0, 'cupola.floor'));
+  return { name: 'cupola', frame: 'turret', kind: 'cupola', planes: ps, fixed: t.shape === 'casemate', c: [cx, H, cz], r, h: hc };
 }
 
 // z of the turret front face at height y (the gun sits there)
@@ -173,7 +179,7 @@ function modules(def) {
   for (const c of crew) {
     if (c === 'driver') out.push(seat(c, 'hull', -s, clr + 0.45, fz)); // right side of hull (−x = right)
     else if (c === 'radioman') out.push(seat(c, 'hull', s, clr + 0.45, fz));
-    else if (c === 'commander') out.push(seat(c, 'turret', 0, t.H * 0.45, (t.zOff || 0) - t.L * 0.2));
+    else if (c === 'commander') out.push(seat(c, 'turret', 0, t.H * 0.45, (t.zOff || 0) - t.L * 0.2)); // under the roof, cupola above
     else if (c === 'gunner') out.push(seat(c, 'turret', s * 0.8, t.H * 0.35, (t.zOff || 0) + t.L * 0.1));
     else if (c === 'loader') out.push(seat(c, 'turret', -s * 0.8, t.H * 0.35, (t.zOff || 0)));
   }
@@ -199,7 +205,7 @@ export function buildArmor(def) {
     modules: modules(def),
     gun: { pivot: [0, gy, gz], len: gun ? gun.len : 3, r: gun ? Math.max(0.04, gun.cal / 2000 * 1.8) : 0.06 },
     turretPos: [0, h.clr + h.H, t.z ?? 0],
-    cupola: def.look && def.look.cupola && t.shape !== 'open' && !t.open ? cupolaPiece(t) : null,
+    cupola: def.look && def.look.cupola !== false && t.shape !== 'open' && !t.open ? cupolaPiece(t, def) : null,
   };
   Object.defineProperty(def, '_armor', { value: a, enumerable: false });
   return a;

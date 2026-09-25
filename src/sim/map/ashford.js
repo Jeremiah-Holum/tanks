@@ -18,6 +18,9 @@ export function ashford(seed) {
   B.bumpBoth(335, 290, 75, 55, 9, 0.3);                   // west-centre knolls (team sniper hills)
   B.bumpBoth(650, 240, 70, 60, 6);                        // south-east wood hill
   B.bumpBoth(120, 330, 60, 80, 7);                        // far west knoll
+  B.bermBoth(335, 290, 0.1, 2.2);                          // earth banks: hull-down spots
+  B.bermBoth(772, 468, 0, 1.8, 22);
+  B.bermBoth(832, 470, 0, 1.8, 22);
   B.rim(20, 7);
   // bases and spawns: flatten
   B.both((T) => { const [x, z] = T.p([380, 118]); B.flatten(x, z, 40, 30); const [a, b] = T.p([500, 128]); B.flatten(a, b, 45, 30, null, 0.7); });
@@ -30,9 +33,9 @@ export function ashford(seed) {
   B.road([[505, 500], [660, 500]], 7, { curve: false });
   B.roadBoth([[505, 448], [590, 448], [640, 472], [660, 500]], 5, { kind: 'track' });
   B.road([[70, 500], [200, 500], [330, 500]], 5, { kind: 'track', curve: false });
-  B.road([[660, 500], [740, 500], [778, 500]], 5, { kind: 'track', curve: false });
+  B.road([[660, 500], [740, 500], [778, 500]], 5, { kind: 'track', curve: false, grade: false });
   B.roadBoth([[120, 70], [170, 180], [215, 300], [270, 400], [330, 500]], 5, { kind: 'track' });
-  B.roadBoth([[560, 170], [660, 290], [735, 385], [770, 460]], 5, { kind: 'track' });
+  B.roadBoth([[560, 170], [660, 290], [735, 385], [770, 450]], 5, { kind: 'track', grade: false });
   B.roadBoth([[505, 400], [420, 440], [330, 500]], 5, { kind: 'track' });
   B.finalizeHeights();
 
@@ -63,6 +66,24 @@ export function ashford(seed) {
   B.laneSym('west fields', [[380, 118], [220, 250], [190, 400], [200, 500]]);
   B.laneSym('village', [[380, 118], [470, 290], [505, 400], [505, 500]]);
   B.laneSym('windmill hill', [[380, 118], [620, 240], [760, 400], [800, 500]]);
+  // points (team 0, mirrored)
+  B.point('sniper', 205, 300, 0, 0.05);
+  B.point('sniper', 585, 300, 1, -0.15);
+  B.point('sniper', 690, 245, 2, 0.35);
+  B.point('sniper', 318, 286, 1, 0.25);
+  B.point('hulldown', 772, 468, 2, 0, { snap: 6 });
+  B.point('hulldown', 335, 290, 0, 0.1, { snap: 6 });
+  B.point('hulldown', 832, 470, 2, 0, { snap: 6 });
+  B.point('brawl', 470, 462, 1);
+  B.point('brawl', 530, 452, 1);
+  B.point('brawl', 395, 480, 1);
+  B.point('scout', 300, 425, 0, 0);
+  B.point('scout', 640, 430, 2, 0.4);
+  B.point('bush', 250, 380, 0, 0);
+  B.point('bush', 700, 350, 2, 0.2);
+  B.point('bush', 580, 470, 1, 0);
+  B.point('flank', 130, 440, 0);
+  B.point('flank', 900, 430, 2);
 
   // ---------------- village
   B.obj('church', 452, 500, Math.PI, [22, 13, 9], 0);     // tower at the west end, 26 m
@@ -78,9 +99,12 @@ export function ashford(seed) {
   // village outskirts: a second ring of cottages and barns along the back track
   B.placePlan(B.streetPlan([[505, 405], [420, 440], [340, 495]], -1, { spacing: [16, 26], gap: 0.3, kinds: ['house', 'barn', 'shed'] }), { garden: 0.3 });
   B.placePlan(B.streetPlan([[505, 405], [420, 440], [340, 495]], 1, { spacing: [18, 28], gap: 0.4, kinds: ['house', 'shed'] }), { garden: 0.3 });
-  // churchyard wall
-  B.line('wall', [[420, 482], [490, 482]], 0.7, 1.4, { maxLen: 10, gapEvery: 40, gap: 6, check: false });
-  B.line('wall', [[420, 518], [490, 518]], 0.7, 1.4, { maxLen: 10, gapEvery: 40, gap: 6, check: false });
+  // houses fronting the church square (south side, mirrored north), a courtyard farm behind
+  B.placePlan(B.streetPlan([[420, 474], [496, 474]], -1, { spacing: [11, 13], gap: 0, setback: 5, width: [10, 13], height: [7, 9.5] }), { garden: 0.4 });
+  B.buildingBoth('barn', 445, 395, 0.4, 22, 11, 9, 1);
+  B.buildingBoth('shed', 474, 382, 0.4 + Math.PI / 2, 9, 6, 4.5, 0);
+  B.line('wall', [[420, 375], [452, 362], [485, 366]], 0.7, 1.5, { maxLen: 10 });
+  B.line('wall', B.Mpoly([[420, 375], [452, 362], [485, 366]]), 0.7, 1.5, { maxLen: 10 });
   // orchards south/north of the village
   B.both((T) => {
     for (let x = 530; x <= 620; x += 11) for (let z = 385; z <= 420; z += 11) {
@@ -121,24 +145,6 @@ export function ashford(seed) {
     const [ax, az] = T.p([815, 470]); B.building('ruin', ax, az, T.yaw(0.2), 12, 8, 5, 0);
     B.line('wall', [T.p([740, 420]), T.p([770, 470])], 0.8, 1.3, { maxLen: 10 });
   });
-  // points (team 0, mirrored)
-  B.point('sniper', 205, 300, 0, 0.05);
-  B.point('sniper', 585, 300, 1, -0.15);
-  B.point('sniper', 690, 245, 2, 0.35);
-  B.point('sniper', 330, 250, 1, 0.35);
-  B.point('hulldown', 800, 455, 2, 0, { snap: 28 });
-  B.point('hulldown', 335, 320, 0, 0.1);
-  B.point('hulldown', 760, 440, 2, 0.4);
-  B.point('brawl', 470, 462, 1);
-  B.point('brawl', 530, 452, 1);
-  B.point('brawl', 395, 480, 1);
-  B.point('scout', 300, 425, 0, 0);
-  B.point('scout', 640, 430, 2, 0.4);
-  B.point('bush', 250, 380, 0, 0);
-  B.point('bush', 700, 350, 2, 0.2);
-  B.point('bush', 580, 470, 1, 0);
-  B.point('flank', 130, 440, 0);
-  B.point('flank', 900, 430, 2);
   B.dressPointDefs();
 
   // ---------------- woods & scatter

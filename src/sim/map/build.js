@@ -51,7 +51,18 @@ export class MapBuilder {
     this.each((k, x, z) => { const [mx, mz] = this.M([x, z]); this.H[k] = h0 + amp * 1.4 * 0.5 * (n.fbm(x, z, scale, oct) + n.fbm(mx, mz, scale, oct)); });
   }
   // Small asymmetric detail (keeps the mirror from looking artificial).
-  detail(amp, scale, oct = 3) { const n = this.noise2; this.each((k, x, z) => { this.H[k] += amp * n.fbm(x, z, scale, oct); }); }
+  // Detail noise: symmetric (so hull-down spots match) plus a whisper of asymmetry.
+  detail(amp, scale, oct = 3) {
+    const n = this.noise2;
+    this.each((k, x, z) => { const [mx, mz] = this.M([x, z]); this.H[k] += amp * 0.7 * (n.fbm(x, z, scale, oct) + n.fbm(mx, mz, scale, oct)) + 0.2 * n.fbm(z + 71, x - 13, 45, 2); });
+  }
+  // A short earth bank ~9 m ahead of (x, z) facing yaw: a guaranteed hull-down position.
+  berm(x, z, yaw, h = 1.7, len = 26) {
+    const fx = Math.sin(yaw), fz = Math.cos(yaw), lx = fz, lz = -fx, cx = x + fx * 9, cz = z + fz * 9;
+    this.ridge([[cx - lx * len / 2, cz - lz * len / 2], [cx + lx * len / 2, cz + lz * len / 2]], 1.2, 7, h,
+      (s, L) => h * Math.min(1, s / 5, (L - s) / 5));
+  }
+  bermBoth(x, z, yaw, h, len) { this.both((T) => { const [a, b] = T.p([x, z]); this.berm(a, b, T.yaw(yaw), h, len); }); }
   add(fn) { this.each((k, x, z) => { this.H[k] += fn(x, z, this.H[k]); }); }
   // Elliptic cosine bump; pow < 1 gives a plateau-ish top, > 1 a peak.
   bump(x, z, rx, rz, h, yaw = 0, pow = 1) {
@@ -432,7 +443,14 @@ export class MapBuilder {
     this.both((T) => { const [a, b] = T.p([x, z]); this.mark(a, b, Math.max(cols * dx, rows * dz) * 0.62, KEEP); });
   }
   // point defs for team 0 (mirrored for team 1 unless team === null and on the axis)
-  point(kind, x, z, lane, yaw = null, opts = {}) { this.pointDefs.push({ kind, x, z, lane, yaw, ...opts }); }
+  point(kind, x, z, lane, yaw = null, opts = {}) {
+    this.pointDefs.push({ kind, x, z, lane, yaw, ...opts });
+    // keep hull-down spots (and their bank) and sniper nests free of later props
+    if (kind === 'hulldown' || kind === 'sniper') this.both((T) => {
+      const [a, b] = T.p([x, z]); this.mark(a, b, kind === 'hulldown' ? 8 : 4, KEEP);
+      if (kind === 'hulldown' && yaw !== null) { const y = T.yaw(yaw); this.mark(a + Math.sin(y) * 9, b + Math.cos(y) * 9, 7, KEEP); }
+    });
+  }
   lane(name, waypoints) { this.laneDefs.push({ name, waypoints }); }
 
   // Sniper / bush / scout points get bushes in front (towards yaw) or around.
@@ -457,19 +475,18 @@ export class MapBuilder {
   // Find a hull-down spot near (x, z) facing yaw: ground ~1–2.2 m higher 5–8 m ahead,
   // and falling away beyond the crest (so the gun sees over it).
   hulldownSnap(x, z, yaw, radius = 30) {
-    const fx = Math.sin(yaw), fz = Math.cos(yaw);
+    const fx = Math.sin(yaw), fz = Math.cos(yaw), H = (a, b) => terrainHeightAt(this, a, b);
     let best = null, bs = -Infinity;
-    for (let dz = -radius; dz <= radius; dz += 3) for (let dx = -radius; dx <= radius; dx += 3) {
+    for (let dz = -radius; dz <= radius; dz += 2) for (let dx = -radius; dx <= radius; dx += 2) {
       const px = x + dx, pz = z + dz;
       if (Math.hypot(dx, dz) > radius) continue;
-      const h0 = terrainHeightAt(this, px, pz);
-      const crest = Math.max(terrainHeightAt(this, px + fx * 6, pz + fz * 6), terrainHeightAt(this, px + fx * 8, pz + fz * 8));
-      const beyond = terrainHeightAt(this, px + fx * 30, pz + fz * 30);
+      const h0 = H(px, pz);
+      let crest = -Infinity; for (let s = 4; s <= 10; s += 2) crest = Math.max(crest, H(px + fx * s, pz + fz * s));
+      let beyond = Infinity; for (let s = 25; s <= 70; s += 15) beyond = Math.min(beyond, H(px + fx * s, pz + fz * s));
       const rise = crest - h0;
-      if (rise < 0.8 || rise > 2.4) continue;
-      if (this.slope(px, pz) > 14) continue;
-      const score = -Math.abs(rise - 1.5) * 2 + Math.min(4, crest - beyond) - Math.hypot(dx, dz) / radius;
-      if (crest - beyond < 0.5) continue;
+      if (rise < 0.9 || rise > 2.3 || crest - beyond < 0.3) continue;
+      if (this.slope(px, pz) > 15) continue;
+      const score = -Math.abs(rise - 1.6) * 2 + Math.min(3, crest - beyond) * 0.5 - Math.hypot(dx, dz) / radius;
       if (score > bs) { bs = score; best = [px, pz]; }
     }
     return best;
@@ -522,16 +539,23 @@ export class MapBuilder {
     const pts = [];
     for (const d of this.pointDefs) {
       const variants = d.team === null ? [[0, (q) => q, (y) => y]] : [[0, (q) => q, (y) => y], [1, (q) => this.M(q), (y) => this.My(y)]];
+      let snapped = null;
+      if (d.kind === 'hulldown' && d.yaw !== null) snapped = this.hulldownSnap(d.x, d.z, d.yaw, d.snap ?? 30);
       for (const [team, P, Y] of variants) {
-        let [x, z] = P([d.x, d.z]);
+        let [x, z] = P(snapped || [d.x, d.z]);
         const yaw = d.yaw === null ? null : Y(d.yaw);
-        if (d.kind === 'hulldown' && yaw !== null) { const s = this.hulldownSnap(x, z, yaw, d.snap ?? 30); if (s) [x, z] = s; }
         const n = nudge(x, z, d.kind === 'bush' || d.kind === 'sniper' ? 3 : 4, 30);
         if (!n) continue;
         pts.push({ kind: d.kind, x: r2(n[0]), z: r2(n[1]), team: d.team === null ? null : team, lane: d.lane, ...(yaw !== null ? { yaw: Math.round(yaw * 1000) / 1000 } : {}) });
       }
     }
     map.points = pts;
+    // bushes for sniper / scout / bush points at their final positions (bushes don't touch nav)
+    if (this._dress) {
+      this.dressPoints(pts);
+      this.objects.forEach((o, i) => { o.id = i; });
+      buildQueryIndex(map);
+    }
     // lanes: A* through the waypoints, simplified
     for (const L of this.laneDefs) {
       const wps = L.waypoints;
@@ -547,16 +571,9 @@ export class MapBuilder {
     return map;
   }
 
-  // Bushes for points must exist before nav: call with the raw point defs (team 0 + mirror).
-  dressPointDefs() {
-    const all = [];
-    for (const d of this.pointDefs) {
-      if (d.dress === false) continue;
-      all.push({ kind: d.kind, x: d.x, z: d.z, yaw: d.yaw });
-      if (d.team !== null) { const [x, z] = this.M([d.x, d.z]); all.push({ kind: d.kind, x, z, yaw: d.yaw === null ? null : this.My(d.yaw) }); }
-    }
-    this.dressPoints(all);
-  }
+  // Ask finish() to dress the points with bushes once their final positions are known.
+  dressPointDefs() { this._dress = true; }
+
 }
 
 const r2 = (v) => Math.round(v * 100) / 100;

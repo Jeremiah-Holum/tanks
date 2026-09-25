@@ -81,11 +81,11 @@ function rules(world, dt) {
       const n = Math.min(CAP_MAX_CAPPERS, cappers.length), gain = Math.min(100 - b.points, CAP_RATE * n * dt);
       b.points += gain;
       for (const t of cappers.slice(0, n)) { const g = gain / n; b.contrib[t.id] = (b.contrib[t.id] || 0) + g; t.stats.capture += g; }
-      if (Math.floor(b.points) !== before) world.events.push({ type: 'capture', team: 1 - b.team, base: b.team, points: Math.floor(b.points) });
+      if (Math.floor(b.points) !== before) world.events.push({ type: 'capture', team: b.team, by: 1 - b.team, points: Math.floor(b.points) });
       if (b.points >= 100) return finish(world, 1 - b.team, 'capture');
     } else if (b.points > 0) {
       b.idle += dt;
-      if (b.idle > CAP_DECAY_T) { b.points = 0; b.contrib = {}; world.events.push({ type: 'capture', team: 1 - b.team, base: b.team, points: 0 }); }
+      if (b.idle > CAP_DECAY_T) { b.points = 0; b.contrib = {}; world.events.push({ type: 'capture', team: b.team, by: 1 - b.team, points: 0 }); }
     }
   }
   const alive = [0, 0];

@@ -21,7 +21,7 @@ function sampleProfile() {
     research(id);
     const ts = tankState(p, id);
     ts.owned = true; ts.battles = 5 + Math.floor(rng() * 60); ts.wins = Math.floor(ts.battles * (0.42 + rng() * 0.2));
-    ts.xp = Math.floor(rng() * 9000); ts.mastery = Math.floor(rng() * 5); ts.guns = [0]; ts.ammo = defaultAmmo(TANKS[id], 0);
+    ts.xp = Math.floor(rng() * 9000); ts.dmg = Math.round(TANKS[id].hp * (0.7 + rng() * 0.8) * ts.battles); ts.kills = Math.round(ts.battles * rng() * 1.3); ts.mastery = Math.floor(rng() * 5); ts.guns = [0]; ts.ammo = defaultAmmo(TANKS[id], 0);
   }
   research('usa_m4a3e8');
   p.tanks.usa_m4.guns = [0, 1].filter((i) => TANKS.usa_m4.guns[i]); p.tanks.usa_m4.xp = 14200;
@@ -83,4 +83,4 @@ else if (screen === 'results') {
   screens.finishBattle(world, world.tanks.find((t) => t.player).id, battle);
 }
 await document.fonts.ready;
-setTimeout(() => { window.__lab.ready = true; }, +(q.get('wait') || 1200));
+setTimeout(() => { window.__lab.ready = true; }, +(q.get('wait') || 2500));

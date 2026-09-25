@@ -341,7 +341,7 @@ function gableHouse(g, r, { ox = 0, sx, sz, H, wall = 'plaster', roof = 'roofTil
   // windows & doors: quads just proud of the walls
   const floors = w > 5.4 ? 2 : 1, fh = (w - 0.4) / floors;
   const place = (cx, cz, nx, nz, ww, wh, yc, cell) => {
-    const tx = -nz, tz = nx, e2 = 0.04, px = cx + nx * e2, pz = cz + nz * e2;
+    const tx = nz, tz = -nx, e2 = 0.04, px = cx + nx * e2, pz = cz + nz * e2;
     g.poly([V3(px - tx * ww, yc - wh, pz - tz * ww), V3(px + tx * ww, yc - wh, pz + tz * ww), V3(px + tx * ww, yc + wh, pz + tz * ww), V3(px - tx * ww, yc + wh, pz - tz * ww)],
       [[0, 0], [1, 0], [1, 1], [0, 1]], cell, null, cell === 'window' ? 0.35 : 0.8);
   };
@@ -414,7 +414,7 @@ function solidGeometry(o, hAt) {
       g.box(tx, (shaft - 1.2) / 2, 0, tw, (shaft + 1.2) / 2, tw, 'ashlar', 'ashlar');
       g.box(tx, shaft + 0.2, 0, tw + 0.25, 0.25, tw + 0.25, 'ashlar', 'ashlar');
       for (const [nx, nz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-        const cx = tx + nx * (tw + 0.04), cz = nz * (tw + 0.04), tx2 = -nz, tz2 = nx, hw = tw * 0.35, y0 = shaft - 4.2, y1 = shaft - 1.2;
+        const cx = tx + nx * (tw + 0.04), cz = nz * (tw + 0.04), tx2 = nz, tz2 = -nx, hw = tw * 0.35, y0 = shaft - 4.2, y1 = shaft - 1.2;
         g.poly([V3(cx - tx2 * hw, y0, cz - tz2 * hw), V3(cx + tx2 * hw, y0, cz + tz2 * hw), V3(cx + tx2 * hw, y1, cz + tz2 * hw), V3(cx - tx2 * hw, y1, cz - tz2 * hw)], [[0.3, 0.3], [0.7, 0.3], [0.7, 0.7], [0.3, 0.7]], 'window', [0.3, 0.3, 0.3, 0.3]);
       }
       const b = tw + 0.1, ts = TILE_M.roofSlate;

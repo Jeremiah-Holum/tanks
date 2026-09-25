@@ -63,10 +63,11 @@ export function buildTree(S, nation) {
     el.dataset.nation = nation;
     const L = layoutTree(nation);
     const W = Math.max(900, body.clientWidth || 1200), Hh = Math.max(300, body.clientHeight || 560);
-    const cols = MAX_TIER, colW = (W - 40) / cols, nodeW = Math.min(158, colW - 22);
-    const rowH = Math.max(66, Math.min(92, (Hh - 40) / Math.max(1, L.rows))), nodeH = Math.min(64, rowH - 10);
-    const x = (d) => 20 + (d.tier - 1) * colW + (colW - nodeW) / 2, y = (d) => 34 + L.row[d.id] * rowH;
-    const height = 34 + L.rows * rowH + 10;
+    const cols = MAX_TIER, colW = (W - 40) / cols, nodeW = Math.min(176, colW - 24);
+    const rowH = Math.max(70, Math.min(124, (Hh - 50) / Math.max(1, L.rows))), nodeH = Math.min(88, rowH - 16);
+    const top = Math.max(38, (Hh - L.rows * rowH) / 2 + 10);
+    const x = (d) => 20 + (d.tier - 1) * colW + (colW - nodeW) / 2, y = (d) => top + L.row[d.id] * rowH;
+    const height = Math.max(Hh, top + L.rows * rowH + 10);
     const lines = L.edges.map(([a, b]) => {
       const A = TANKS[a], B = TANKS[b];
       const x1 = x(A) + nodeW, y1 = y(A) + nodeH / 2, x2 = x(B), y2 = y(B) + nodeH / 2, mx = x2 - 16;

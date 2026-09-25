@@ -24,10 +24,10 @@ const lin = (hex) => new THREE.Color(hex); // three converts sRGB hex → linear
 // ------------------------------------------------------------------ paint schemes
 export const PAINTS = {
   olive: { base: 0x4f5334 },                                   // US Olive Drab No.9
-  dunkelgelb: { base: 0xb8a06a },                              // RAL 7028
-  dunkelgelb_camo: { base: 0xb8a06a, camoA: 0x4a5431, camoB: 0x6a4330 }, // + Olivgrün / Rotbraun
+  dunkelgelb: { base: 0xa8935f },                              // RAL 7028
+  dunkelgelb_camo: { base: 0xa8935f, camoA: 0x4a5431, camoB: 0x6a4330 }, // + Olivgrün / Rotbraun
   grey: { base: 0x575c5c },                                    // Panzergrau
-  '4bo': { base: 0x4a5930 },                                   // Soviet 4BO green
+  '4bo': { base: 0x48532f },                                   // Soviet 4BO green
   winter: { base: 0xd6d6cc },
 };
 const NATION_PAINT = { usa: 'olive', germany: 'dunkelgelb', ussr: '4bo' };
@@ -82,9 +82,9 @@ function decalTexture() {
   g.fillStyle = '#e8e6dc'; star(g, 896, 134, 110, 44); g.fill();
   // slogans, hand painted
   g.fillStyle = '#ecebe2'; g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.font = 'italic bold 78px "DejaVu Sans", Arial, sans-serif';
-  g.fillText('ЗА РОДИНУ!', 256, 322);
-  g.fillText('ВПЕРЁД!', 768, 322);
+  g.font = 'italic bold 72px "DejaVu Sans", Arial, sans-serif';
+  g.fillText('ЗА РОДИНУ!', 256, 322, 470);
+  g.fillText('ВПЕРЁД!', 768, 322, 470);
   // digits
   g.font = 'bold 58px "DejaVu Sans Mono", "Courier New", monospace';
   for (let d = 0; d < 10; d++) {
@@ -182,7 +182,7 @@ vec3 P = vObj;
 float kind = vExt.y;
 float paintM = vSurf.z, tMetal = vSurf.x, tRough = vSurf.y, tH = 0.0;
 float n1 = tkFbm(P*1.1), n2 = tkNoise(P*7.0), n4 = tkNoise(P*27.0);
-vec3 col = vColor;
+vec3 col = vColor.rgb;
 if (paintM > 0.5) {
   vec3 pc = uPaint;
 #ifdef CAMO
@@ -201,17 +201,17 @@ if (kind > 0.5 && kind < 1.5) {           // markings (atlas)
   col = dc.rgb * (0.88 + 0.16*n2); tMetal = 0.08; tRough = 0.6; paintM = 1.0;
 } else if (kind > 1.5 && kind < 2.5) {    // track links
   vec4 tc = texture2D(uTrack, vec2(vTUv.x, (vTUv.y + uTravel) / vExt.z));
-  col = tc.rgb * 1.1; tH = dot(tc.rgb, vec3(0.3, 0.59, 0.11)) * 3.0;
+  col = tc.rgb * 1.15; tH = dot(tc.rgb, vec3(0.3, 0.59, 0.11)) * 3.0;
   tMetal = 0.55; tRough = 0.55 + 0.3*n2;
 } else if (kind > 2.5) {                  // cast armour: pitted surface
   tH = n4*0.6 + n2*0.4;
 }
 // worn edges: lighter dusty paint, chips down to dark steel
 float edge = vSurf.w;
-float chip = paintM * smoothstep(0.8, 0.86, n4*0.55 + tkNoise(P*61.0)*0.25 + n2*0.2 + edge*0.42);
-col = mix(col, col*1.3 + 0.012, paintM*edge*0.55);
-col = mix(col, vec3(0.07, 0.066, 0.06), chip);
-tMetal = mix(tMetal, 0.75, chip); tRough = mix(tRough, 0.42, chip);
+float chip = paintM * smoothstep(0.86, 0.9, n4*0.5 + tkNoise(P*61.0)*0.3 + n2*0.2 + edge*0.38 - 0.02);
+col = mix(col, col*1.28 + 0.01, paintM*edge*0.5);
+col = mix(col, vec3(0.085, 0.075, 0.065), chip*0.85);
+tMetal = mix(tMetal, 0.6, chip); tRough = mix(tRough, 0.5, chip);
 // mud on the lower hull and running gear, dust on upward faces
 float dn = tkFbm(P*vec3(2.2, 3.6, 2.2) + 9.0);
 float dirt = smoothstep(0.25, 0.85, vExt.x*1.2 + (dn - 0.5)*0.9);
@@ -268,7 +268,7 @@ export function tankMaterial(p, charred = false) {
   m.userData.uTravel = { value: 0 };
   m.userData.uni = {
     uPaint: { value: lin(p.base) }, uCamoA: { value: lin(p.camoA ?? p.base) }, uCamoB: { value: lin(p.camoB ?? p.base) },
-    uMud: { value: lin(0x4b3d2b) }, uDust: { value: lin(0x9c8e74) },
+    uMud: { value: lin(0x3e3528) }, uDust: { value: lin(0x9c8e74) },
     uDecal: { value: decalTexture() }, uTrack: { value: trackTexture() },
   };
   attachShader(m);
@@ -290,8 +290,8 @@ function cloneMat(base, transparent = false) {
 // ------------------------------------------------------------------ geometry builder
 const WHITE = lin(0xffffff);
 const ST = {
-  paint: { c: WHITE, metal: 0.18, rough: 0.62, paint: 1 },
-  cast: { c: WHITE, metal: 0.18, rough: 0.66, paint: 1, kind: 3 },
+  paint: { c: WHITE, metal: 0.06, rough: 0.7, paint: 1 },
+  cast: { c: WHITE, metal: 0.06, rough: 0.74, paint: 1, kind: 3 },
   steel: { c: lin(0x4a4843), metal: 0.75, rough: 0.45, paint: 0 },
   dark: { c: lin(0x1d1c1a), metal: 0.3, rough: 0.7, paint: 0 },
   rubber: { c: lin(0x1c1b1a), metal: 0.0, rough: 0.9, paint: 0 },
@@ -301,7 +301,7 @@ const ST = {
   glass: { c: lin(0x8fa2a8), metal: 0.9, rough: 0.12, paint: 0, dirt: false },
   bore: { c: lin(0x070707), metal: 0.2, rough: 0.85, paint: 0, dirt: false },
   interior: { c: lin(0xb9b6a4), metal: 0.1, rough: 0.8, paint: 0 },
-  link: { c: lin(0x35322d), metal: 0.6, rough: 0.55, paint: 0 },
+  link: { c: lin(0x3d3934), metal: 0.5, rough: 0.6, paint: 0, dirtK: 0.4 },
   decal: { c: WHITE, metal: 0.1, rough: 0.6, paint: 0, kind: 1 },
 };
 const V = {
@@ -601,7 +601,7 @@ function resample(pts, step, closed) {
 function trackBand(gb, path, closed, x0, x1, pitch, variant, side, lod) {
   const { pts, total } = resample(path, lod ? 0.28 : 0.06, closed);
   if (closed) pitch = total / Math.max(1, Math.round(total / pitch));
-  gb.st = { ...ST.link, kind: 2, e2: pitch, c: WHITE, dirtK: 1 };
+  gb.st = { ...ST.link, kind: 2, e2: pitch, c: WHITE, dirtK: 0.55 };
   const n = pts.length;
   const rings = [];
   for (let k = 0; k < n; k++) {
@@ -701,7 +701,10 @@ function skirts(gb, D, G) {
     gb.box(M(x - side * 0.03, y1 - 0.02, (z0 + z1) / 2, 0, 0, 0, 0.05, 0.03, z1 - z0));
   }
 }
-function link(gb, pos, X, Y, len, w) { gb.st = ST.link; gb.box(basis(pos, X, Y, w, 0.045, len * 0.9)); }
+function link(gb, pos, X, Y, len, w) {
+  gb.st = ST.link; gb.box(basis(pos, X, Y, w * 0.9, 0.035, len * 0.9));
+  gb.st = ST.steel; gb.box(basis(V.add(pos, V.mul(Y, 0.025)), X, Y, w * 0.25, 0.025, len * 0.8));
+}
 function spareLinks(gb, D) {
   const { h, nation, top, noseY } = D;
   const pf = D.upperFront, n = pf.n;
@@ -718,7 +721,7 @@ function spareLinks(gb, D) {
     for (const side of [1, -1]) {
       const y = top - 0.28, x = D.sideX(y) * side;
       const nx = [side * D.pc.hullUpper.planes[3].n[0], D.pc.hullUpper.planes[3].n[1], 0];
-      for (let k = 0; k < 3; k++) link(gb, V.add([x, y, h.L * 0.12 + k * 0.17], V.mul(nx, 0.03)), [0, 0, 1], nx, D.tr.w * 0.85, 0.16);
+      for (let k = 0; k < 3; k++) link(gb, V.add([x, y, h.L * 0.3 + k * 0.17], V.mul(nx, 0.03)), [0, 0, 1], nx, D.tr.w * 0.85, 0.16);
     }
   }
 }
@@ -842,7 +845,7 @@ function hullDetails(gb, D, G, def, info) {
   }
   info.exhausts = ex;
   // --- antenna mount on the hull (Germany)
-  if (nation === 'germany') { gb.st = ST.steel; gb.cyl(M(-halfTop + 0.2, top + 1.0, zRoofR + 0.25, 0, 0, 0, 0.006, 2.0, 0.006), null, 4); }
+  if (nation === 'germany') { gb.st = ST.steel; gb.cyl(M(-halfTop + 0.2, top + 0.75, zRoofR + 0.25, 0, 0, 0, 0.007, 1.5, 0.007), null, 4); }
 }
 
 // Bogie / spring hardware that doesn't spin (in the running-gear mesh).
@@ -853,11 +856,12 @@ function suspension(gb, G, xs, side, lod) {
   for (const b of bogies) {
     const x = xs * side;
     if (style === 'vvss') {
-      gb.box(M(x - side * 0.02, yW + R * 0.55, b.z, 0, 0, 0, 0.16, R * 0.8, b.d * 0.62));
-      gb.st = ST.steel; for (const s of [-1, 1]) gb.cyl(M(x + side * 0.02, yW + R * 0.3, b.z + s * b.d * 0.2, 0, 0, 0, 0.065, R * 0.55, 0.065), null, 8);
-      gb.st = ST.paint; for (const s of [-1, 1]) gb.box(M(x + side * 0.06, yW + R * 0.2, b.z + s * b.d * 0.3, s * 0.5, 0, 0, 0.05, 0.08, b.d * 0.4));
-      gb.box(M(x, (yW + R * 0.9 + yTop) / 2 - 0.05, b.z - b.d * 0.18, 0, 0, 0, 0.08, Math.max(0.05, yTop - yW - R * 0.9 - 0.12), 0.1));
-      gb.box(M(x - side * 0.05, yW + R * 1.0, b.z, 0, 0, 0, 0.1, 0.05, b.d * 0.9));
+      // bracket rising between the wheel pair, volute springs, arms to the hubs, roller post, skid
+      gb.box(M(x, yW + R * 0.85, b.z, 0, 0, 0, 0.22, R * 1.1, b.d * 0.34));
+      gb.box(M(x, yW + R * 1.35, b.z - b.d * 0.05, 0, 0, 0, 0.24, R * 0.25, b.d * 0.62));
+      gb.st = ST.steel; for (const s of [-1, 1]) gb.cyl(M(x + side * 0.05, yW + R * 0.55, b.z + s * b.d * 0.12, 0, 0, 0, 0.055, R * 0.7, 0.055), null, 8);
+      gb.st = ST.paint; for (const s of [-1, 1]) gb.box(M(x + side * 0.09, yW + R * 0.25, b.z + s * b.d * 0.28, s * 0.6, 0, 0, 0.06, 0.09, b.d * 0.42));
+      gb.box(M(x, (yW + R * 1.4 + yTop) / 2 - 0.06, b.z - b.d * 0.18, 0, 0, 0, 0.09, Math.max(0.05, yTop - yW - R * 1.4 - 0.1), 0.12));
     } else if (style === 'hvss') {
       gb.box(M(x - side * 0.1, yW + R * 0.5, b.z, 0, 0, 0, 0.12, R * 0.7, b.d * 0.5));
       gb.st = ST.steel; gb.cyl(M(x, yW + R * 0.9, b.z, Math.PI / 2, 0, 0, 0.06, b.d * 0.7, 0.06), null, 8);
@@ -939,10 +943,82 @@ function turretDetails(gb, D, def) {
       gb.st = ST.paint; gb.cyl(M(x, y, (z0 + z1) / 2, Math.PI / 2, 0, 0, 0.015, z1 - z0, 0.015), null, 6);
       for (const z of [z0, z1]) gb.cyl(M(x - s * 0.03, y, z, 0, 0, Math.PI / 2, 0.012, 0.07, 0.012), null, 4);
     }
-    gb.st = ST.steel; gb.cyl(M(-cupSide * Wr * 0.35, H + 1.0, zR + 0.4, 0, 0, 0, 0.006, 2.0, 0.006), null, 4);
+    gb.st = ST.steel; gb.cyl(M(-cupSide * Wr * 0.35, H + 0.75, zR + 0.4, 0, 0, 0, 0.007, 1.5, 0.007), null, 4);
   } else {
-    gb.st = ST.steel; gb.cyl(M(-cupSide * Wr * 0.3, H + 1.1, zR + 0.2, 0, 0, 0, 0.006, 2.2, 0.006), null, 4);
+    gb.st = ST.steel; gb.cyl(M(-cupSide * Wr * 0.3, H + 0.8, zR + 0.2, 0, 0, 0, 0.007, 1.6, 0.007), null, 4);
   }
+}
+
+// Cast turret: loft the solid's horizontal sections with rounded corners (Minkowski rounding of
+// the inset section) and a rounded top edge. Stays inside the armour solid (the hitbox).
+function castLoft(gb, planes, H, zc, r, rt, M_ = 36) {
+  const hp = planes.filter((p) => Math.abs(p.n[1]) < 0.999);
+  const section = (y, inset) => {
+    let poly = [[-20, -20], [20, -20], [20, 20], [-20, 20]];
+    for (const p of hp) {
+      let a = p.n[0], b = p.n[2], c = p.d - p.n[1] * y; const l = Math.hypot(a, b); a /= l; b /= l; c = c / l - inset;
+      const out = [];
+      for (let k = 0; k < poly.length; k++) {
+        const P = poly[k], Q = poly[(k + 1) % poly.length];
+        const fp = a * P[0] + b * P[1] - c, fq = a * Q[0] + b * Q[1] - c;
+        if (fp <= 0) out.push(P);
+        if ((fp < 0) !== (fq < 0)) { const t = fp / (fp - fq); out.push([P[0] + (Q[0] - P[0]) * t, P[1] + (Q[1] - P[1]) * t]); }
+      }
+      poly = out;
+      if (poly.length < 3) return null;
+    }
+    return poly;
+  };
+  const dist = (poly, x, z) => { // distance from a point to a convex polygon (0 inside)
+    let inside = true, best = Infinity;
+    for (let k = 0; k < poly.length; k++) {
+      const P = poly[k], Q = poly[(k + 1) % poly.length], ex = Q[0] - P[0], ez = Q[1] - P[1];
+      if ((x - P[0]) * ez - (z - P[1]) * ex > 0) inside = false; // CCW polygon in (x, z)? handled by both signs below
+      const t = clamp(((x - P[0]) * ex + (z - P[1]) * ez) / (ex * ex + ez * ez || 1), 0, 1);
+      best = Math.min(best, Math.hypot(x - P[0] - ex * t, z - P[1] - ez * t));
+    }
+    return best;
+  };
+  const inPoly = (poly, x, z) => { let s0 = 0; for (let k = 0; k < poly.length; k++) { const P = poly[k], Q = poly[(k + 1) % poly.length]; const c = (Q[0] - P[0]) * (z - P[1]) - (Q[1] - P[1]) * (x - P[0]); if (c !== 0) { if (s0 === 0) s0 = Math.sign(c); else if (Math.sign(c) !== s0) return false; } } return true; };
+  const levels = [];
+  const rows = [[0, 0], [(H - rt) * 0.5, 0], [H - rt, 0]];
+  for (let j = 1; j <= 4; j++) { const f = (j / 4) * Math.PI / 2; rows.push([H - rt + rt * Math.sin(f), rt * (1 - Math.cos(f))]); }
+  for (const [y, e] of rows) {
+    let rr = r, poly = section(y, r + e);
+    while (!poly && rr > 0.01) { rr *= 0.6; poly = section(y, rr + e); }
+    if (!poly) continue;
+    const ring = [];
+    for (let k = 0; k < M_; k++) {
+      const a = (k / M_) * Math.PI * 2, ux = Math.sin(a), uz = Math.cos(a);
+      let lo = 0, hi = 12;
+      for (let it = 0; it < 22; it++) { const m = (lo + hi) / 2, x = ux * m, z = zc + uz * m; if (inPoly(poly, x, z) || dist(poly, x, z) <= rr) lo = m; else hi = m; }
+      ring.push([ux * lo, y, zc + uz * lo]);
+    }
+    levels.push({ ring, y, edge: e > 0 ? 0.3 : 0 });
+  }
+  const nL = levels.length, idx = [];
+  for (let i = 0; i < nL; i++) {
+    const row = [];
+    for (let k = 0; k < M_; k++) {
+      const p = levels[i].ring[k];
+      const pa = levels[i].ring[(k + 1) % M_], pb = levels[i].ring[(k + M_ - 1) % M_];
+      const qa = levels[Math.min(nL - 1, i + 1)].ring[k], qb = levels[Math.max(0, i - 1)].ring[k];
+      let n = V.norm(V.cross(V.sub(qa, qb), V.sub(pa, pb)));
+      if (V.dot(n, [p[0], 0, p[2] - zc]) < 0 && n[1] < 0.99) n = V.mul(n, -1);
+      if (i === nL - 1) n = V.norm(V.add(n, [0, 0.6, 0]));
+      row.push(gb.v(p[0], p[1], p[2], n[0], n[1], n[2], levels[i].edge));
+    }
+    idx.push(row);
+  }
+  for (let i = 0; i < nL - 1; i++) for (let k = 0; k < M_; k++) {
+    const a = idx[i][k], b = idx[i][(k + 1) % M_], c = idx[i + 1][(k + 1) % M_], d = idx[i + 1][k];
+    const p = levels[i].ring[k];
+    gb.quad(a, b, c, d, V.norm([p[0], 0.2, p[2] - zc]));
+  }
+  const top = levels[nL - 1];
+  const cId = gb.v(0, top.y, zc, 0, 1, 0, 0);
+  const tIds = top.ring.map((p) => gb.v(p[0], p[1], p[2], 0, 1, 0, 0));
+  for (let k = 0; k < M_; k++) gb.tri(cId, tIds[k], tIds[(k + 1) % M_], [0, 1, 0]);
 }
 
 // Open-topped turret: inner walls, floor and a rim instead of a roof.
@@ -1002,7 +1078,7 @@ function hullMarkings(gb, upperFaces, D) {
     const left = f.plane.n[0] > 0, fwd = (x) => (left ? 1 - x : x); // u runs rear→front on the right side
     if (D.nation === 'usa') stick(gb, f, fwd(0.62), 0.5, 0.55, 0.55, ATLAS.usStar);
     else if (D.nation === 'germany') stick(gb, f, fwd(0.35), 0.5, 0.45, 0.45, ATLAS.cross);
-    else stick(gb, f, fwd(0.5), 0.5, 1.4, 0.35, left ? ATLAS.slogan0 : ATLAS.slogan1);
+    else stick(gb, f, fwd(0.3), 0.5, 1.4, 0.35, left ? ATLAS.slogan0 : ATLAS.slogan1);
   }
   if (D.nation === 'germany') {
     const rear = upperFaces.find((f) => f.plane.plate === 'hull.rear');
@@ -1121,7 +1197,8 @@ function buildGeometry(def, lod, gunIndex) {
   const tFaces = solidFaces(D.pc.turret.planes);
   turGb.st = D.cast ? ST.cast : ST.paint;
   const te = lod ? 0 : D.cast ? 0.09 : 0.03, tilt = D.cast ? 1.0 : 0.55;
-  for (const f of tFaces) {
+  if (D.cast && !lod) castLoft(turGb, D.pc.turret.planes, D.t.H, D.t.zOff || 0, Math.min(D.t.W, D.t.L) * 0.2, D.t.H * 0.3);
+  else for (const f of tFaces) {
     const pl = f.plane.plate;
     if (pl === 'turret.floor' || (D.open && pl === 'turret.open')) continue;
     turGb.plate(f.verts, f.plane.n, te, tilt, rings);
@@ -1190,7 +1267,8 @@ export function buildTankModel(def, opts = {}) {
   const yaw = new THREE.Group(); yaw.name = 'yaw'; base3.add(yaw);
   const turret = mk(G.turret, base, D.fixed ? base3 : yaw, 'turret');
   let numbers = null;
-  const num = opts.number ?? def.look?.number;
+  let num = opts.number ?? def.look?.number;
+  if (num === true) { let hsh = 7; for (const ch of def.id) hsh = (hsh * 31 + ch.charCodeAt(0)) % 997; num = 100 + (hsh * 7) % 900; }
   if (!lod && num != null && num !== false) {
     const k = def.id + ':' + num;
     let ng = _numCache.get(k);

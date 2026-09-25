@@ -10,6 +10,8 @@ export const CONSUMABLES = ['repair', 'medkit', 'extinguisher'];
 
 export const DEFAULT_SETTINGS = {
   quality: 'auto',            // 'low' | 'medium' | 'high' | 'auto'
+  renderScale: 1,             // 0.5..1 of devicePixelRatio-limited resolution
+  fov: 70,                    // arcade camera vertical field of view, degrees
   mouseSens: 1.0,             // 0.2..3, multiplier
   sniperSens: 0.6,            // 0.1..2, multiplier in sniper mode
   invertY: false,

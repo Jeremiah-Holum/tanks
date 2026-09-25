@@ -95,7 +95,7 @@ export function createTank(id, team, entry, spawn) {
   while (ammo.length < g.shells.length) ammo.push(0);
   const t = {
     id, team, def, gunDef: g, gunIndex: gi, name: entry.name || def.short, player: !!entry.player, bot: entry.bot || null,
-    pos: { x: spawn.x, y: 0, z: spawn.z }, yaw: spawn.yaw || 0, pitch: 0, roll: 0, speed: 0, yawRate: 0,
+    pos: { x: spawn.x, y: 0, z: spawn.z }, yaw: spawn.yaw || 0, pitch: 0, roll: 0, speed: 0, yawRate: 0, throttle: 0,
     turretYaw: 0, gunPitch: 0, turretRate: 0, gunRate: 0,
     hp: def.hp, maxHp: def.hp, alive: true, reload: g.reload * 0.3, shell: 0, ammo,
     disp: g.disp * 3, dispTarget: g.disp,

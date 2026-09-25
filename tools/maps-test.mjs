@@ -8,7 +8,9 @@ import { findPath } from '../src/sim/map/nav.js';
 import { makeRng } from '../src/sim/map/noise.js';
 import { createHash } from 'node:crypto';
 
-const only = process.argv.slice(2);
+const argv = process.argv.slice(2), si = argv.indexOf('--seed');
+const SEED = si >= 0 ? +argv[si + 1] : undefined;               // test a non-default seed
+const only = argv.filter((a, i) => !a.startsWith('--') && argv[i - 1] !== '--seed');
 let fails = 0, checks = 0;
 const ok = (cond, msg) => { checks++; if (!cond) { fails++; console.log('  FAIL', msg); } return cond; };
 const hashMap = (m) => {
@@ -23,13 +25,13 @@ for (const meta of MAPS) {
   if (only.length && !only.includes(meta.id)) continue;
   console.log(`\n== ${meta.id} (${meta.name})`);
   let t = performance.now();
-  const m = loadMap(meta.id);
+  const m = loadMap(meta.id, SEED);
   const loadMs = performance.now() - t;
-  const m2 = loadMap(meta.id);
+  const m2 = loadMap(meta.id, SEED);
   const hA = hashMap(m), hB = hashMap(m2);
   ok(loadMs < 1500, `load time ${loadMs.toFixed(0)} ms`);
   ok(hA === hB, 'deterministic');
-  const other = loadMap(meta.id, 12345);
+  const other = loadMap(meta.id, (SEED ?? 0) + 12345);
   ok(hashMap(other) !== hA, 'seed changes the map');
   // shape
   ok(m.size === 1000 && m.res === 257 && m.heights.length === 257 * 257 && m.ground.length === 257 * 257, 'grid shape');
@@ -82,6 +84,38 @@ for (const meta of MAPS) {
     let near = 0; Q.objectsNear(m, p.x, p.z, 14, (o) => { if (OBJECT_KINDS[o.kind].foliage) near++; });
     ok(near > 0, `${p.kind} point (${p.x},${p.z}) has foliage nearby`);
   }
+  // nav connectivity: nearly every passable cell reachable from team 0's base
+  {
+    const { cols, rows, cost, cell } = m.nav, seen = new Uint8Array(cols * rows);
+    const start = Math.floor(m.bases[0].z / cell) * cols + Math.floor(m.bases[0].x / cell);
+    const st = [start]; seen[start] = 1; let reach = 0, fin = 0;
+    while (st.length) { const k = st.pop(); reach++; const c = k % cols, r = (k / cols) | 0; for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const cc = c + dc, rr = r + dr, nk = rr * cols + cc; if (cc >= 0 && rr >= 0 && cc < cols && rr < rows && !seen[nk] && isFinite(cost[nk])) { seen[nk] = 1; st.push(nk); } } }
+    for (const v of cost) if (isFinite(v)) fin++;
+    ok(reach / fin > 0.97, `nav connectivity ${(100 * reach / fin).toFixed(1)}% of passable cells`);
+  }
+  // hull-down points: a crest 0.6–2.6 m above the hull 4–10 m ahead
+  let hdOk = 0, hdN = 0;
+  for (const p of m.points.filter((q) => q.kind === 'hulldown')) {
+    hdN++; const h0 = Q.terrainHeightAt(m, p.x, p.z); let crest = -Infinity;
+    for (let s = 4; s <= 10; s += 1) crest = Math.max(crest, Q.terrainHeightAt(m, p.x + Math.sin(p.yaw) * s, p.z + Math.cos(p.yaw) * s));
+    if (crest - h0 > 0.6 && crest - h0 < 2.6) hdOk++;
+  }
+  ok(hdOk >= hdN * 0.75, `hull-down points with a crest ahead ${hdOk}/${hdN}`);
+  // sniper view: mean clear sight distance over ±25° from 2.5 m (terrain + solid props)
+  const views = [];
+  for (const p of m.points.filter((q) => q.kind === 'sniper')) {
+    let sum = 0, k = 0;
+    for (let a = -25; a <= 25; a += 5) {
+      const y = p.yaw + a * Math.PI / 180, o = { x: p.x, y: Q.heightAt(m, p.x, p.z) + 2.5, z: p.z };
+      for (const el of [-0.004, 0.002]) {
+        const d = { x: Math.sin(y) * Math.cos(el), y: Math.sin(el), z: Math.cos(y) * Math.cos(el) };
+        const h = Q.raycast(m, o, d, 600); sum += h ? h.t : 600; k++;
+      }
+    }
+    views.push(sum / k);
+  }
+  const meanView = views.reduce((a, b) => a + b, 0) / views.length;
+  ok(meanView > 150, `sniper points mean view ${meanView.toFixed(0)} m`);
   // ---------------------------------------------------------------- queries
   const rng = makeRng(99);
   // vertical rays hit exactly heightAt

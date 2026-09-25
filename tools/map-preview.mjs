@@ -14,7 +14,9 @@ const opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] :
 const out = opt('--out', 'docs/notes/maps');
 const scale = +opt('--scale', 1);
 const wantNav = args.includes('--nav');
-const ids = args.filter((a, i) => !a.startsWith('--') && !(i > 0 && args[i - 1].startsWith('--') && args[i - 1] !== '--nav'));
+const crop = opt('--crop', null)?.split(',').map(Number) || null;   // x0,z0,x1,z1 (metres)
+let OX = 0, OZ = 0;
+const ids = args.filter((a, i) => !a.startsWith('--') && !(i > 0 && ['--out', '--scale', '--crop'].includes(args[i - 1])));
 mkdirSync(out, { recursive: true });
 
 // ---------------------------------------------------------------- PNG
@@ -35,7 +37,7 @@ function png(w, h, rgb) {
 class Img {
   constructor(w, h) { this.w = w; this.h = h; this.d = new Uint8Array(w * h * 3); }
   // world (x, z) → pixel; north (+z) is up
-  px(x) { return x * scale; } py(z) { return this.h - 1 - z * scale; }
+  px(x) { return (x - OX) * scale; } py(z) { return this.h - 1 - (z - OZ) * scale; }
   set(x, y, [r, g, b], a = 1) {
     x = x | 0; y = y | 0; if (x < 0 || y < 0 || x >= this.w || y >= this.h) return;
     const k = (y * this.w + x) * 3, d = this.d;
@@ -77,12 +79,14 @@ const LCOL = [[255, 235, 120], [255, 255, 255], [140, 230, 255]];
 const TEAM = [[60, 140, 255], [255, 70, 60]];
 
 function render(map, id) {
-  const W = Math.round(map.size * scale), img = new Img(W, W);
+  const span = crop ? Math.max(crop[2] - crop[0], crop[3] - crop[1]) : map.size;
+  if (crop) { OX = crop[0]; OZ = crop[1]; }
+  const W = Math.round(span * scale), img = new Img(W, W);
   const sun = { x: -0.5, y: 0.7, z: 0.5 }, sl = Math.hypot(sun.x, sun.y, sun.z);
   const n = { x: 0, y: 1, z: 0 };
   const lvl = map.water ? map.water.level : -Infinity;
   for (let y = 0; y < W; y++) for (let x = 0; x < W; x++) {
-    const wx = (x + 0.5) / scale, wz = (W - 1 - y + 0.5) / scale;
+    const wx = OX + (x + 0.5) / scale, wz = OZ + (W - 1 - y + 0.5) / scale;
     const h = terrainHeightAt(map, wx, wz);
     const i = Math.round(wx / map.cell), j = Math.round(wz / map.cell);
     const g = map.ground[Math.min(map.res - 1, j) * map.res + Math.min(map.res - 1, i)];
@@ -92,7 +96,7 @@ function render(map, id) {
     if (h < lvl) { const dp = Math.min(1, (lvl - h) / 3); col = [70 - 40 * dp, 130 - 50 * dp, 175 - 20 * dp]; shade = 1; }
     // contours every 5 m (thicker every 25 m)
     const c5 = Math.abs(h / 5 - Math.round(h / 5)) * 5, grad = Math.max(0.05, Math.hypot(n.x, n.z) / Math.max(0.2, n.y));
-    const onC = grad > 0.03 && c5 < 0.35 * grad / scale + 0.05;
+    const onC = grad > 0.08 && c5 < 0.35 * grad / scale + 0.05;
     const k = (y * W + x) * 3;
     for (let q = 0; q < 3; q++) img.d[k + q] = Math.max(0, Math.min(255, col[q] * shade * (onC ? (Math.round(h / 5) % 5 === 0 ? 0.62 : 0.8) : 1)));
     if (!(wx >= map.play.min && wx <= map.play.max && wz >= map.play.min && wz <= map.play.max)) for (let q = 0; q < 3; q++) img.d[k + q] *= 0.6;
@@ -132,7 +136,7 @@ function render(map, id) {
     if (p.team !== null) img.disc(p.x, p.z, 1.6, TEAM[p.team]);
     if (p.yaw !== undefined) img.line(p.x, p.z, p.x + Math.sin(p.yaw) * 18, p.z + Math.cos(p.yaw) * 18, col, 2);
   }
-  writeFileSync(`${out}/${id}.png`, png(W, W, img.d));
+  writeFileSync(`${out}/${id}${crop ? '-crop' : ''}.png`, png(W, W, img.d));
 }
 
 function renderNav(map, id) {

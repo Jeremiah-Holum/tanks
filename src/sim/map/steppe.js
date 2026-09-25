@@ -54,6 +54,25 @@ export function steppe(seed) {
   B.laneSym('balka', [[300, 112], [200, 240], [178, 300], [165, 420], [172, 500]]);
   B.laneSym('kurgan', [[300, 112], [420, 230], [500, 330], [470, 430], [440, 500]]);
   B.laneSym('kolkhoz', [[300, 112], [540, 250], [655, 336], [740, 440], [790, 500]]);
+  // ---------------- points
+  B.point('hulldown', 480, 322, 1, 0, { snap: 25 });
+  B.point('hulldown', 600, 318, 1, 0.05, { snap: 25 });
+  B.point('hulldown', 230, 305, 0, 0.1, { snap: 25 });
+  B.point('hulldown', 780, 300, 2, -0.1, { snap: 25 });
+  B.point('brawl', 462, 462, 1);
+  B.point('sniper', 405, 336, 1, 0.05);
+  B.point('sniper', 560, 334, 1, -0.05);
+  B.point('sniper', 840, 306, 2, -0.3);
+  B.point('sniper', 95, 230, 0, 0.3);
+  B.point('brawl', 790, 455, 2);
+  B.point('brawl', 850, 490, 2);
+  B.point('brawl', 720, 470, 2);
+  B.point('scout', 500, 380, 1, 0);
+  B.point('scout', 300, 420, 0, 0.1);
+  B.point('bush', 640, 420, 2, -0.1);
+  B.point('bush', 250, 380, 0, 0);
+  B.point('flank', 168, 420, 0);
+  B.point('flank', 920, 400, 2);
   // ---------------- Krasny Put' kolkhoz (plan south half, mirror)
   B.building('silo', 760, 500, 0, 9, 9, 22, 1);                             // water tower on the axis
   B.both((T) => {
@@ -71,25 +90,6 @@ export function steppe(seed) {
     for (let i = 0; i < 10; i++) { const [a, b] = P(r.range(600, 900), r.range(150, 250)); if (B.free(a, b, 4)) { B.obj('haystack', a, b, 0, [2.6, 2, 2.6], 1); B.mark(a, b, 3.5, SOLID); } }
   });
   B.placePlan(B.streetPlan([[585, 500], [712, 500]], -1, { spacing: [14, 20], gap: 0.1, setback: 7, height: [5.5, 7.5], width: [9, 12] }), { garden: 0.6 });
-  // ---------------- points
-  B.point('hulldown', 480, 322, 1, 0, { snap: 25 });
-  B.point('hulldown', 600, 318, 1, 0.05, { snap: 25 });
-  B.point('hulldown', 230, 305, 0, 0.1, { snap: 25 });
-  B.point('hulldown', 780, 300, 2, -0.1, { snap: 25 });
-  B.point('hulldown', 500, 452, 1, 0, { snap: 18 });
-  B.point('sniper', 410, 250, 1, 0.1);
-  B.point('sniper', 560, 245, 1, -0.05);
-  B.point('sniper', 870, 215, 2, -0.35);
-  B.point('sniper', 95, 230, 0, 0.3);
-  B.point('brawl', 790, 455, 2);
-  B.point('brawl', 850, 490, 2);
-  B.point('brawl', 720, 470, 2);
-  B.point('scout', 500, 380, 1, 0);
-  B.point('scout', 300, 420, 0, 0.1);
-  B.point('bush', 640, 420, 2, -0.1);
-  B.point('bush', 250, 380, 0, 0);
-  B.point('flank', 168, 420, 0);
-  B.point('flank', 920, 400, 2);
   B.dressPointDefs();
   // ---------------- vegetation: shelterbelts, gully scrub, ridge bushes
   B.both((T) => {

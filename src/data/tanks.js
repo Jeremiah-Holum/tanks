@@ -33,7 +33,7 @@ function gun(name, cal, len, pen, dmg, v, reload, disp, aim, o = {}) {
   return base(name, cal, len, reload, disp, aim, o, [
     { type: 'AP', pen, dmg, v },
     prem,
-    { type: 'HE', pen: Math.round(cal / 2), dmg: Math.round(dmg * (cal >= 75 ? 1.45 : 1.33)), v: Math.round(v * 0.85), splash: +(0.3 + cal / 60).toFixed(2) },
+    { type: 'HE', pen: Math.round(cal / 2), dmg: Math.round(dmg * (cal >= 75 ? 1.45 : 1.33)), v: Math.round(v * 0.85), splash: +(0.5 + cal / 40).toFixed(2) },
   ]);
 }
 // Low-velocity howitzer ("derp"): shells[0] HEAT, [1] premium HEAT, [2] HE (the big one).
@@ -41,7 +41,7 @@ function how(name, cal, len, heat, heDmg, v, reload, disp, aim, o = {}) {
   return base(name, cal, len, reload, disp, aim, o, [
     { type: 'HEAT', pen: heat, dmg: Math.round(heDmg * 0.8), v },
     { type: 'HEAT', pen: Math.round(heat * 1.2), dmg: Math.round(heDmg * 0.8), v, gold: true },
-    { type: 'HE', pen: Math.round(cal / 2), dmg: heDmg, v, splash: +(0.6 + cal / 50).toFixed(2) },
+    { type: 'HE', pen: Math.round(cal / 2), dmg: heDmg, v, splash: +(0.8 + cal / 35).toFixed(2) },
   ]);
 }
 function base(name, cal, len, reload, disp, aim, o, shells) {
@@ -458,11 +458,14 @@ const LIST = [
 const PRICE = [0, 0, 3700, 38000, 135000, 360000, 915000, 1390000];
 const XP = [0, 0, 250, 1150, 3600, 11500, 26000, 49000];
 const DEP = { usa: -10, germany: -8, ussr: -5 };
-const CLS = { // camo still/moving, fire-camo keep, view base, terrain, dispersion factors, track mm
-  light:  { camo: [0.20, 0.20], view: 330, terrain: [0.8, 1.0, 1.8], d: [0.14, 0.14, 0.10] },
-  medium: { camo: [0.13, 0.10], view: 320, terrain: [0.9, 1.1, 2.0], d: [0.16, 0.16, 0.11] },
-  heavy:  { camo: [0.07, 0.035], view: 320, terrain: [1.1, 1.3, 2.3], d: [0.20, 0.20, 0.12] },
-  td:     { camo: [0.24, 0.14], view: 320, terrain: [1.0, 1.2, 2.1], d: [0.20, 0.20, 0.10] },
+// Per class: camo still/moving, view base, terrain resistance, dispersion factors [dMove, dHull,
+// dTurret]. The contract's formula divides km/h and deg/s by 10, so these are ~5× the numbers
+// WoT lists: a medium at 40 km/h blooms ~×3.4, a turret swinging at 40°/s ~×2.2.
+const CLS = {
+  light:  { camo: [0.20, 0.20], view: 330, terrain: [0.8, 1.0, 1.8], d: [0.7, 0.7, 0.45] },
+  medium: { camo: [0.13, 0.10], view: 320, terrain: [0.9, 1.1, 2.0], d: [0.8, 0.8, 0.5] },
+  heavy:  { camo: [0.07, 0.035], view: 320, terrain: [1.1, 1.3, 2.3], d: [1.0, 1.0, 0.55] },
+  td:     { camo: [0.24, 0.14], view: 320, terrain: [1.0, 1.2, 2.1], d: [1.0, 1.0, 0.45] },
 };
 const r2 = (x) => Math.round(x * 100) / 100;
 
@@ -495,7 +498,7 @@ function finish(d) {
   h.track.len ??= 0.96;
   t.roof ??= 10; t.traverse ??= null;
   t.mantlet ??= { t: Math.round(t.front.t * 1.1), w: r2(0.3 + d.guns[0].cal * 0.005), h: r2(0.22 + d.guns[0].cal * 0.0025), d: 0.12 };
-  d.look = { cupola: false, skirts: false, stowage: false, exhausts: 'rear', number: true, ...d.look };
+  d.look = { cupola: !(t.shape === 'open' || t.open || d.tier === 1), skirts: false, stowage: false, exhausts: 'rear', number: true, ...d.look };
   return d;
 }
 

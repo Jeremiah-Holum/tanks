@@ -52,8 +52,11 @@ function summary(S, r, def) {
       tile('shield', 'Blocked', fmt(s.blocked)),
       tile('skull', 'Destroyed', s.kills),
       tile('eye', 'Spotted', s.spotted),
-      tile('gun', 'Hits / shots', `${s.hits}/${s.shots}`, s.shots ? `${Math.round(s.hits / s.shots * 100)}% · ${s.pens} pen` : null),
-      tile('battle', 'Capture / defence', `${s.capture}/${s.defended}`)));
+      tile('gun', 'Hits / shots', `${s.hits}/${s.shots}`, s.shots ? `${Math.round(s.hits / s.shots * 100)}% accuracy` : null),
+      tile('target', 'Penetrations', s.pens),
+      tile('battle', 'Capture / defence', `${s.capture}/${s.defended}`),
+      tile('shield', 'Received', fmt(s.received)),
+      tile('clock', 'Battle time', `${Math.floor(r.duration / 60)}:${String(r.duration % 60).padStart(2, '0')}`)));
 
   const xl = r.xp.lines.map((l) => h('div.rs-line', h('span', LINE_LABEL[l.key] || l.key), h('b.xp', fmt(l.xp))));
   const cl = r.credits.lines.map((l) => h('div.rs-line', h('span', LINE_LABEL[l.key] || l.key), h('b', fmt(l.cr))));

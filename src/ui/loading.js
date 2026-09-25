@@ -52,9 +52,9 @@ export function buildLoading(S, battle, mapMeta) {
   const pt = meta.playerTeam ?? battle.teams.findIndex((t) => t.some((e) => e.player));
   const ally = battle.teams[pt] || battle.teams[0], enemy = battle.teams[1 - pt] || battle.teams[1];
   const tip = TIPS[(battle.seed || 0) % TIPS.length];
-  const row = (e, side) => h('div.ld-row' + (e.player ? '.me' : ''),
-    classIcon(e.def.cls, 13), h('span.ld-tier', roman(e.def.tier)), h('span.ld-tank', e.def.short || e.def.name),
-    h('span.ld-name', e.name), flag(e.def.nation, 'flag ld-flag'));
+  const row = (e) => h('div.ld-row' + (e.player ? '.me' : ''),
+    flag(e.def.nation, 'flag ld-flag'), h('span.ld-name', e.name), h('span.ld-tank', e.def.short || e.def.name),
+    h('span.ld-tier', roman(e.def.tier)), classIcon(e.def.cls, 13));
   const fill = h('i'), label = h('span.ld-plabel', 'Preparing battle…'), pctEl = h('span.ld-pct', '0%');
   const el = h('section.loading',
     h('div.ld-art', { html: contours((battle.seed || 1) + map.name.length, pal) }),

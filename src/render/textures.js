@@ -41,7 +41,20 @@ export function tileNoise(seed = 1) {
     }
     out.f1 = f1; out.f2 = f2; out.id = id; return out;
   };
-  return { vn, fbm, worley };
+  // tileable gradient noise (Perlin) in [0,1]: no axis-aligned blockiness
+  const gn = (x, y, P) => {
+    const xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi;
+    const g = (i, j, dx, dy) => { const a = hash3(((i % P) + P) % P, ((j % P) + P) % P, seed + 5) * Math.PI * 2; return Math.cos(a) * dx + Math.sin(a) * dy; };
+    const u = fx * fx * fx * (fx * (fx * 6 - 15) + 10), v = fy * fy * fy * (fy * (fy * 6 - 15) + 10);
+    const a = g(xi, yi, fx, fy), b = g(xi + 1, yi, fx - 1, fy), c = g(xi, yi + 1, fx, fy - 1), d = g(xi + 1, yi + 1, fx - 1, fy - 1);
+    return 0.5 + 0.75 * (a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v);
+  };
+  const gfbm = (u, v, P, oct = 4, gain = 0.5) => {
+    let s = 0, a = 1, n = 0;
+    for (let o = 0; o < oct; o++) { s += a * gn(u * P + o * 7, v * P + o * 3, P); n += a; a *= gain; P *= 2; }
+    return s / n;
+  };
+  return { vn, fbm, worley, gn, gfbm };
 }
 const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
 const sstep = (a, b, x) => { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); };
@@ -198,8 +211,8 @@ export function noiseTexture(S = 256) {
     const N = tileNoise(7), d = new Uint8Array(S * S * 4);
     for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
       const u = x / S, v = y / S, o = (y * S + x) * 4;
-      d[o] = N.fbm(u, v, 4, 5) * 255; d[o + 1] = N.fbm(u + 0.37, v + 0.71, 16, 4) * 255;
-      d[o + 2] = N.vn(u * 32, v * 32, 32) * 255; d[o + 3] = clamp01(N.worley(u, v, 8).f1) * 255;
+      d[o] = clamp01(N.gfbm(u, v, 4, 5)) * 255; d[o + 1] = clamp01(N.gfbm(u + 0.37, v + 0.71, 8, 5)) * 255;
+      d[o + 2] = clamp01(N.gn(u * 32, v * 32, 32)) * 255; d[o + 3] = clamp01(N.worley(u, v, 8).f1) * 255;
     }
     const t = new THREE.DataTexture(d, S, S, THREE.RGBAFormat);
     t.wrapS = t.wrapT = THREE.RepeatWrapping; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter;
@@ -333,16 +346,16 @@ export function grassAtlas(pal, key) {
         const x = ox + 12 + rnd() * 232, h = 90 + rnd() * 160, lean = (rnd() - 0.5) * 70, w = 3 + rnd() * 4;
         const col = pal.blade[(rnd() * pal.blade.length) | 0];
         const gr = g.createLinearGradient(0, Hh, 0, Hh - h);
-        gr.addColorStop(0, rgbs(col, 0.35)); gr.addColorStop(0.5, rgbs(col, 0.85)); gr.addColorStop(1, rgbs(col, 1.15));
+        gr.addColorStop(0, rgbs(col, 0.55)); gr.addColorStop(0.5, rgbs(col, 0.95)); gr.addColorStop(1, rgbs(col, 1.2));
         g.fillStyle = gr; g.beginPath(); g.moveTo(x - w, Hh);
         g.quadraticCurveTo(x - w * 0.5 + lean * 0.3, Hh - h * 0.6, x + lean, Hh - h);
         g.quadraticCurveTo(x + w * 0.5 + lean * 0.3, Hh - h * 0.6, x + w, Hh); g.fill();
       }
-      if (half === 1) for (let k = 0; k < 16; k++) {
+      if (half === 1) for (let k = 0; k < 6; k++) {
         const x = ox + 20 + rnd() * 216, y = Hh - 80 - rnd() * 150;
         g.strokeStyle = rgbs(pal.blade[0], 0.7); g.lineWidth = 2; g.beginPath(); g.moveTo(x, Hh); g.lineTo(x + (rnd() - 0.5) * 20, y); g.stroke();
         const fc = pal.flowers[(rnd() * pal.flowers.length) | 0];
-        for (let p = 0; p < 5; p++) { g.fillStyle = rgbs(fc, 0.9 + rnd() * 0.2); g.beginPath(); g.arc(x + Math.cos(p * 1.26) * 5, y + Math.sin(p * 1.26) * 5, 4, 0, 7); g.fill(); }
+        for (let p = 0; p < 5; p++) { g.fillStyle = rgbs(fc, 0.9 + rnd() * 0.2); g.beginPath(); g.arc(x + Math.cos(p * 1.26) * 3.5, y + Math.sin(p * 1.26) * 3.5, 3, 0, 7); g.fill(); }
         g.fillStyle = 'rgb(220,180,40)'; g.beginPath(); g.arc(x, y, 3, 0, 7); g.fill();
       }
     }
@@ -408,7 +421,11 @@ export function buildingAtlas() {
     };
     const shade = (c0, k) => [c0[0] * k, c0[1] * k, c0[2] * k];
     cell(0, (u, v) => shade([214, 200, 172], 0.82 + 0.2 * N.fbm(u, v, 4, 5) + 0.06 * N.vn(u * 128, v * 128, 128)));
-    cell(1, (u, v) => { const s = N.fbm(u, v, 3, 5); const pat = sstep(0.62, 0.66, N.fbm(u + 0.2, v, 5, 4)); return shade(mix3([196, 190, 178], [150, 132, 110], pat * 0.8), 0.8 + 0.25 * s); });
+    cell(1, (u, v) => { // weathered lime wash with a few spalled patches showing stone
+      const s = N.gfbm(u, v, 3, 5), pat = sstep(0.74, 0.78, N.gfbm(u + 0.2, v, 4, 5));
+      const streak = 0.94 + 0.06 * N.vn(u * 40, v * 3, 40);
+      return shade(mix3([200, 194, 182], [150, 136, 116], pat * 0.7), (0.82 + 0.2 * s) * streak);
+    });
     cell(2, (u, v) => { // brick: 8 courses per tile, 4 bricks per course
       const row = Math.floor(v * 16), off = (row % 2) * 0.125, bu = (u + off) * 4, bi = Math.floor(bu);
       const mortar = (v * 16 % 1) < 0.14 || (bu % 1) < 0.05;
@@ -445,7 +462,11 @@ export function buildingAtlas() {
     });
     cell(11, (u, v) => { const w = N.worley(u, v, 10); return shade(mix3([130, 120, 108], [160, 90, 70], w.id > 0.75 ? 1 : 0), (0.55 + 0.5 * (1 - w.f1)) * (0.8 + 0.3 * N.fbm(u, v, 8, 3))); });
     cell(12, (u, v) => shade([196, 168, 96], 0.6 + 0.55 * N.vn(u * 90, v * 12, 90) * (0.7 + 0.3 * N.fbm(u, v, 8, 3))));
-    cell(13, (u, v) => { const r = N.fbm(u, v, 6, 5); return shade(mix3([70, 70, 72], [128, 72, 40], sstep(0.4, 0.7, r)), 0.8 + 0.3 * N.vn(u * 64, v * 64, 64)); });
+    cell(13, (u, v) => { // corrugated, weathered sheet metal (ribs along v)
+      const rib = 0.75 + 0.25 * Math.sin(u * 16 * Math.PI * 2), r = N.gfbm(u, v, 4, 5);
+      const rust = sstep(0.55, 0.8, r) * 0.55 + sstep(0.7, 0.95, N.gfbm(u, v * 0.3, 8, 3)) * 0.3;
+      return shade(mix3([96, 98, 100], [118, 76, 52], rust), rib * (0.85 + 0.2 * N.vn(u * 64, v * 16, 64)));
+    });
     cell(14, (u, v) => shade([160, 158, 150], 0.78 + 0.2 * N.fbm(u, v, 6, 5) + 0.06 * N.vn(u * 200, v * 200, 200)));
     cell(15, (u, v) => { // natural boulder surface
       const big = N.fbm(u, v, 3, 5), w = N.worley(u, v, 5), crack = sstep(0.06, 0.0, w.f2 - w.f1);

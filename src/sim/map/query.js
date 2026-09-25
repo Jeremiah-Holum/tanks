@@ -176,7 +176,7 @@ export function raycastTerrain(map, o, d, maxT = 1000) {
 
 function index(map) {
   let q = map._q;
-  if (q && q.objects === map.objects && q.count === map.objects.length && q.heights === map.heights) return q;
+  if (q && q.objects === (map.objects || q.objects) && q.count === (map.objects ? map.objects.length : 0) && q.heights === map.heights) return q;
   q = buildIndex(map);
   Object.defineProperty(map, '_q', { value: q, writable: true, configurable: true, enumerable: false });
   return q;
@@ -218,7 +218,7 @@ function buildIndex(map) {
     cellMax[j * cn + i] = m; if (m > maxH) maxH = m;
   }
   const solids = [], foliage = [], bridges = [];
-  const objs = map.objects;
+  const objs = map.objects || [];
   for (const o of objs) {
     for (const p of objectParts(o)) solids.push(p);
     const f = foliagePart(o); if (f) foliage.push(f);

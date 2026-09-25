@@ -212,7 +212,13 @@ point, targetId) → {plate, eff, chance}` (reticle colour) and `visibleTo(world
   `treeFall{obj, dir}` · `objectBreak{obj}` · `ram{a, b, dmg}` · `capture{team, points}` ·
   `consumable{tank, kind}` · `reloaded{tank}` · `end{result}`.
   (PM rulings: `capture.team` is the team that OWNS the base being captured. Tank also exposes
-  `throttle` (−1..1, the last applied control) for engine audio. Magazine guns: see docs/notes/sim.md.)
+  `throttle` (−1..1, the last applied control) for engine audio. Magazine guns: see docs/notes/sim.md.
+  Accepted SIM deviations: event kind is `e.type`, so a shell's type is `e.shellType`; `steer +1` = turn
+  right; `tankMatrix` returns a column-major 16-array (three.js `Matrix4.fromArray`); dispersion
+  factors are scaled ~5× vs the example numbers; no friendly damage but shells stop on allies;
+  `armor.cupola` is a weak-spot piece that the renderer must draw from its own planes.
+  MAPS additions: `foliageAlong → {amount, nearTarget, far}`, `heightAt` includes bridge decks
+  (`terrainHeightAt` = bare ground), `map.play` = red-line bounds, A* in `src/sim/map/nav.js`.)
 
 Performance budget: `stepBattle` under 2 ms average with 30 tanks in node (the AI is separate).
 Tests: `tools/rules-test.mjs` (rewrite it): armour cases (Tiger front vs 75 mm AP at 100 m

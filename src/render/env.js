@@ -26,9 +26,9 @@ const SUMMER = {
     flowers: [[240, 240, 232], [232, 204, 64], [176, 92, 168], [210, 70, 56]],
     bare: false,
   },
-  sky: { zenith: [0.16, 0.34, 0.78], horizon: [0.78, 0.84, 0.92], sun: [1.0, 0.86, 0.68], sunI: 3.4, elev: 24, azim: 235,
-    fog: 1 / 1700, haze: 0.9, clouds: 0.46, ground: [0.24, 0.24, 0.16], exposure: 1.0, env: 0.55 },
-  grassDensity: 1,
+  sky: { zenith: [0.16, 0.34, 0.78], horizon: [0.78, 0.84, 0.92], sun: [1.0, 0.85, 0.66], sunI: 4.2, elev: 24, azim: 235,
+    fog: 1 / 1700, haze: 0.9, clouds: 0.46, ground: [0.24, 0.24, 0.16], exposure: 1.0, env: 0.42 },
+  grassDensity: 1, cropMix: 1,
 };
 function variant(base, over) {
   const o = JSON.parse(JSON.stringify(base));
@@ -42,20 +42,21 @@ export const THEMES = {
     foliage: { leaf: [[168, 92, 30], [196, 132, 40], [132, 60, 26], [150, 128, 44], [110, 96, 40]], leaf2: [[206, 160, 50], [180, 120, 40], [150, 136, 56]],
       blade: [[112, 104, 50], [132, 116, 58], [150, 130, 70], [96, 92, 44]], flowers: [[200, 170, 90]] },
     sky: { zenith: [0.2, 0.34, 0.66], horizon: [0.86, 0.8, 0.72], sun: [1.0, 0.78, 0.54], sunI: 3.0, elev: 18, fog: 1 / 1300, clouds: 0.56 },
+    cropMix: 0.45,
   }),
   winter: variant(SUMMER, {
     ground: { grass: [[150, 150, 130], [176, 176, 160], [140, 132, 110], [130, 134, 120], [200, 200, 190]], field: [[210, 214, 222], [170, 170, 176], [226, 230, 238], [196, 200, 210]], fieldCover: 0.6,
       dirt: [[110, 100, 90], [90, 84, 78], [150, 146, 140]], road: [[168, 164, 160], [140, 136, 132], [200, 200, 204]] },
     foliage: { needle: [[30, 46, 34], [40, 58, 44], [150, 160, 170]], bare: true, blade: [[160, 156, 130], [180, 176, 150]], flowers: [[230, 230, 230]] },
     sky: { zenith: [0.3, 0.42, 0.66], horizon: [0.84, 0.86, 0.9], sun: [1.0, 0.9, 0.8], sunI: 2.4, elev: 14, fog: 1 / 1100, clouds: 0.62, ground: [0.6, 0.62, 0.66], env: 0.75 },
-    grassDensity: 0.25,
+    grassDensity: 0.25, cropMix: 0,
   }),
   desert: variant(SUMMER, {
     ground: { grass: [[150, 136, 86], [168, 152, 98], [182, 160, 106], [132, 124, 76], [196, 180, 120]], field: [[176, 150, 108], [150, 126, 90], [186, 164, 100], [200, 178, 116]], fieldCover: 0.3,
       dirt: [[160, 128, 90], [136, 108, 76], [188, 170, 140]], sand: [[214, 190, 144], [196, 170, 124]] },
     foliage: { leaf: [[96, 104, 60], [118, 122, 72], [80, 88, 50]], leaf2: [[120, 124, 70], [100, 108, 60]], blade: [[150, 140, 80], [170, 156, 96]] },
     sky: { zenith: [0.22, 0.4, 0.74], horizon: [0.92, 0.86, 0.76], sun: [1.0, 0.88, 0.7], sunI: 3.8, elev: 30, fog: 1 / 1500, clouds: 0.25, ground: [0.4, 0.34, 0.24] },
-    grassDensity: 0.35,
+    grassDensity: 0.35, cropMix: 0.6,
   }),
 };
 export function themeOf(map) {

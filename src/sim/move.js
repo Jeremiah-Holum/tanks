@@ -34,6 +34,7 @@ export function moveTank(world, t, c, dt) {
   const res = Math.min(4, resistanceAt(map, def, t.pos.x, t.pos.z));
   const vF = def.speed / 3.6 * m.top, vR = def.reverse / 3.6 * m.top;
   let th = m.mobile ? Math.max(-1, Math.min(1, c.throttle || 0)) : 0;
+  t.throttle = t.alive ? Math.max(-1, Math.min(1, c.throttle || 0)) : 0; // last applied control (audio: engine load)
   let v = t.speed;
   const P = def.power * 745.7 * m.power, mass = def.mass * 1000;
   const slopeA = G * Math.sin(t.pitch) * Math.cos(t.roll);   // pitch > 0 nose up: pulls backwards

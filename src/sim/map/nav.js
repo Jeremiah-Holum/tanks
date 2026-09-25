@@ -1,7 +1,7 @@
 // Navigation grid helpers: building map.nav from the terrain / ground / props, and A*.
 // nav = { cell: 8, cols, rows, cost: Float32Array } with cost ≥ 0.8 per metre, Infinity = wall.
 import { OBJECT_KINDS, GROUND, objectParts, BOX, CYL, ELL } from './objects.js';
-import { terrainHeightAt, bridgeAt, heightAt } from './query.js';
+import { bridgeAt, heightAt } from './query.js';
 
 export const NAV_CELL = 8;
 export const MAX_SLOPE = 30;           // degrees: steeper nav cells are impassable

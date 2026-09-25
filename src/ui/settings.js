@@ -27,6 +27,8 @@ export function buildSettings(S) {
   const pages = {
     graphics: () => [
       row('Graphics quality', seg('quality', [['auto', 'Auto'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High']]), 'Auto picks a preset from your GPU and adapts to the frame rate.'),
+      row('Render resolution', slider('renderScale', 0.5, 1, 0.05, pctf), 'Lower it for more frames per second on slow GPUs.'),
+      row('Field of view', slider('fov', 55, 95, 1, (v) => v + '°'), 'Arcade camera, vertical.'),
       row('Show FPS counter', toggle('showFps')),
       row('Minimap size', seg('minimap', [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']]), 'Press M in battle to toggle.')],
     controls: () => [
