@@ -35,6 +35,7 @@ function resolvePaint(def, paint) {
   if (paint && typeof paint === 'object') return { base: paint.base ?? paint.color ?? 0x55583a, camoA: paint.camoA, camoB: paint.camoB };
   if (typeof paint === 'number') return { base: paint };
   if (typeof paint === 'string' && PAINTS[paint]) return PAINTS[paint];
+  if (typeof paint === 'string' && paint[0] === '#') return { base: parseInt(paint.slice(1), 16) };
   let key = NATION_PAINT[def.nation] || 'olive';
   if (def.nation === 'germany' && (def.look?.camo ?? def.tier >= 5)) key = 'dunkelgelb_camo';
   if (def.nation === 'germany' && def.look?.camo === false) key = 'dunkelgelb';
@@ -493,7 +494,7 @@ function dims(def) {
     h, t, tr, arm, pc, top, trackTop, fullW: h.W + 2 * tr.w, xT: h.W / 2 + tr.w / 2,
     noseY: h.clr + h.H * (1 - h.upper.frac), frontZ, rearZ, sideX, tFrontZ, tRearZ, tSideX,
     upperFront: up[0], turretPos: arm.turretPos, nation: def.nation,
-    fixed: t.shape === 'casemate', open: t.shape === 'open', cast: t.shape === 'cast',
+    fixed: t.shape === 'casemate', open: t.shape === 'open' || !!t.open, cast: t.shape === 'cast',
     dirtH: Math.max(0.7, trackTop * 0.95),
   };
 }
@@ -599,7 +600,7 @@ function resample(pts, step, closed) {
 
 // Track band along a (z,y) path, x ∈ [x0, x1]. Outer face textured (links), inner face too.
 function trackBand(gb, path, closed, x0, x1, pitch, variant, side, lod) {
-  const { pts, total } = resample(path, lod ? 0.28 : 0.06, closed);
+  const { pts, total } = resample(path, lod ? 0.4 : 0.06, closed);
   if (closed) pitch = total / Math.max(1, Math.round(total / pitch));
   gb.st = { ...ST.link, kind: 2, e2: pitch, c: WHITE, dirtK: 0.55 };
   const n = pts.length;
@@ -637,11 +638,8 @@ function wheel(gb, kind, xc, y, z, R, w, side, lod, nation) {
   const m = M(xc, y, z, 0, 0, 0, side, 1, 1);
   const o = w / 2;
   const P = spinSt(ST.paint, y, z, R), S = spinSt(ST.steel, y, z, R), Rb = spinSt(ST.rubber, y, z, R), Dk = spinSt(ST.dark, y, z, R);
-  const seg = lod ? 8 : kind === 'roller' ? 10 : 18;
-  if (lod) {
-    gb.lathe([[0, o, P], [R * 0.78, o, Rb], [R, o - 0.02, Rb], [R, -o, null]], seg, m);
-    return;
-  }
+  const seg = lod ? 7 : kind === 'roller' ? 10 : 18;
+  if (lod) { gb.lathe([[0, o, P], [R, o, Rb], [R, -o, null]], seg, m); return; }
   if (kind === 'road' || kind === 'roller') {
     gb.lathe([
       [0, o + 0.045, S], [R * 0.11, o + 0.045, S], [R * 0.14, o + 0.012, P], [R * 0.46, o - 0.025, P], [R * 0.72, o - 0.012, P],
@@ -762,6 +760,20 @@ function hullDetails(gb, D, G, def, info) {
     gb.st = ST.cast; gb.lathe([[0, 0.1], [0.07, 0.085], [0.11, 0.03], [0.12, -0.02]], 12, M(p[0], p[1], p[2], 0, -Math.PI / 2, 0));
     gb.st = ST.dark; gb.cyl(M(p[0], p[1], p[2] + 0.22, Math.PI / 2, 0, 0, 0.018, 0.3, 0.018), null, 6);
   }
+  // --- T-28 style machine-gun turrets, M3 Lee style sponson gun
+  if (look.miniTurrets) {
+    for (const s of [1, -1].slice(0, look.miniTurrets)) {
+      const x = s * W * 0.3, z = zRoofF - 0.55;
+      gb.st = ST.paint; gb.lathe([[0, 0.5], [0.3, 0.5], [0.36, 0.42], [0.38, 0]], 14, M(x, top, z, 0, 0, Math.PI / 2));
+      gb.st = ST.dark; gb.cyl(M(x, top + 0.25, z + 0.55, Math.PI / 2, 0, 0, 0.025, 0.4, 0.025), null, 6);
+    }
+  }
+  if (look.sponsonGun) {
+    const y = top - 0.38, x = -(halfTop - 0.28), z = D.frontZ(y) - 0.25;
+    gb.st = ST.cast;
+    gb.lathe([[0, 0.3], [0.3, 0.28], [0.36, 0.1], [0.36, -0.35]], 14, M(x, y, z, 0, -Math.PI / 2, 0));
+    gb.st = ST.paint; gb.lathe([[0.045, 2.3], [0.055, 2.3], [0.07, 0.6], [0.1, 0.55], [0.1, 0.2], [0, 0.2]], 10, M(x, y, z, 0, -Math.PI / 2, 0));
+  }
   // --- headlights
   const lights = nation === 'usa' ? [1, -1] : [1];
   for (const s of lights) {
@@ -881,33 +893,54 @@ function suspension(gb, G, xs, side, lod) {
 }
 
 // ------------------------------------------------------------------ turret details
+// Commander's cupola = armor.cupola's octagonal prism (drawn down a little further so it meets a
+// rounded cast roof), a dark vision-slit band and a hatch lid.
+function cupola(gb, D, lod) {
+  const cup = D.arm.cupola;
+  if (!cup) return;
+  const H = D.t.H, [cx, , cz] = cup.c, r = cup.r, hc = cup.h;
+  const planes = cup.planes.map((p) => (p.plate === 'cupola.floor' ? { ...p, d: -(H - 0.22) } : p));
+  gb.st = D.cast ? ST.cast : ST.paint;
+  const faces = solidFaces(planes);
+  for (const f of faces) if (f.plane.n[1] > -0.5) gb.plate(f.verts, f.plane.n, lod ? 0 : 0.015, 0.6, !lod);
+  if (lod) return;
+  gb.st = ST.dark; // vision slits
+  for (const f of faces) {
+    const n = f.plane.n;
+    if (Math.abs(n[1]) > 0.5) continue;
+    const t = [-n[2], 0, n[0]], half = r * Math.tan(Math.PI / 8) * 0.8, c = [cx + n[0] * (r + 0.003), H + hc * 0.55, cz + n[2] * (r + 0.003)];
+    const P = (a, b) => V.add(c, V.add(V.mul(t, a * half), [0, b * 0.025, 0]));
+    const ids = [P(-1, -1), P(1, -1), P(1, 1), P(-1, 1)].map((p) => gb.v(p[0], p[1], p[2], n[0], n[1], n[2]));
+    gb.quad(ids[0], ids[1], ids[2], ids[3], n);
+  }
+  gb.st = ST.paint; // hatch lid
+  gb.lathe([[0, 0.03], [r * 0.78, 0.03], [r * 0.82, 0]], 16, M(cx, H + hc, cz, 0, 0, Math.PI / 2));
+  gb.st = ST.steel; gb.box(M(cx, H + hc + 0.03, cz - r * 0.75, 0, 0, 0, 0.14, 0.05, 0.06));
+}
 function turretDetails(gb, D, def) {
   const { t, nation } = D;
   const H = t.H, zo = t.zOff || 0;
   const roofY = H;
   const look = def.look || {};
-  const cupSide = look.cupola === 'right' ? -1 : look.cupola === 'center' ? 0 : look.cupola === 'left' ? 1 : nation === 'usa' ? -1 : 1;
+  const cupSide = D.arm.cupola ? Math.sign(D.arm.cupola.c[0]) : look.cupola === 'right' ? -1 : look.cupola === 'center' ? 0 : look.cupola === 'left' ? 1 : nation === 'usa' ? -1 : 1;
   const Wr = D.tSideX(H) * 2, zF = D.tFrontZ(H), zR = D.tRearZ(H);
   const Lr = zF - zR;
   if (D.open) return;
-  // --- commander's cupola
-  if (look.cupola !== false) {
-    const r = clamp(Wr * 0.17, 0.24, 0.36), cx = cupSide * Math.max(0, Wr / 2 - r - 0.08), cz = zR + Lr * 0.3;
-    const m = M(cx, roofY, cz, 0, 0, Math.PI / 2);
-    const hc = nation === 'germany' ? 0.24 : 0.18;
-    gb.lathe([[0, hc + 0.02, ST.cast], [r * 0.95, hc + 0.02], [r, hc], [r + 0.015, hc * 0.6, ST.dark], [r + 0.02, hc * 0.35, ST.cast], [r + 0.03, 0, null]], 18, m);
-    gb.st = ST.paint; gb.lathe([[0, 0.03], [r * 0.85, 0.03], [r * 0.9, 0]], 16, M(cx, roofY + hc + 0.02, cz, 0, 0, Math.PI / 2));
-    if (nation === 'usa') { // vision blocks around the ring
+  // --- commander's cupola: drawn from the armour's cupola solid (a weak-spot hitbox)
+  const cup = D.arm.cupola;
+  if (cup) {
+    const [cx, , cz] = cup.c, r = cup.r, hc = cup.h;
+    cupola(gb, D, 0);
+    if (nation === 'usa') { // vision blocks around the ring + .50 cal on a pintle
       gb.st = ST.dark;
-      for (let k = 0; k < 6; k++) { const a = k / 6 * Math.PI * 2; gb.box(M(cx + Math.cos(a) * r * 0.85, roofY + hc + 0.03, cz + Math.sin(a) * r * 0.85, 0, -a, 0, 0.08, 0.08, 0.1)); }
-      // .50 cal on a pintle
-      const mx = cx - cupSide * 0.05, mz = cz - r - 0.1;
+      for (let k = 0; k < 6; k++) { const a = k / 6 * Math.PI * 2; gb.box(M(cx + Math.cos(a) * r * 0.72, roofY + hc + 0.035, cz + Math.sin(a) * r * 0.72, 0, -a, 0, 0.07, 0.07, 0.09)); }
+      const mx = cx - Math.sign(cx || 1) * 0.02, mz = cz - r - 0.12;
       gb.st = ST.steel; gb.cyl(M(mx, roofY + 0.25, mz, 0, 0, 0, 0.025, 0.5, 0.025), null, 6);
       gb.st = ST.dark; gb.box(M(mx, roofY + 0.52, mz + 0.1, 0, 0, 0, 0.1, 0.12, 0.42));
       gb.cyl(M(mx, roofY + 0.54, mz + 0.85, Math.PI / 2, 0, 0, 0.022, 1.05, 0.022), null, 6);
       gb.st = ST.paint; gb.box(M(mx + 0.1, roofY + 0.48, mz + 0.05, 0, 0, 0, 0.1, 0.14, 0.2));
     } else if (nation === 'ussr') {
-      gb.st = ST.dark; gb.box(M(cx, roofY + hc + 0.08, cz + r * 0.3, 0, 0, 0, 0.12, 0.1, 0.14));
+      gb.st = ST.dark; gb.box(M(cx, roofY + hc + 0.07, cz + r * 0.3, 0, 0, 0, 0.12, 0.1, 0.14));
     }
   }
   // --- loader hatch + periscopes
@@ -1175,7 +1208,11 @@ function buildGeometry(def, lod, gunIndex) {
     const tg = lod ? hullGb : new GB(0, D.dirtH), wg = lod ? hullGb : new GB(0, D.dirtH);
     const xs = D.xT;
     trackBand(tg, G.loop, true, side > 0 ? xs - D.tr.w / 2 : -xs - D.tr.w / 2, side > 0 ? xs + D.tr.w / 2 : -xs + D.tr.w / 2, G.pitch, G.variant, side, lod);
-    for (const w of G.wheels) wheel(wg, 'road', side * (xs + w.x), w.y, w.z, w.r, w.w, side, lod, D.nation);
+    for (const w of G.wheels) {
+      if (lod && G.style === 'hvss' && w.x < 0) continue; // twin wheels → one wide wheel far away
+      if (lod && G.style === 'hvss') wheel(wg, 'road', side * xs, w.y, w.z, w.r, D.tr.w * 0.75, side, lod, D.nation);
+      else wheel(wg, 'road', side * (xs + w.x), w.y, w.z, w.r, w.w, side, lod, D.nation);
+    }
     wheel(wg, 'sprocket', side * xs, G.yS, G.zS, G.Rs, D.tr.w * 0.8, side, lod, D.nation);
     wheel(wg, 'idler', side * xs, G.yI, G.zI, G.Ri, D.tr.w * 0.6, side, lod, D.nation);
     if (!lod) for (const r of G.rollers) wheel(wg, 'roller', side * (xs + r.x), r.y, r.z, r.r, r.w, side, lod, D.nation);
@@ -1205,7 +1242,7 @@ function buildGeometry(def, lod, gunIndex) {
   }
   if (D.open && !lod) openTurret(turGb, tFaces, D);
   if (!lod) turretDetails(turGb, D, def);
-  else if (!D.open) { const r = 0.28, cz = D.tRearZ(D.t.H) + 0.5; turGb.st = ST.paint; turGb.cyl(M((D.nation === 'usa' ? -1 : 1) * D.tSideX(D.t.H) * 0.45, D.t.H + 0.09, cz, 0, 0, 0, r, 0.18, r), null, 8); }
+  else cupola(turGb, D, 1);
   turretMarkings(turGb, tFaces, D);
   // mantlet (yaws with the gun, doesn't pitch — it's the hitbox)
   let mantlet = null;
