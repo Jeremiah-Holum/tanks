@@ -7,7 +7,8 @@ contract, and `docs/notes/*.md` holds each area's detailed notes.
 ## What this is
 The repo started as "Toy Tanks", a Wii-Tanks-style toy game, and was rebuilt in one session into
 **Steel Front**. It's a single-player, browser World of Tanks–style game:
-- 47 WWII tanks (USA / Germany / USSR, tiers I–VII, light/medium/heavy/TD)
+- 59 tanks (USA / Germany / USSR, tiers I–X, light/medium/heavy/TD): WWII up to tier VII, post-war / early
+  Cold War at VIII–X (Patton line, Leopard line, T-44 → T-62A, plus the M103, Tiger II and IS-3)
 - four 1 km maps
 - 15v15 (or 7v7) random battles against bots
 - a garage → tech tree → research → buy → battle → results loop
@@ -20,12 +21,12 @@ acceptance.
 ## State: playable end to end ✅
 | Check | Result |
 |---|---|
-| `node tools/rules-test.mjs` | 95/95 (armour, ballistics, dispersion, spotting, capture, respawn, regressions) |
+| `node tools/rules-test.mjs` | 100/100 (armour, ballistics, dispersion, spotting, capture, respawn, regressions, tier VIII–X armour) |
 | `node tools/maps-test.mjs` | 1356/1356 (4 maps, nav, spawns, fairness, raycasts) |
-| `node tools/meta-test.mjs` | 65/65 (economy, research, matchmaker, results, lineup) |
-| `node tools/battle-sim.mjs` | 64 bot battles: median 6.5 min, 3% time-outs, 29:33 wins, 2/1920 stuck |
-| `tools/capped.sh -- node tools/verify.mjs low` / `medium` | low 20/20 (2026-09-26, Windows, system Chrome; adds lineup + respawn + two-tank results); medium 18/18 before the lineup: full flow by real input, zero console errors |
-| `node tools/build.mjs` | `dist/` ≈ 1.17 MB, fully static |
+| `node tools/meta-test.mjs` | 75/75 (economy, research, matchmaker, results, lineup, tiers VIII–X) |
+| `node tools/battle-sim.mjs` | 64 bot battles: median 6.5 min, 3% time-outs, 29:33 wins, 2/1920 stuck. Tier VIII–X: `--tiers 9,10 --n 2` 8 battles, `--tiers 7,8 --n 1` 4 battles, no errors, 1 stuck tank (kolvik), pens 68–85% of hits for every new tank |
+| `tools/capped.sh -- node tools/verify.mjs low` / `medium` | low 20/20 (2026-09-26, Windows, system Chrome, after the tier VIII–X roster); medium 18/18 before the lineup: full flow by real input, zero console errors |
+| `node tools/build.mjs` | `dist/` ≈ 1.2 MB, fully static |
 
 What works:
 - **Garage:** 3D hangar and carousel, a tech tree per nation, research and buy, gun modules,
@@ -63,6 +64,36 @@ Owner request: "lineup limited to 2 tanks, buy more spots, respawn with a tank w
 - Headless tools on Windows: `tools/lib-browser.mjs` now falls back to a node static server (no python3) and to the
   installed Chrome / Edge when Playwright's Chromium isn't installed (`SF_CHANNEL=chrome|msedge` forces one).
 
+## Post-war tiers VIII–X (2026-09-26)
+Owner request: "more tanks… more modern… maybe 3–4 per tech tree". Twelve tanks continue the tier VII lines:
+| nation | VIII | IX | X |
+|---|---|---|---|
+| USA | M46 Patton (MT, from T20), M103 (HT, from T29) | M48 Patton (MT) | M60 (MT) |
+| Germany | Indien-Panzer (MT, from Panther), Tiger II (HT, from Tiger) | Leopard Prototyp A (MT) | Leopard 1 (MT) |
+| USSR | T-44 (MT, from T-43), IS-3 (HT, from IS) | T-54 (MT) | T-62A (MT) |
+- Stats in the WoT spirit (docs/notes/sim.md "Tiers VIII–X"): hp 1450–1950, top guns 190–270 mm AP (APCR/APDS or
+  HEAT premium), 240–400 damage, SPREAD 0.6 as everywhere. Identities: Pattons = good gun and depression, soft
+  turret cheeks; Leopards = 65 km/h, the most accurate guns, thin armour (glass cannon); Soviets = strong domed
+  turrets, weaker hulls, −5° depression; heavies = strong fronts with weak lower plates.
+- Armour vocabulary (src/sim/armor.js): optional `turret.crown = { h, a, k }` adds a flatter band round the top of
+  every wall (dome turrets, Leopard 1's wedge turret); `turretSection(t, y)` gives the turret's cross-section for
+  the gun pivot, cupola and roof details. The model is built from the same planes, so model = hitbox; the armour
+  inspector shows the crown plates.
+- Models (src/render/tankModel.js): `track.rollers` (0 = big road wheels without return rollers, T-44/54/62),
+  `gun.evacuator` position, `look.searchlight` ('top' | 'left' | 'right'), `look.basket` (US turret bustle rack),
+  paint 'gelboliv' for the Bundeswehr tanks, no wartime slogans on post-war Soviet hulls. 17–25k triangles near.
+  Screenshots: shots/tanks/new_grid.png and shots/tanks/<id>.png.
+- Economy: price / research XP tiers VIII–X = 2.45M / 82k, 3.55M / 140k, 6.1M / 215k; TARGET_BATTLES 45 / 55 / 65
+  for VII / VIII / IX; tier X rates extrapolated. Progression sim: tier VIII ≈ 140, IX ≈ 198, X ≈ 270 battles.
+- Matchmaker and AI needed no changes (they read MAX_TIER and the roster); module hp per tier (TIER_DMG) extended.
+  Tech tree: ten columns (min 112 px each, scrolls sideways on narrow windows, tier numerals scroll with it).
+- Tools: `battle-sim.mjs --tiers lo,hi` (anchor tier range + a per-vehicle table); shot-tanks / shot-ui now use
+  lib-browser's node server + system Chrome fallback.
+- Decisions made without the owner: 4 tanks per nation (3 mediums + 1 heavy) rather than new TD/LT lines; tier IX–X
+  battles are all mediums plus tier VIII heavies; the Tiger II is WWII but is the natural heavy after the Tiger;
+  the T-62A follows WoT's naming (100 mm D-54TS stock, 115 mm U-5TS top gun); premium rounds use the existing APCR
+  (as APDS / APFSDS) and HEAT shell types, no new mechanics.
+
 ## Not verified
 - **Real-GPU performance.** All browser testing ran on SwiftShader (CPU rendering). Budgets are
   sized for 60 fps on medium at 1080p on a mid-range GPU (≈100–160 draw calls, ~1.1 M triangles),
@@ -97,8 +128,8 @@ Owner request: "lineup limited to 2 tanks, buy more spots, respawn with a tank w
    - Gun depression over the rear deck isn't modelled, and HEAT doesn't lose pen after spaced armour.
    - A gun pivot buried underground on a steep crest isn't handled.
    - The track hitbox tapers the wrong way.
-7. **Content ideas:** more maps (a generator per map in `src/sim/map/`), premium tanks, tier
-   VIII+, encounter mode, crew skills, and artillery.
+7. **Content ideas:** more maps (a generator per map in `src/sim/map/`), premium tanks, TDs / lights / heavies at
+   tiers IX–X, encounter mode, crew skills, and artillery.
 8. **Deploy:** `deploy.sh` still copies to the old toy-tanks path on the original server. Point
    it at the new site before deploying.
 
@@ -113,7 +144,7 @@ Owner request: "lineup limited to 2 tanks, buy more spots, respawn with a tank w
 
 ## Map of the code
 ```
-src/data/tanks.js      roster (47 tanks), nations, research tree
+src/data/tanks.js      roster (59 tanks), nations, research tree
 src/sim/               deterministic sim: armor, tank, move, gunnery, ballistics, damage, spotting, battle
 src/sim/map/           4 map generators + terrain/object queries + nav/A*
 src/sim/ai/            bot brains (team plan, pathing, combat)

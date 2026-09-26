@@ -1,7 +1,7 @@
 # Steel Front
 
-A single-player, browser World of Tanks–style game: real WWII tanks (USA, Germany, USSR, tiers
-I–VII), 1 km outdoor battlefields, WoT aiming, armour and ballistics, 15 vs 15 random battles
+A single-player, browser World of Tanks–style game: real WWII and early Cold War tanks (USA, Germany,
+USSR, tiers I–X: 59 tanks), 1 km outdoor battlefields, WoT aiming, armour and ballistics, 15 vs 15 random battles
 against bots, and a garage / tech tree / XP / credits progression loop. Desktop, mouse and
 keyboard, three.js, no server, no binary assets.
 

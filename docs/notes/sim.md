@@ -3,7 +3,7 @@
 ## What exists
 | file | what |
 |---|---|
-| `src/data/tanks.js` | 47 tanks: USA 16, Germany 15, USSR 16, tiers I–VII, all four classes per nation, a TD/medium/heavy at VII for every nation. `TANKS`, `NATIONS`, `TREE` (`[{from,to,xp}]`), plus `CLASSES`, `TIER_ROMAN`, `STARTERS`, `tanksOf(nation)`. `finish()` fills price/xp by tier, camo by class and height, view, terrain, dispersion factors, shells, mantlet/track defaults. |
+| `src/data/tanks.js` | 59 tanks: USA 20, Germany 19, USSR 20, tiers I–X (post-war VIII–X, see "Tiers VIII–X" below), all four classes per nation, a TD/medium/heavy at VII for every nation. `TANKS`, `NATIONS`, `TREE` (`[{from,to,xp}]`), plus `CLASSES`, `TIER_ROMAN`, `STARTERS`, `tanksOf(nation)`. `finish()` fills price/xp by tier, camo by class and height, view, terrain, dispersion factors, shells, mantlet/track defaults. |
 | `src/sim/armor.js` | seed API kept (`buildArmor`, `solidFaces`, `rayConvex`, `rayBox`). Added: `open: true` on a casemate (open-topped fighting compartment), `armor.cupola`, a `gun` module box (the breech), bigger crew boxes. |
 | `src/sim/tank.js` | `tankMatrix`, `muzzle`, `gunPivot`, `eyePos`, `hullToWorld`/`worldToHull`/`hullDirToWorld`/`worldDirToHull`/`turretToWorld`, `createTank`, `rayArmor`, `rayModules`. |
 | `src/sim/battle.js` | `createBattle`, `stepBattle`, `DT`, `makeRng`, rules (capture, win, time-out). It also re-exports the helpers below, so one import is enough. |
@@ -84,3 +84,34 @@ Not fixed (not requested): a muzzle buried in a hill with the pivot above ground
 
 ## Contract change requests
 - None blocking. Please bless as contract: `steer +1 = right`, events keyed by `type` with `shellType` for the shell type, `capture.by`, the magazine fields above.
+
+## Tiers VIII–X (post-war, 2026-09-26)
+Twelve tanks, four per nation, continuing the tier VII lines (MT VIII → IX → X, HT VIII):
+| tank | tier | hp | top gun (AP / premium, dmg, reload) | armour idea |
+|---|---|---|---|---|
+| M46 Patton | VIII MT | 1450 | 90 mm M41 212 / HEAT 258, 240, 6.0 s | M26-style 102 mm, soft |
+| M103 | VIII HT | 1850 | 120 mm M58 248 / HEAT 340, 400, 12.8 s | 127@60 glacis, 127@58 cast turret + crown, weak cheeks, 114@45 lower |
+| M48 Patton | IX MT | 1700 | 105 mm T254E2 235 / HEAT 300, 320, 7.5 s | 110@60 glacis, 178@35 elliptical turret + crown |
+| M60 | X MT | 1950 | 105 mm M68 268 / HEAT 330, 390, 8.0 s | 110@65 wedge glacis, needle-nose turret 127@58 + crown |
+| Tiger II | VIII HT | 1750 | 10.5 cm KwK 46 225 / APCR 285, 320, 9.8 s | 150@50 glacis, 180@9 turret (weak for a heavy) |
+| Indien-Panzer | VIII MT | 1450 | 9 cm L/60 212 / APCR 265, 240, 6.1 s | thin (60@60), 65 km/h |
+| Leopard Prototyp A | IX MT | 1700 | 10.5 cm L7A1 240 / APCR 300, 320, 7.4 s | thin (70@60), cast turret + crown |
+| Leopard 1 | X MT | 1950 | 10.5 cm L7A3 268 / APCR 330, 390, 8.2 s | thin (70@60), welded wedge turret (box + crown), best dispersion 0.29 |
+| T-44 | VIII MT | 1450 | 100 mm LB-1 190 / APCR 253, 250, 6.4 s | 120@60 glacis, T-34-85-style turret |
+| IS-3 | VIII HT | 1750 | 122 mm BL-9 225 / APCR 265, 390, 11.4 s | 120@57 nose, flat dome 220@28 + crown |
+| T-54 | IX MT | 1700 | 100 mm D-54 235 / APCR 305, 320, 7.3 s | 100@60 hull, dome 200@30 + crown |
+| T-62A | X MT | 1950 | 115 mm U-5TS 270 / APCR 340, 360, 7.6 s | 100@60 hull, dome 240@35 + crown |
+- Shell types stay AP / APCR (standing in for APDS / APFSDS) / HEAT / HE; no new mechanics. SPREAD 0.6 applies.
+- **Crown** (`turret.crown = { h, a, k }`, src/sim/armor.js): for every wall (front, sides, rear, cheeks) a plane
+  through the wall's line at height H − h, a° from vertical, k × the wall's thickness (default 0.75), same plate
+  name. Skipped where the wall is already flatter. The solid stays convex, so rayConvex / solidFaces / the inspector
+  and the model need nothing new. `turretSection(t, y)` (exported) = the shell's half width and front / rear z at
+  height y (walls + crown); the gun pivot (`frontZAt`), the cupola placement and the renderer's roof details use it.
+  For existing tanks it returns exactly the old values.
+- `TIER_DMG` (module hp scale, damage.js / tank.js) extended to 280 / 330 / 380 for VIII–X.
+- Balance probe (penPreview at 100 m, same-tier top AP): T-62A turret face 315 eff vs 268 (15 %), glacis 172 (100 %);
+  T-54 turret cheek 238 vs 235 (47 %); IS-3 dome 288 vs 225 (0 %), lower plate 159 (100 %); Tiger II glacis 211 vs
+  225 (63 %); M103 glacis 219 vs 225 (56 %); M48 glacis 190 vs 235 (88 %); Leopard line ≈ 120 everywhere (100 %).
+  Bot battles (`battle-sim --tiers 9,10`): every new tank receives 0.8–1.0 × its hp, pens 68–85 % of its hits.
+- rules-test: the roster check now wants tiers I–X per nation; new checks: T-62A turret vs M60 AP, the T-62A glacis
+  is the weaker target and pens in live fire, IS-3 dome vs Tiger II, crowned turrets keep a roof with the cupola on it.

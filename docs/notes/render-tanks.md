@@ -116,3 +116,21 @@ The suspension spring on the model body (hull + turret; the tracks aren't under 
 with the raw frame dt; at ~7 fps it went unstable and spun the body out of view. It is now
 sub-stepped at 1/120 s, dt is capped at 0.25 s, and pitch, roll and their rates are clamped (NaN-safe).
 Lab: `fdt=<s>` simulates a slow frame rate; `grid=1&ids=a,b,…` shows chosen tanks.
+
+## Post-war tanks (tiers VIII–X, 2026-09-26)
+- Crowned turrets (`turret.crown`, src/sim/armor.js) come out of the existing pipeline: cast turrets loft the
+  crowned sections (domes: T-54, T-62A, IS-3; elliptical: M48, M60, M103), box turrets draw the crown planes as
+  plates (Leopard 1 wedge, Indien-Panzer). `dims()` now reads the turret section through `turretSection`, so
+  roof details (cupola, hatches, periscopes, handrails, dischargers) follow the smaller crowned roof.
+- New data hints: `track.rollers` (count; 0 = no return rollers and big road wheels, T-44/54/62), `gun.evacuator`
+  as a barrel fraction (T-54 0.88 near the muzzle, L7 / M68 mid-barrel), `look.searchlight` 'top' (M60 box over
+  the gun) / 'left' (Leopard 1) / 'right' (Soviet round L-2 lamp), `look.basket` (US turret bustle rack with
+  stowage), paint 'gelboliv' (Bundeswehr RAL 6014; `look.paint`, `look.camo: false`). Post-war Soviet hulls get
+  no wartime slogans (`D.tier`).
+- Triangles near / far: M46 22.5k / 1.0k, M103 23.7k, M48 22.3k, M60 21.5k, Tiger II 24.7k / 1.4k, Indien 20.6k,
+  Leo PT A 22.9k, Leopard 1 22.7k, T-44 17.4k, IS-3 20.3k, T-54 17.8k, T-62A 18.3k (all within the 13–25k budget).
+- Screenshots: shots/tanks/new_grid.png (all twelve), shots/tanks/<id>.png (usa_m46, usa_m103, usa_m48, usa_m60,
+  ger_tiger2, ger_indien, ger_leopt, ger_leopard1, ussr_t44, ussr_is3, ussr_t54, ussr_t62a).
+- Lab grid labels use TIER_ROMAN (tiers VIII–X). shot-tanks.mjs uses lib-browser (node server + system Chrome).
+- Still generic: hulls are the plate vocabulary (no cast boat hull for the Pattons, no IS-3 pike nose); T-54 and
+  T-62A look alike, as they do in life.

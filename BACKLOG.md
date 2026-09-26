@@ -4,7 +4,7 @@ Status: ☐ todo · ☑ done. The detail for each item lives in HANDOFF.md and d
 
 ## Done (2026-09-25)
 - ☑ Contract and architecture (docs/DESIGN.md)
-- ☑ Roster: 47 tanks, 3 nations, tiers I–VII, research tree
+- ☑ Roster: 47 tanks, 3 nations, tiers I–VII, research tree (59 tanks, tiers I–X since 2026-09-26)
 - ☑ Sim: WoT armour, ballistics, dispersion, modules, crew, fire, spotting, capture (rules-test 91/91), plus an independent review with 11 fixes
 - ☑ Maps: Ashford Fields, River Kessel, Steppe Ridge, Kolvik Pass (maps-test 1356/1356)
 - ☑ Rendering: world (terrain, sky, fog, water, props, 3 themes, quality tiers), tank models from the armour solids, FX, wrecks
@@ -26,4 +26,6 @@ Status: ☐ todo · ☑ done. The detail for each item lives in HANDOFF.md and d
 - ☐ Visual: early-tank silhouettes, US hull variety, M6 triangle count, tracer interpolation, water reflections, crater props
 - ☐ Sim: rear-deck depression, HEAT after spaced armour, buried-pivot edge case
 - ☐ Deploy: update deploy.sh target for Steel Front
-- ☐ Content: more maps, premiums, tier VIII+, encounter mode, crew skills, artillery
+- ☑ Post-war tiers VIII–X (owner request 2026-09-26, "more modern, 3–4 per tech tree"): 12 tanks, 4 per nation (MT VIII–X + HT VIII); crowned / domed turrets in the armour solids; economy, matchmaker, tech tree, tests (rules 100, meta 75)
+- ☐ Tier VIII–X follow-ups: TDs and a light tank at VIII–X so high-tier battles aren't all mediums; heavies at IX–X (M103 → T57/M103A2, E 75/E 100, IS-4/IS-7); play-test the Leopard line's thin armour (it is a glass cannon by design)
+- ☐ Content: more maps, premiums, encounter mode, crew skills, artillery

@@ -41,8 +41,8 @@ events, new exports) are fine: make them and list them in your notes file.
 
 ## Tank definitions: `src/data/tanks.js` (SIM owns)
 `export const TANKS = { [id]: TankDef }`, `export const NATIONS = { usa, germany, ussr }` (label,
-paint colour, marking), and `export const TREE`, the research edges. Three nations, tiers I–VII,
-~8 tanks each, all four classes per nation. Starters (tier I) cost 0 credits and are
+paint colour, marking), and `export const TREE`, the research edges. Three nations, tiers I–X
+(WWII to VII, post-war VIII–X), ~20 tanks each, all four classes per nation. Starters (tier I) cost 0 credits and are
 pre-researched. Use historical approximations: iconic vehicles, believable armour and guns,
 balanced like WoT (tier matters more than history).
 
@@ -71,12 +71,13 @@ balanced like WoT (tier matters more than history).
     ],
   }],
   hull:   { L, W, H, clr, engine: 'rear'|'front', ammo: 'hull'|'bustle'|'floor',
-            track: { w, h, t, len, wheels, wheelR, style: 'vvss'|'hvss'|'christie'|'torsion'|'interleaved'|'leaf' },
+            track: { w, h, t, len, wheels, wheelR, style: 'vvss'|'hvss'|'christie'|'torsion'|'interleaved'|'leaf', rollers? /* return rollers, 0 = none */ },
             upper: { t, a, frac }, lower: { t, a }, side: { t, tUpper, a }, rear: { t, a }, roof, floor },
   turret: { shape: 'box'|'cast'|'casemate'|'open', z, zOff, L, W, H, ringR, chamfer, gunY,
             front: { t, a }, side: { t, a }, rear: { t, a }, roof, mantlet: { t, w, h, d },
+            crown?: { h, a, k },   // optional flatter band round the top of the walls (domes, wedge turrets)
             traverse: null | [-deg, +deg] },
-  look:   { cupola, skirts, stowage, exhausts, number },   // optional cosmetic hints for the renderer
+  look:   { cupola, skirts, stowage, exhausts, number, paint, camo, searchlight, basket },   // optional cosmetic hints for the renderer
 }
 ```
 The armour parameters are interpreted **only** by `src/sim/armor.js` (`buildArmor`, `solidFaces`,

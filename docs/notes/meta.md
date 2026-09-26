@@ -99,8 +99,9 @@ screens.startBattle()                     // what BATTLE! does: buildBattle(prof
 
 ## Economy (live roster)
 Reward rates are **derived from the roster** (average research cost and price of tier t+1), so an
-average player (≈1× own HP of damage, 50 % wins) spends `TARGET_BATTLES = [–, 1.5, 4, 8, 14, 26, 38]`
-battles per tier. Rates are forced to rise at least 10 % per tier. Win ×1.5 XP (×1.25 credits),
+average player (≈1× own HP of damage, 50 % wins) spends `TARGET_BATTLES = [–, 1.5, 4, 8, 14, 26, 38, 45, 55, 65]`
+battles per tier (tier X has nothing to unlock: its rates are extrapolated from IX, then the
+10 %-per-tier floor applies). Rates are forced to rise at least 10 % per tier. Win ×1.5 XP (×1.25 credits),
 first win of the day ×2 XP, 5 % free XP. Damage to higher tiers is worth +10 % per tier.
 Service: repairs cost ≈1.4 % of the price at 0 HP, standard shells ≈0.05·cal^1.6, premium ×10,
 and consumables 200 + 350·tier when used. **Tier I is free** (no repairs, standard ammo,
@@ -114,13 +115,24 @@ consumables), and the credits balance is clamped at 0.
 | IV | 782 | 27,450 | 978 / 1,330 / 1,760 / 2,347 |
 | V | 952 | 37,646 | 1,190 / 1,619 / 2,143 / 2,857 |
 | VI | 1,228 | 41,410 | 1,535 / 2,088 / 2,763 / 3,684 |
-| VII | 1,596 | 49,466 | 1,996 / 2,714 / 3,592 / 4,789 |
+| VII | 1,735 | 58,596 | 2,169 / 2,950 / 3,905 / 5,206 |
+| VIII | 2,424 | 67,773 | 3,030 / 4,121 / 5,455 / 7,273 |
+| IX | 3,150 | 98,538 | 3,938 / 5,355 / 7,088 / 9,451 |
+| X | 4,095 | 108,392 | 5,119 / 6,962 / 9,214 / 12,286 |
 
 Progression simulation (average player): **tier V after 29 battles, tier VII after 93** on every
 line (Panther: 78, because it skips tier VI). Examples:
 `T1 → M2 LT @1 → M2 MT @6 → Lee @14 → M4 @29 → Easy 8 @56 → T20 @95`,
 `MS-1 → AT-1 @1 → SU-76 @6 → SU-85B @14 → SU-85 @29 → SU-100 @56 → SU-152 @95`.
 A tier-I potato (0 damage, dies, fires 20 shells) nets ≥ 0 credits every battle.
+Tiers VIII–X (2026-09-26): prices 2.45M / 3.55M / 6.1M, research 82k / 140k / 215k XP. The medium lines reach
+VIII ≈ 140, IX ≈ 198, X ≈ 266–272 battles (`T1 → … → T20 @95 → M46 @140 → M48 @198 → M60 @272`); heavies VIII ≈ 142.
+A zero-damage tier-X loss costs ≈ 60k credits (an average battle nets ≈ 108k). meta-test section 7 checks the
+research + buy chain VII → X on every line, reachability, the rising costs, those credits and full tier VIII–X battles
+(15v15 and 7v7, tiers ±2, a tier VIII tank meets tier X sometimes). Matchmaker: no change needed (it uses MAX_TIER;
+tier IX–X slots are all mediums since only mediums exist there, class caps fall back to what exists).
+Tech tree: ten columns, each ≥ 112 px (canvas scrolls sideways below ~1160 px); the tier numerals moved into the
+scrolling canvas so they stay above their columns.
 
 ## Screens
 - **Hangar**: 3D hangar (`hangar3d.js`) with a corrugated hall, an open door onto daylight, a
