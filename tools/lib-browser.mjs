@@ -6,6 +6,7 @@ import { chromium } from 'playwright';
 import { spawn, execFileSync } from 'child_process';
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
+import { fileURLToPath } from 'url';
 import { createHash } from 'crypto';
 
 export const PORT = +(process.env.SF_PORT || 8477);
@@ -17,13 +18,31 @@ async function listening() {
 }
 export async function startServer() {
   if (await listening()) return null;
-  const p = spawn('python3', ['-m', 'http.server', String(PORT), '--bind', '127.0.0.1'], { cwd: new URL('..', import.meta.url).pathname, stdio: 'ignore' });
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  // python3 when it works; otherwise (Windows without Python) a tiny node static server
+  let p = null;
+  try { execFileSync('python3', ['--version'], { stdio: 'ignore' }); p = spawn('python3', ['-m', 'http.server', String(PORT), '--bind', '127.0.0.1'], { cwd: root, stdio: 'ignore' }); } catch { p = null; }
+  if (!p) p = spawn(process.execPath, ['-e', NODE_SERVER, String(PORT)], { cwd: root, stdio: 'ignore' });
   for (let i = 0; i < 50 && !(await listening()); i++) await new Promise((r) => setTimeout(r, 100));
   return p;
 }
 
+const NODE_SERVER = `const http=require('http'),fs=require('fs'),path=require('path');const T={'.html':'text/html','.js':'text/javascript','.mjs':'text/javascript','.css':'text/css','.json':'application/json','.png':'image/png','.svg':'image/svg+xml','.ogg':'audio/ogg','.wav':'audio/wav','.jpg':'image/jpeg','.woff2':'font/woff2'};
+http.createServer((q,r)=>{const u=decodeURIComponent(q.url.split('?')[0]);let f=path.join(process.cwd(),path.normalize(u));if(!f.startsWith(process.cwd())){r.writeHead(403);return r.end();}
+if(u.endsWith('/')){const i=path.join(f,'index.html');if(fs.existsSync(i))f=i;else{let l=[];try{l=fs.readdirSync(f);}catch{r.writeHead(404);return r.end();}r.writeHead(200,{'Content-Type':'text/html'});return r.end(l.map((n)=>'<a href="'+encodeURIComponent(n)+'">'+n+'</a> ').join(''));}}
+fs.readFile(f,(e,d)=>{if(e){r.writeHead(404);return r.end();}r.writeHead(200,{'Content-Type':T[path.extname(f)]||'application/octet-stream','Cache-Control':'no-cache'});r.end(d);});}).listen(+process.argv[1],'127.0.0.1');`;
+
+// Playwright's own Chromium; if it isn't installed, the system Chrome / Edge (SF_CHANNEL=chrome|msedge to force one).
+async function launch(opts) {
+  if (process.env.SF_CHANNEL) return chromium.launch({ ...opts, channel: process.env.SF_CHANNEL });
+  try { return await chromium.launch(opts); } catch (e) {
+    for (const channel of ['chrome', 'msedge']) { try { return await chromium.launch({ ...opts, channel }); } catch { /* next */ } }
+    throw e;
+  }
+}
+
 export async function openBrowser({ w = 1280, h = 720 } = {}) {
-  const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'] });
+  const browser = await launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'] });
   const page = await browser.newPage({ viewport: { width: w, height: h } });
   const errors = [];
   page.on('console', (m) => {
