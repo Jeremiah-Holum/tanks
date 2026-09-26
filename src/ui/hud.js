@@ -9,6 +9,7 @@
 import * as THREE from 'three';
 import { h, clear, shellIcon, classIcon } from './dom.js';
 import { renderMinimap } from './loading.js';
+import { deploysLeft, spawnsLeft } from '../sim/battle.js';
 
 // ------------------------------------------------------------------ icons (24×24, currentColor)
 const S = (inner) => `<svg viewBox="0 0 24 24" aria-hidden="true">${inner}</svg>`;
@@ -79,20 +80,26 @@ export class Hud {
     this.top = {
       aBar: h('i'), eBar: h('i'), aN: h('b.ha'), eN: h('b.he'), timer: h('div.hud-timer', '15:00'),
       aHp: h('span.hp-n'), eHp: h('span.hp-n'), caps: h('div.hud-caps'),
+      aS: h('small.hs', { title: 'Spawns left (your team)' }), eS: h('small.hs', { title: 'Spawns left (enemy team)' }),
+      mine: h('div.hud-spawns'),
     };
     const T = this.top;
     const topEl = h('div.hud-top',
       h('div.hud-score-row',
-        h('div.hud-tbar.ally', T.aHp, h('div.tb', T.aBar)), h('div.hud-count', T.aN, h('span.sep', ':'), T.eN),
+        h('div.hud-tbar.ally', T.aHp, h('div.tb', T.aBar)), h('div.hud-count', T.aS, T.aN, h('span.sep', ':'), T.eN, T.eS),
         h('div.hud-tbar.enemy', h('div.tb', T.eBar), T.eHp)),
-      T.timer, T.caps);
-    // team lists
+      T.timer, T.mine, T.caps);
+    // the player's deploys: "Spawns 3/3" = tanks left including the one driven now
+    this.maxSpawns = Math.min(w.lives || 1, 1 + (w.reserve?.[this.team]?.length || 0));
+    // team lists: one row per slot (a player or bot and its respawns); "+2" = spawns left
     this.lists = [h('div.hud-list.ally'), h('div.hud-list.enemy')];
     this.rows = new Map();
-    for (const t of w.tanks) {
-      const row = h('div.tl-row' + (t.id === this.playerId ? '.me' : ''), h('span.tl-tank', t.def.short || t.def.name), h('span.tl-name', t.name));
-      this.rows.set(t.id, row);
-      this.lists[t.team === this.team ? 0 : 1].append(row);
+    const mySlot = w.slotOf?.[this.playerId]?.id;
+    for (const sl of w.slots || []) {
+      const t = w.byId[sl.tank], tank = h('span.tl-tank', t.def.short || t.def.name), lives = h('span.tl-lives');
+      const row = h('div.tl-row' + (sl.id === mySlot ? '.me' : ''), tank, h('span.tl-name', sl.name || t.name), lives);
+      this.rows.set(sl.id, { row, tank, lives, tankId: t.id });
+      this.lists[sl.team === this.team ? 0 : 1].append(row);
     }
     // sixth sense lamp
     this.lamp = h('div.hud-lamp', ico('lamp'));
@@ -156,8 +163,6 @@ export class Hud {
   setPlayer(me) {
     const old = this.me;
     this.me = me; this.playerId = me.id;
-    const row = h('div.tl-row.me', h('span.tl-tank', me.def.short || me.def.name), h('span.tl-name', me.name));
-    this.rows.set(me.id, row); this.lists[0].append(row);
     if (old && !this.markerPool.has(old.id)) this._marker(old, false);
     const dp = this.dmgPanel, sh = this.shellsEl;
     this._tankPanels(me);
@@ -175,18 +180,18 @@ export class Hud {
         h('div.rsp-cd', h('span', this.rspLbl = h('span'), this.rspT, ' s'), this.rspKeys = h('small')));
       this.el.insertBefore(this.rspEl, this.menuEl);
     }
-    txt(this.rspH, st.start ? 'Choose your starting vehicle' : 'Choose your next vehicle');
+    txt(this.rspH, st.start ? 'Choose your starting vehicle' : st.spawns != null ? `Choose your next vehicle · ${st.spawns} spawn${st.spawns === 1 ? '' : 's'} left` : 'Choose your next vehicle');
     txt(this.rspLbl, st.start ? 'Battle starts in ' : 'Deploying in ');
     cls(this.rspEl, 'start', !!st.start);
     const key = list.map((e) => e.def.id).join(',') + ':' + st.pick;
     if (key !== this._rspKey) {
       this._rspKey = key;
       clear(this.rspList).append(...list.map((e, i) => h('button.rsp-card' + (i === st.pick ? '.sel' : ''), { onclick: () => this.onRespawn?.(i) },
-        h('kbd', String(i + 1)),
+        h('kbd', String((i + 1) % 10)),
         h('div.rsp-top', h('span.rsp-tier', ROMAN[e.def.tier] || ''), classIcon(e.def.cls, 14), h('span.rsp-name', e.def.short || e.def.name)),
         h('small', `${e.def.hp} HP · ${e.def.guns[e.gun || 0]?.cal || '?'} mm`))));
     }
-    txt(this.rspKeys, list.length > 1 ? `Press 1–${Math.min(5, list.length)} or click a vehicle to choose` + (st.start ? ' · Space: start now' : '') : 'Your last lineup vehicle deploys automatically');
+    txt(this.rspKeys, list.length > 1 ? `Press 1–${list.length >= 10 ? 0 : list.length} or click a vehicle to choose` + (st.start ? ' · Space: start now' : '') : 'Your last lineup vehicle deploys automatically');
     txt(this.rspT, Math.max(0, Math.ceil(st.t)));
     cls(this.rspEl, 'on', true);
   }
@@ -243,7 +248,12 @@ export class Hud {
 
   _top(w) {
     const T = this.top, hp = [0, 0], max = [0, 0], n = [0, 0];
-    for (const t of w.tanks) { const k = t.team === this.team ? 0 : 1; if (t.alive) { n[k]++; hp[k] += Math.max(0, Math.min(t.hp, t.maxHp)); } max[k] += t.maxHp; }
+    // hp bars: live tanks against the current tank of every slot (respawns refill them)
+    for (const sl of w.slots) { const t = w.byId[sl.tank], k = sl.team === this.team ? 0 : 1; max[k] += t.maxHp; if (t.alive) { n[k]++; hp[k] += Math.max(0, Math.min(t.hp, t.maxHp)); } }
+    const sA = spawnsLeft(w, this.team), sE = spawnsLeft(w, 1 - this.team);
+    txt(T.aS, sA ? '+' + sA : ''); txt(T.eS, sE ? '+' + sE : '');
+    const my = w.slotOf[this.playerId], mine = my ? (this.me.alive ? 1 : 0) + deploysLeft(w, my) : 0;
+    txt(T.mine, this.maxSpawns > 1 ? `Spawns ${mine}/${this.maxSpawns}` : ''); cls(T.mine, 'on', this.maxSpawns > 1); cls(T.mine, 'last', mine <= 1);
     sty(T.aBar, 'transform', `scaleX(${(hp[0] / max[0]).toFixed(3)})`); sty(T.eBar, 'transform', `scaleX(${(hp[1] / max[1]).toFixed(3)})`);
     txt(T.aHp, Math.round(hp[0])); txt(T.eHp, Math.round(hp[1]));
     txt(T.aN, n[0]); txt(T.eN, n[1]);
@@ -263,10 +273,14 @@ export class Hud {
   }
 
   _lists(w, vis) {
-    for (const t of w.tanks) {
-      const row = this.rows.get(t.id);
-      cls(row, 'dead', !t.alive);
-      if (t.team !== this.team) cls(row, 'spot', t.alive && vis.has(t.id));
+    for (const sl of w.slots) {
+      const r = this.rows.get(sl.id), t = w.byId[sl.tank];
+      if (!r) continue;
+      if (r.tankId !== t.id) { r.tankId = t.id; txt(r.tank, t.def.short || t.def.name); }
+      const left = deploysLeft(w, sl);
+      txt(r.lives, left ? '+' + left : '');
+      cls(r.row, 'dead', !t.alive && !left); cls(r.row, 'wait', !t.alive && left > 0);
+      if (sl.team !== this.team) cls(r.row, 'spot', t.alive && vis.has(t.id));
     }
   }
 
@@ -440,6 +454,7 @@ export class Hud {
     }
     const me = s.me, foc = s.focus;
     for (const t of w.tanks) {
+      if (t.gone) continue;   // cleared wreck
       const ally = t.team === this.team;
       if (!ally && !vis.has(t.id)) continue;
       s.ipos(t, P);
@@ -697,12 +712,16 @@ export class Hud {
   _scorePanel(w) {
     const order = { heavy: 0, medium: 1, td: 2, light: 3 };
     const sort = (a, b) => b.def.tier - a.def.tier || order[a.def.cls] - order[b.def.cls] || a.name.localeCompare(b.name);
-    const teams = [w.tanks.filter((t) => t.team === this.team).sort(sort), w.tanks.filter((t) => t.team !== this.team).sort(sort)];
+    // one row per slot: its current tank, damage and kills summed over its deploys, spawns left
+    const sum = (sl, k) => w.tanks.reduce((a, t) => a + (t.slot === sl.id ? t.stats[k] : 0), 0);
+    const rowsOf = (mine) => w.slots.filter((sl) => (sl.team === this.team) === mine).map((sl) => ({ sl, t: w.byId[sl.tank], left: deploysLeft(w, sl) }))
+      .sort((a, b) => sort(a.t, b.t));
+    const teams = [rowsOf(true), rowsOf(false)];
     const col = (list, k) => h('div.sp-col.' + (k ? 'en' : 'al'),
-      h('h3', k ? 'Enemy team' : 'Your team', h('span', `${list.filter((t) => t.alive).length} / ${list.length}`)),
+      h('h3', k ? 'Enemy team' : 'Your team', h('span', `${list.filter((r) => r.t.alive).length} alive · +${list.reduce((a, r) => a + r.left, 0)} spawns`)),
       h('div.sp-row.head', h('span', 'Tier'), h('span', 'Vehicle'), h('span', 'Player'), h('span', 'Dmg'), h('span', 'Kills')),
-      list.map((t) => h('div.sp-row' + (t.alive ? '' : '.dead') + (t.id === this.playerId ? '.me' : '') + (k && t.alive && !w.visible[this.team].has(t.id) ? '.hid' : ''),
-        h('span.sp-tier', ROMAN[t.def.tier] || t.def.tier), h('span.sp-tank', classIcon(t.def.cls, 13), h('b', t.def.short || t.def.name)), h('span.sp-name', t.name), h('span', Math.round(t.stats.dmg)), h('span', t.stats.kills))));
+      list.map(({ sl, t, left }) => h('div.sp-row' + (t.alive ? '' : left ? '.wait' : '.dead') + (t.id === this.playerId ? '.me' : '') + (k && t.alive && !w.visible[this.team].has(t.id) ? '.hid' : ''),
+        h('span.sp-tier', ROMAN[t.def.tier] || t.def.tier), h('span.sp-tank', classIcon(t.def.cls, 13), h('b', t.def.short || t.def.name), left ? h('small', ' +' + left) : null), h('span.sp-name', sl.name || t.name), h('span', Math.round(sum(sl, 'dmg'))), h('span', sum(sl, 'kills')))));
     clear(this.scoreEl).append(h('div.sp-box', h('div.sp-head', h('b', w.map.name || ''), h('span', mmss(w.timeLimit - w.time))), h('div.sp-cols', col(teams[0], 0), col(teams[1], 1))));
   }
 

@@ -237,10 +237,11 @@ tune();
 export const _rates = { XPT, CRT };
 
 // ------------------------------------------------------------------ battle lineup
-// Two slots to start; more are bought with credits (escalating, max LINEUP_MAX). Each lineup tank
-// is one life in battle (respawn). Prices sit at roughly 1–3 battles of net income at the tier
-// where a player first owns 3, 4, 5 tanks (tier III–V: 18k–38k net per battle).
-export const SLOT_PRICES = { 3: 25000, 4: 60000, 5: 120000 };
+// Two slots to start; more are bought with credits (escalating, max LINEUP_MAX = 10). A battle
+// deploys at most 3 lineup tanks (sim MAX_DEPLOYS: the start + 2 respawns): more slots = more
+// choice, not more lives. Slots 3–5 sit at roughly 1–3 battles of net income at the tier where a
+// player first owns 3, 4, 5 tanks (tier III–V: 18k–38k net per battle); 6–10 are a late-game sink.
+export const SLOT_PRICES = { 3: 25000, 4: 60000, 5: 120000, 6: 200000, 7: 300000, 8: 450000, 9: 650000, 10: 900000 };
 // Price of the next slot (null at the maximum).
 export const slotPrice = (p) => (p.lineupSlots >= LINEUP_MAX ? null : SLOT_PRICES[p.lineupSlots + 1] ?? null);
 export function slotInfo(p) {

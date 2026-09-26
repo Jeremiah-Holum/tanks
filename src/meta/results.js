@@ -9,7 +9,7 @@ import { tankState, HISTORY_MAX } from './profile.js';
 export const MEDALS = [
   { id: 'topgun', name: 'Top Gun', desc: 'Destroy 6 or more enemy vehicles.', test: (c) => c.s.kills >= 6 },
   { id: 'highcal', name: 'High Caliber', desc: 'Deal the most damage in the battle, at least 20 % of the enemy team\'s hit points.',
-    test: (c) => c.s.dmg > 0 && c.s.dmg >= Math.max(...c.all.map((t) => t.stats.dmg)) && c.s.dmg >= 0.2 * c.enemies.reduce((a, t) => a + t.maxHp, 0) },
+    test: (c) => c.s.dmg > 0 && c.s.dmg >= Math.max(...c.all.map((t) => t.stats.dmg)) && c.s.dmg >= 0.2 * c.enemies.reduce((a, t) => a + (t.life > 1 ? 0 : t.maxHp), 0) },
   { id: 'sniper', name: 'Sniper', desc: 'At least 85 % hits and 10 shots, dealing 1.5× your HP in damage.',
     test: (c) => c.s.shots >= 10 && c.s.hits / c.s.shots >= 0.85 && c.s.dmg >= 1.5 * c.me.maxHp },
   { id: 'steelwall', name: 'Steel Wall', desc: 'Block damage worth 1.5× your HP and receive at least 8 hits.',
@@ -87,14 +87,25 @@ export function summarize(world, playerTankIds, profile, battle = null) {
       dmg: Math.round(st.dmg || 0), kills: st.kills || 0, assist: Math.round(st.assist || 0), spotted: st.spotted || 0, xp };
   };
   const byXp = (a, b) => b.xp - a.xp || b.dmg - a.dmg;
-  const teamRows = [allies.map(row).sort(byXp), enemies.map(row).sort(byXp)];
+  // one row per slot (a player or bot with its respawns): the last tank it drove, stats and XP summed
+  const slotRows = (list) => {
+    const g = new Map();
+    for (const t of list) { const k = t.slot ?? t.id; if (!g.has(k)) g.set(k, []); g.get(k).push(t); }
+    return [...g.values()].map((ts) => {
+      const rs = ts.map(row), r = rs[rs.length - 1];
+      if (rs.length > 1) for (const k of ['dmg', 'kills', 'assist', 'spotted', 'xp']) r[k] = rs.reduce((a, x) => a + x[k], 0);
+      r.deploys = rs.length;
+      return r;
+    });
+  };
+  const teamRows = [slotRows(allies).sort(byXp), slotRows(enemies).sort(byXp)];
   const mapName = world.map?.name || MAPS.find((m) => m.id === (world.map?.id || battle?.mapId))?.name || 'Unknown';
   const mineIds = new Set(mine.map((t) => t.id));
   return {
     id: `${Date.now().toString(36)}-${(world.seed ?? 0).toString(36)}`, time: Date.now(), applied: false,
     tankId: first.tankId, tankName: first.tankName, tier: first.tier, cls: first.cls, nation: first.nation, nationLabel: NATIONS[first.nation]?.label,
     gun: first.gun, mapId: world.map?.id || battle?.mapId, mapName, mode: world.mode || 'standard',
-    size: allies.length - (mine.length - 1),   // respawned tanks don't make the team bigger
+    size: teamRows[0].length,   // slots: respawned tanks don't make the team bigger
     result: won ? 'victory' : draw ? 'draw' : 'defeat', reason: world.result?.reason || (draw ? 'time' : ''),
     duration: Math.round(world.time || 0), survived: last.survived, hpLeft: last.hpLeft, maxHp: last.maxHp,
     stats: parts.length === 1 ? first.stats : sumStats(parts.map((p) => p.stats)),

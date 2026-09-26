@@ -8,6 +8,7 @@ import { buildBattle } from './meta/matchmaker.js';
 import { TANKS } from './meta/roster.js';
 import { lineupOf } from './meta/profile.js';
 import { BattleSession } from './game/session.js';
+import { spawnsLeft } from './sim/battle.js';
 
 const params = new URLSearchParams(location.search);
 const root = document.getElementById('ui');
@@ -85,6 +86,7 @@ window.__sf = {
       player: me ? { id: me.id, tankId: me.def.id, alive: me.alive, hp: Math.round(me.hp), speed: +me.speed.toFixed(2), x: +me.pos.x.toFixed(1), z: +me.pos.z.toFixed(1), turretYaw: +me.turretYaw.toFixed(3), shell: me.shell, shots: me.stats.shots, ammo: me.ammo.slice(), reload: +me.reload.toFixed(2), reloads: s.reloads, spotted: me.spotted } : null,
       alive: w ? [0, 1].map((k) => w.tanks.filter((t) => t.team === k && t.alive).length) : null,
       driven: s?.driven ? s.driven.slice() : null, reserve: w ? w.reserve[s.team].map((e) => e.def.id) : null,
+      spawns: w && s?._deploysLeft ? { mine: s._deploysLeft(), team: [0, 1].map((k) => spawnsLeft(w, k)), tanks: w.tanks.length, gone: w.tanks.filter((t) => t.gone).length } : null,
       respawn: s?.respawn ? { left: +s.respawn.t.toFixed(1), pick: s.respawn.pick } : null,
       startPick: s?.startPick ? { left: +s.startPick.t.toFixed(1), pick: s.startPick.pick, lineup: s.lineup.map((e) => e.def.id) } : null,
       menu: s?.menuOpen || false, score: s?.scoreOpen || false, lock: s?.lockTarget ?? null,

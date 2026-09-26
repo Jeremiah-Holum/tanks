@@ -10,7 +10,7 @@
 // this.player is always the tank being driven now, this.driven every tank driven (for the results).
 // Loop: fixed-step sim (DT = 1/60) with an accumulator and a catch-up cap, render interpolation,
 // every event of every step collected per frame and fed to the view, audio and HUD.
-import { createBattle, stepBattle, DT, predictImpact, penPreview, viewRange, respawnTank, forfeitReserve, chooseStartTank } from '../sim/battle.js';
+import { createBattle, stepBattle, DT, predictImpact, penPreview, viewRange, respawnTank, forfeitReserve, chooseStartTank, deploysLeft } from '../sim/battle.js';
 import { kill } from '../sim/damage.js';
 import { loadMap } from '../sim/map/index.js';
 import { muzzle } from '../sim/tank.js';
@@ -93,13 +93,26 @@ export class BattleSession {
         if (i % 2 === 1) { progress(0.6 + 0.25 * i / groups.length, `Rolling out vehicles… ${i + 1}/${groups.length}`); await nextFrame(); }
       }
       view.tanks.prewarm(world);
+      // bot respawn tanks (Entry.spares): build each new type once now so a respawn doesn't hitch
+      if (view.tanks.prewarmDefs) {
+        const have = new Set(world.tanks.map((t) => t.def.id + ':' + t.gunIndex)), more = [];
+        for (const tm of b.teams) for (const e of tm) for (const s of e.spares || []) {
+          const gi = Math.min(s.gun | 0, s.def.guns.length - 1), k = s.def.id + ':' + gi;
+          if (!have.has(k)) { have.add(k); more.push({ def: s.def, gunIndex: gi }); }
+        }
+        for (const e of world.reserve[this.team]) { const gi = Math.min(e.gun | 0, e.def.guns.length - 1), k = e.def.id + ':' + gi; if (!have.has(k)) { have.add(k); more.push({ def: e.def, gunIndex: gi }); } }
+        for (let i = 0; i < more.length; i += 4) {
+          view.tanks.prewarmDefs(more.slice(i, i + 4));
+          progress(0.85, `Rolling out reserves… ${Math.min(more.length, i + 4)}/${more.length}`); await nextFrame();
+        }
+      }
     }
     // compile every tank / FX / scar shader variant now (spotting, first hit and first kill used to)
     progress(0.86, 'Checking the guns…'); await nextFrame();
     try { view.warmup?.(); } catch (e) { console.warn('warmup failed', e); }
     try { this.audio?.prewarm?.(); } catch { /* optional */ }
     progress(0.87, 'Briefing the crews…'); await nextFrame();
-    const botKind = P.get('bots') || 'ai';
+    const botKind = this.botKind = P.get('bots') || 'ai';
     this.brains = new Map();
     for (const t of world.tanks) if (!t.player) this.brains.set(t.id, makeBrain(world, t, botKind));
     if (P.get('autopilot') === '1' || P.get('bot') === '1') this.autopilot = makeBrain(world, me, botKind);
@@ -120,6 +133,7 @@ export class BattleSession {
         for (const [id, br] of this.brains) this._ctl.set(id, br.control(world));
         this._ctl.set(me.id, pilot.control(world));
         stepBattle(world, this._ctl);
+        this._botRespawns(world);
         if (i % 600 === 599) await nextFrame();
       }
       for (const t of world.tanks) this._snap(t, true);
@@ -193,6 +207,7 @@ export class BattleSession {
         this._controls();
         const a1 = performance.now();
         stepBattle(world, this._ctl);
+        this._botRespawns(world);
         const a2 = performance.now();
         ai += a1 - a0; sim += a2 - a1;
         for (const e of world.events) { this.events.push(e); if (e.type === 'kill' && world.firstKill == null && e.killer) world.firstKill = e.killer; }
@@ -209,7 +224,7 @@ export class BattleSession {
     // --- phases
     if (this.phase === 'play' && !me.alive) {
       this.phase = 'dead'; this.specSince = world.time; this.lockTarget = null; this.cam.sniper = false; this.hud.destroyed(world, me);
-      if (!world.result && !this.resolving && world.reserve[this.team].length) this._offerRespawn();
+      if (!world.result && !this.resolving && this._deploysLeft()) this._offerRespawn();
     }
     if (this.respawn && this.phase === 'dead' && !menu && !world.result) {
       this.respawn.t -= dt;
@@ -273,14 +288,14 @@ export class BattleSession {
     this.scoreOpen = inp.down('Tab');
     const me = this.player;
     if (this.phase === 'dead') {
-      if (this.respawn) for (let k = 0; k < 5; k++) if (inp.take('Digit' + (k + 1)) || inp.take('Numpad' + (k + 1))) this._pickRespawn(k);
+      if (this.respawn) for (let k = 0; k < 10; k++) if (inp.take('Digit' + ((k + 1) % 10)) || inp.take('Numpad' + ((k + 1) % 10))) this._pickRespawn(k);
       // spectate: LMB next ally, RMB previous
       if (inp.takeBtn(0)) this._specCycle(1);
       if (inp.takeBtn(2)) this._specCycle(-1);
       inp.takeRelease(2);
       return;
     }
-    if (this.startPick) for (let k = 0; k < 5; k++) if (inp.take('Digit' + (k + 1)) || inp.take('Numpad' + (k + 1))) this._pickStart(k);
+    if (this.startPick) for (let k = 0; k < 10; k++) if (inp.take('Digit' + ((k + 1) % 10)) || inp.take('Numpad' + ((k + 1) % 10))) this._pickStart(k);
     if (!me.alive) return;
     for (let k = 0; k < 3; k++) if (inp.take('Digit' + (k + 1)) || inp.take('Numpad' + (k + 1))) {
       if (me.gunDef.shells[k] && me.ammo[k] > 0) { this.shell = k; this.hud.flashShell(k); } else this.hud.toast('No ammunition of that type');
@@ -432,8 +447,17 @@ export class BattleSession {
   }
 
   // ------------------------------------------------------------------ lineup respawn
+  // Respawns the player has left: unused lineup tanks, at most MAX_DEPLOYS tanks per battle.
+  _deploysLeft() { const w = this.world, sl = w && w.slotOf[this.player.id]; return sl ? deploysLeft(w, sl) : 0; }
+  // Bots respawn inside the sim (respawnBots); each new tank gets a brain (it rejoins the team plan).
+  _botRespawns(world) {
+    for (const e of world.events) if (e.type === 'respawn' && e.bot) {
+      const t = world.byId[e.tank];
+      if (t && !this.brains.has(t.id)) this.brains.set(t.id, makeBrain(world, t, this.botKind || 'ai'));
+    }
+  }
   _offerRespawn() {
-    this.respawn = { t: RESPAWN_DELAY, pick: 0 };
+    this.respawn = { t: RESPAWN_DELAY, pick: 0, spawns: this._deploysLeft() };
     this.hud.respawnPanel(this.world.reserve[this.team], this.respawn);
     // free the cursor so a tank card can be clicked (not treated as a lost pointer lock)
     if (document.pointerLockElement) { this._unlocking = true; this.input.unlock(); }

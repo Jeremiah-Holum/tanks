@@ -21,7 +21,7 @@ export function aimRay(world, o, d, { skipId = null, visible = null, maxT = AIM_
   const ob = raycastObjects(map, o, d, t, 'shell');
   if (ob && ob.t < t) { t = ob.t; obj = ob.obj; sky = false; }
   for (const k of world.tanks) {
-    if (k.id === skipId) continue;
+    if (k.id === skipId || k.gone) continue;
     if (visible && k.alive && !visible.has(k.id)) continue;
     const cx = k.pos.x - o.x, cy = k.pos.y + k.cy - o.y, cz = k.pos.z - o.z;
     const along = cx * d.x + cy * d.y + cz * d.z;

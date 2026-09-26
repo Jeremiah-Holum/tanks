@@ -133,11 +133,13 @@ createBattle({
   map, seed, timeLimit: 900, mode: 'standard',
   teams: [[Entry ×N], [Entry ×N]],  // N ≤ 15 each
   reserve: [[Entry], [Entry]],       // optional: the player's other lineup tanks (respawns, one life each)
+  lives: 3,                          // MAX_DEPLOYS: tanks per slot (player or bot) per battle
 }) → world
 respawnTank(world, team, i) → Tank   // reserve[team][i] joins at the team's spawn area (a new id); the wreck stays.
                                      // A team with reserve left is not beaten by "all destroyed". forfeitReserve(world, team).
 Entry = { def: TankDef, gun: 0, name, player: bool, bot: { skill: 0..1, role? } | null,
-          ammo: [n,n,n], consumables: ['repair','medkit','extinguisher'], crewSkill: 0.5..1 }
+          ammo: [n,n,n], consumables: ['repair','medkit','extinguisher'], crewSkill: 0.5..1,
+          spares?: [Entry] }  // bots: the tanks it respawns in (sim, 6 s after death); deploysLeft / spawnsLeft
 stepBattle(world, controls /* Map<tankId, Controls> */)
 Controls = { throttle: -1..1, steer: -1..1, brake: bool,
              aim: {x,y,z} | null,       // world point to aim at; the sim traverses and elevates towards it
@@ -205,8 +207,9 @@ point, targetId) → {plate, eff, chance}` (reticle colour) and `visibleTo(world
   for 5 s) plus foliage between them (bushes near the target count only while it hasn't fired).
   Auto-spot within 50 m; hard cap 445 m. A spotted tank stays visible for 3 s after the last
   sighting (`lastSeen`). Spotting damage counts towards the spotter's `assist`.
-- **Standard battle**: 15v15, 15 minutes. Win by destroying every enemy or capturing their base
-  (points +1/s per capper in the circle, max 3 cappers, max 100). Any damage to a capper resets
+- **Standard battle**: 15v15, 20 minutes (was 15), 3 tanks per player and bot (PM ruling 2026-09-26, "Deploys").
+  Win when the enemy has no live tank and no spawn left, or by capturing their base
+  (points +2/s per capper in the circle (was +1), max 3 cappers, max 100). Any damage to a capper resets
   that capper's contribution. A time-out is a draw.
 - **Events** (`world.events` is cleared at the start of each step, so read it after stepBattle):
   `shot{tank, shell, pos, dir, cal}` · `impact{shell, pos, normal, surface, type}` ·
@@ -290,7 +293,7 @@ Spectate a teammate after death. Esc menu.
 - `src/meta/economy.js`: rewards (XP and credits from damage, assist, kills, spotting, capture and
   survival, ×1.5 on a win, 5% free XP), service costs (repair and ammo), research, buy and sell.
   Mastery badges (Mastery / I / II / III) come from base XP compared with per-tier thresholds.
-  Battle lineup: `lineupSlots` (2..5, extra slots bought with credits) and `lineup` (owned ids, spawn order);
+  Battle lineup: `lineupSlots` (2..10, extra slots bought with credits; 3 deploys per battle) and `lineup` (owned ids, spawn order);
   see docs/notes/meta.md "Battle lineup".
 - `src/meta/matchmaker.js`: `buildBattle(profile, lineupIds | tankId, opts) → createBattle options` (+ `reserve`: the
   player's other lineup tanks; the tier comes from the highest-tier lineup tank): 15v15 by

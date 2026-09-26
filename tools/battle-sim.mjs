@@ -3,7 +3,8 @@
 // pen rates, stuck tanks (alive, wanting to move, < 8 m progress over 60 s), AI and sim time per
 // tick, and how bot skill correlates with damage and survival.
 //   node tools/battle-sim.mjs [--n 4] [--maps ashford,kessel] [--workers 2] [--seed 1] [--limit 900] [--v]
-//     [--skills 0.8,0.3 (force team skills)] [--tune cover=0,danger=0.5 (src/sim/ai TUNE knobs, for A/B)]
+//     [--skills 0.8,0.3 (force team skills)] [--tune cover=0,danger=0.5 (src/sim/ai TUNE knobs, for A/B)] [--phase push=180,allIn=300,cap=330 (team.js PHASE)] [--cap rate=2,max=3,decay=5 (battle.js CAPTURE)]
+//     [--lives 1 (deploys per bot; default the matchmaker's 3)] [--limit s (default the matchmaker's battle time)]
 //     [--tiers 8,10 (anchor tank tier range: e.g. 10,10 forces tier VIII–X battles; adds a per-vehicle table)]
 // --n = battles per map. Workers run battles in parallel (worker_threads); keep it ≤ 2 on a busy box.
 import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
@@ -12,12 +13,14 @@ import { fileURLToPath } from 'url';
 
 const arg = (k, d) => { const i = process.argv.indexOf('--' + k); return i > 0 ? process.argv[i + 1] : d; };
 
-async function runBattle({ mapId, seed, limit, verbose, skills, tune, tiers }) {
+async function runBattle({ mapId, seed, limit, verbose, skills, tune, tiers, lives, phase, cap }) {
   const { loadMap } = await import('../src/sim/map/index.js');
-  const { createBattle, stepBattle } = await import('../src/sim/battle.js');
+  const { createBattle, stepBattle, spawnsLeft } = await import('../src/sim/battle.js');
   const { createBrain, TUNE } = await import('../src/sim/ai/index.js');
   Object.assign(TUNE, tune || {});
-  const { buildBattle } = await import('../src/meta/matchmaker.js');
+  Object.assign((await import('../src/sim/ai/team.js')).PHASE, phase || {});
+  Object.assign((await import('../src/sim/battle.js')).CAPTURE, cap || {});
+  const { buildBattle, botSpares } = await import('../src/meta/matchmaker.js');
   const { TANK_LIST } = await import('../src/meta/roster.js');
   const { makeRng } = await import('../src/meta/rng.js');
   const rng = makeRng(seed * 31 + 7);
@@ -25,11 +28,12 @@ async function runBattle({ mapId, seed, limit, verbose, skills, tune, tiers }) {
   const anchorPool = TANK_LIST.filter((d) => (tiers ? d.tier >= tiers[0] && d.tier <= tiers[1] : d.tier >= 2));
   const anchor = anchorPool[Math.floor(rng() * anchorPool.length)];
   const opts = buildBattle(null, anchor.id, { seed, mapId, timeLimit: limit });
-  for (const tm of opts.teams) for (const e of tm) if (e.player) { e.player = false; e.bot = { skill: 0.5, role: 'x' }; e.crewSkill = 0.76; }
+  for (const tm of opts.teams) for (const e of tm) if (e.player) { e.player = false; e.bot = { skill: 0.5, role: 'x' }; e.crewSkill = 0.76; e.spares = botSpares(rng, e, opts.meta.tiers[0], opts.meta.tiers[1]); }
+  if (lives != null) opts.lives = lives;
   // --skills a,b: force every bot of team 0 / 1 to that skill (crew follows like the matchmaker)
   if (skills) opts.teams.forEach((tm, k) => tm.forEach((e) => { e.bot.skill = skills[k]; e.crewSkill = +(0.55 + 0.42 * skills[k]).toFixed(2); }));
   const map = loadMap(mapId);
-  const world = createBattle({ map, seed, timeLimit: limit, teams: opts.teams });
+  const world = createBattle({ map, seed, timeLimit: opts.timeLimit, teams: opts.teams, lives: opts.lives });
   const brains = new Map(world.tanks.map((t) => [t.id, createBrain(world, t)]));
   if (verbose) for (const b of brains.values()) b.log = [];
   const ctrl = new Map();
@@ -45,6 +49,8 @@ async function runBattle({ mapId, seed, limit, verbose, skills, tune, tiers }) {
     const b = performance.now();
     stepBattle(world, ctrl);
     const c = performance.now();
+    // respawned bots (sim respawnBots) get a brain
+    for (const e of world.events) if (e.type === 'respawn') { const t = world.byId[e.tank]; brains.set(t.id, createBrain(world, t)); hist.set(t.id, []); if (verbose) brains.get(t.id).log = []; }
     aiMs += b - a; simMs += c - b; steps++;
     if (steps % 6 === 0) for (const t of world.tanks) {
       if (!t.alive) continue;
@@ -66,7 +72,7 @@ async function runBattle({ mapId, seed, limit, verbose, skills, tune, tiers }) {
     if (verbose && steps % 1800 === 0) {
       const T = [0, 1].map((k) => world.tanks.filter((t) => t.team === k && t.alive).map((t) => { const b = brains.get(t.id); return `${t.def.cls[0]}${b.mode[0]}${b.hold ? 'H' : b.arrived ? 'A' : ''}(${t.pos.x.toFixed(0)},${t.pos.z.toFixed(0)})`; }).join(' '));
       const tb = brains.get(world.tanks[0].id).team;
-      console.log(`  --- ${world.time.toFixed(0)}s push ${tb.push} ratio ${tb.ratio.toFixed(2)} bases ${world.bases.map((b) => b.points.toFixed(0)).join('/')}\n   t0: ${T[0]}\n   t1: ${T[1]}`);
+      console.log(`  --- ${world.time.toFixed(0)}s alive ${[0, 1].map((k) => world.tanks.filter((t) => t.team === k && t.alive).length).join(':')} spawns ${spawnsLeft(world, 0)}:${spawnsLeft(world, 1)} push ${tb.push} ratio ${tb.ratio.toFixed(2)} bases ${world.bases.map((b) => b.points.toFixed(0)).join('/')}\n   t0: ${T[0]}\n   t1: ${T[1]}`);
     }
     if (steps % 300 === 0) {
       for (const t of world.tanks) {
@@ -96,6 +102,7 @@ async function runBattle({ mapId, seed, limit, verbose, skills, tune, tiers }) {
     mapId, seed, result: world.result, time: world.time, tanks, deaths, stuck: [...stuck.values()],
     aiMsPerBotTick: aiMs / steps / bots, aiMsPerTick: aiMs / steps, simMsPerTick: simMs / steps,
     alive: [0, 1].map((k) => world.tanks.filter((t) => t.team === k && t.alive).length),
+    deployed: world.tanks.length, gone: world.tanks.filter((t) => t.gone).length,
   };
 }
 
@@ -106,14 +113,16 @@ if (!isMainThread) {
   });
 } else {
   const { MAPS } = await import('../src/sim/map/index.js');
-  const n = +arg('n', 3), workers = +arg('workers', 2), seed0 = +arg('seed', 1), limit = +arg('limit', 900);
+  const n = +arg('n', 3), workers = +arg('workers', 2), seed0 = +arg('seed', 1), limit = +arg('limit', 0) || undefined, lives = arg('lives', null) != null ? +arg('lives') : null;
   const maps = (arg('maps', MAPS.map((m) => m.id).join(','))).split(',');
   const verbose = process.argv.includes('--v');
   const skills = arg('skills', null) ? arg('skills').split(',').map(Number) : null;
   const tiers = arg('tiers', null) ? arg('tiers').split(',').map(Number) : null;
   const tune = Object.fromEntries((arg('tune', '') || '').split(',').filter(Boolean).map((kv) => { const [k, v] = kv.split('='); return [k, +v]; }));
+  const phase = Object.fromEntries((arg('phase', '') || '').split(',').filter(Boolean).map((kv) => { const [k, v] = kv.split('='); return [k, +v]; }));
+  const cap = Object.fromEntries((arg('cap', '') || '').split(',').filter(Boolean).map((kv) => { const [k, v] = kv.split('='); return [k, +v]; }));
   const jobs = [];
-  for (let i = 0; i < n; i++) for (const mapId of maps) jobs.push({ mapId, seed: seed0 + i * 101 + mapId.length * 7, limit, verbose, skills, tune, tiers });
+  for (let i = 0; i < n; i++) for (const mapId of maps) jobs.push({ mapId, seed: seed0 + i * 101 + mapId.length * 7, limit, verbose, skills, tune, tiers, lives, phase, cap });
   const results = [];
   const t0 = performance.now();
   await new Promise((resolve) => {
@@ -127,7 +136,7 @@ if (!isMainThread) {
         if (r.error) console.log('ERROR', r.job.mapId, r.job.seed, r.error);
         else {
           const R = r.result;
-          console.log(`${r.mapId.padEnd(8)} seed ${String(r.seed).padStart(5)}: ${R.reason.padEnd(9)} ${R.winner < 0 ? 'draw  ' : 'team ' + R.winner} at ${(r.time / 60).toFixed(1)} min, alive ${r.alive.join(':')}, ai ${r.aiMsPerBotTick.toFixed(3)} ms/bot·tick, sim ${r.simMsPerTick.toFixed(2)} ms${r.stuck.length ? ', STUCK ' + r.stuck.map((s) => `${s.cls}@${s.x},${s.z}(${s.mode},${s.t}s)`).join(' ') : ''}`);
+          console.log(`${r.mapId.padEnd(8)} seed ${String(r.seed).padStart(5)}: ${R.reason.padEnd(9)} ${R.winner < 0 ? 'draw  ' : 'team ' + R.winner} at ${(r.time / 60).toFixed(1)} min, alive ${r.alive.join(':')}, tanks ${r.deployed}, ai ${r.aiMsPerBotTick.toFixed(3)} ms/bot·tick, sim ${r.simMsPerTick.toFixed(2)} ms${r.stuck.length ? ', STUCK ' + r.stuck.map((s) => `${s.cls}@${s.x},${s.z}(${s.mode},${s.t}s)`).join(' ') : ''}`);
         }
         feed();
       });

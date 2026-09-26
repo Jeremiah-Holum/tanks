@@ -5,7 +5,7 @@ import { TANKS, starters } from './roster.js';
 
 export const STORAGE_KEY = 'steelfront.v1';
 export const START_CREDITS = 20000;
-export const LINEUP_START = 2, LINEUP_MAX = 5;   // battle lineup slots (extra slots are bought: economy.slotPrice)
+export const LINEUP_START = 2, LINEUP_MAX = 10;  // battle lineup slots (extra slots are bought: economy.slotPrice); a battle deploys at most 3 of them
 export const HISTORY_MAX = 40;
 export const CONSUMABLES = ['repair', 'medkit', 'extinguisher'];
 

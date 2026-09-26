@@ -6,7 +6,7 @@
 // The bot only uses what its team has spotted (world.visible[team]); no wallhacks.
 import { aimSolution, predictImpact, DT, makeRng, penPreview, hullToWorld } from '../battle.js';
 import { heightAt, lineClear, waterDepthAt, resolveCircle } from '../map/query.js';
-import { teamBrain, planBudget, evalBudget } from './team.js';
+import { teamBrain, planBudget, evalBudget, PHASE } from './team.js';
 import { plan, Follower, segClear } from './path.js';
 import { bestAim, candWorld, lineTo, gunFacing, alphaOf, chooseShell, chanceWith, pHit } from './combat.js';
 import { wrap, clamp, hyp, headingTo, shellSlots, snapPassable, passable, TAU } from './util.js';
@@ -187,7 +187,7 @@ export class Brain {
     const pos = t.pos;
     let goal = null, mode = 'post', hold = false;
     const tgt = this.targetLos ? this.target : null;
-    if (!this.post) this.setPost(T.lanePost(T.info.brawlLane, 0.3));   // brain created after the team split
+    if (!this.post) this.setPost(this.respawned ? T.rejoinPost(this) : T.lanePost(T.info.brawlLane, 0.3));   // brain created after the team split (respawn)
     // over-exposed (skilled bots): several guns on us, or losing hp fast → duck out for a bit
     if (this.knows.duck && t.spotted && now > this.duckUntil + 4 && this.peek === 0) {
       let aimed = 0;
@@ -272,7 +272,7 @@ export class Brain {
         if (prog > 0.72 || (T.push >= 2 && prog > 0.6)) this.capping = true;
         // a clearly winning team sends every third tank straight to their base, and late in the
         // battle everyone goes (a capture ends it rather than a time-out)
-        if (T.push >= 2 && ((T.ratio > 1.8 && t.id % 3 === 0) || now > 560)) { this.capping = true; hunt = null; }
+        if (T.push >= 2 && ((T.ratio > 1.8 && t.id % 3 === 0) || now > PHASE.cap)) { this.capping = true; hunt = null; }
         // pushing brawlers close the distance: stop to fight only inside brawl range
         // (or when they're taking hits), TDs and lights keep their range
         const brawl = this.cls === 'heavy' || this.cls === 'medium' ? 170 + 60 * (1 - hpF) : range;
@@ -412,7 +412,7 @@ export class Brain {
     const fx = Math.sin(t.yaw), fz = Math.cos(t.yaw), lx = fz, lz = -fx;
     let adj = 0, mul = 1;
     for (const o of world.tanks) {
-      if (o === t || (o.alive && o.team !== t.team)) continue;
+      if (o === t || o.gone || (o.alive && o.team !== t.team)) continue;
       const dx = o.pos.x - t.pos.x, dz = o.pos.z - t.pos.z;
       if (dx * dx + dz * dz > 400) continue;
       const f = dx * fx + dz * fz, l = dx * lx + dz * lz;
@@ -468,7 +468,7 @@ export class Brain {
       const x = t.pos.x + dx * r, z = t.pos.z + dz * r;
       if (!passable(nav, x, z, 2.2) || !segClear(nav, t.pos.x, t.pos.z, x, z, 2.6, world.map)) continue;
       let near = false;
-      for (const o of world.tanks) if (o !== t && hyp(o.pos.x - x, o.pos.z - z) < 7) { near = true; break; }
+      for (const o of world.tanks) if (o !== t && !o.gone && hyp(o.pos.x - x, o.pos.z - z) < 7) { near = true; break; }
       if (near) continue;
       const sc = -(dx * fx + dz * fz) * 0.6 + (g ? (dx * (g.x - t.pos.x) + dz * (g.z - t.pos.z)) / gd : 0) + this.rng() * 0.4;
       if (sc > bs) { bs = sc; best = { x, z, until: world.time + 12 }; }

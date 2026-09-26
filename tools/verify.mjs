@@ -3,7 +3,7 @@
 // the second lineup tank; skipped with Space) → drive (W), turn the
 // turret (mouse), fire (LMB), switch shells (1/3), sniper mode (Shift + wheel), score panel (Tab),
 // minimap size (M), Esc menu → resume, lineup: destroy the tank (test hook) → respawn panel → 1 →
-// the first lineup tank deploys, then wait for the battle to end → results (two-tank breakdown) → garage.
+// the first lineup tank deploys (HUD "Spawns 2/2" → "1/2"), destroyed again → spectate (no spawns left), then wait for the battle to end → results (two-tank breakdown) → garage.
 // ?fast=1 gives the player god mode and lets slow frames advance the sim further; the input tests
 // run at speed 1, then the test hooks __sf.endIn(70) + __sf.setSpeed(8) play the last 45 s at 4×.
 // Fails on any console error or page error. Screenshots: shots/verify/<quality>/NN-step.png.
@@ -220,6 +220,7 @@ try {
 
   await check('destroyed → respawn panel → the other lineup tank deploys', async () => {
     const a = await st();
+    const sp0 = await page.evaluate(() => ({ mine: document.querySelector('.hud-spawns.on')?.textContent, team: [...document.querySelectorAll('.hud-count .hs')].map((e) => e.textContent) }));
     await page.evaluate(() => window.__sf.killPlayer());
     const r = await until(async () => { const s = await st(); return s.respawn ? s : null; }, 20000, 150);
     await wait(600);
@@ -230,8 +231,20 @@ try {
     await wait(1000);
     await shot('respawned');
     const hud = await page.evaluate(() => ({ dp: document.querySelector('.hud-dmg .dp-name')?.textContent, name: window.__sf.session.player.def.name, panel: !!document.querySelector('.hud-respawn.on'), dead: document.querySelector('.hud').classList.contains('dead') }));
-    return { ok: !!r && cards === 1 && !!b && b.player.tankId === lineup[0] && b.driven.length === 2 && hud.dp === hud.name && !hud.panel && !hud.dead && b.reserve.length === 0,
-      detail: `panel ${cards} card(s); ${a.player.tankId}#${a.player.id} → ${b && b.player.tankId}#${b && b.player.id}, hud ${JSON.stringify(hud)}` };
+    const sp1 = await page.evaluate(() => document.querySelector('.hud-spawns.on')?.textContent);
+    return { ok: !!r && cards === 1 && !!b && b.player.tankId === lineup[0] && b.driven.length === 2 && hud.dp === hud.name && !hud.panel && !hud.dead && b.reserve.length === 0
+      && sp0.mine === 'Spawns 2/2' && sp1 === 'Spawns 1/2' && sp0.team.length === 2 && sp0.team.every((x) => /^\+\d+$/.test(x)) && b.spawns?.mine === 0,
+      detail: `panel ${cards} card(s); ${a.player.tankId}#${a.player.id} → ${b && b.player.tankId}#${b && b.player.id}, hud ${JSON.stringify(hud)}, spawns ${JSON.stringify(sp0)} → ${sp1}, ${JSON.stringify(b && b.spawns)}` };
+  });
+
+  await check('last lineup tank destroyed (no spawns left) → spectate, no respawn panel', async () => {
+    await page.evaluate(() => window.__sf.killPlayer());
+    const s = await until(async () => { const x = await st(); return x.phase === 'dead' || x.result ? x : null; }, 20000, 150);
+    await wait(1500);
+    const t = await st();
+    const ui = await page.evaluate(() => ({ panel: !!document.querySelector('.hud-respawn.on'), mine: document.querySelector('.hud-spawns.on')?.textContent }));
+    return { ok: !!s && !t.respawn && !ui.panel && (t.phase === 'dead' || !!t.result) && t.driven.length === 2 && ui.mine === 'Spawns 0/2',
+      detail: `phase ${t.phase}, result ${JSON.stringify(t.result)}, ui ${JSON.stringify(ui)}, spawns ${JSON.stringify(t.spawns)}` };
   });
 
   let mid = null, mid0 = 0;

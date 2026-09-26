@@ -191,7 +191,7 @@ export function dealDamage(world, tank, dmg, byId, cause, ev) {
 
 export function kill(world, tank, byId, cause) {
   if (!tank.alive) return;
-  tank.alive = false; tank.hp = 0; tank.killedBy = byId || null; tank.deathCause = cause;
+  tank.alive = false; tank.hp = 0; tank.killedBy = byId || null; tank.deathCause = cause; tank.diedAt = world.time;
   tank.reload = 0; tank.speed *= 0.3; tank.yawRate = 0; tank.turretRate = 0; tank.gunRate = 0;
   const by = world.byId[byId];
   if (by && by.team !== tank.team) by.stats.kills++;

@@ -27,6 +27,7 @@ const TEMPLATES = {
 };
 const CLASS_W = { medium: 0.36, heavy: 0.22, td: 0.24, light: 0.18 };
 const CLASS_CAP = { 15: { light: 3, heavy: 5, td: 5, medium: 8 }, 7: { light: 2, heavy: 3, td: 2, medium: 4 } };
+export const BATTLE_TIME = 1200;   // s: 20 min (was 15) for 3 deploys per side (docs/notes/meta.md "Deploys")
 export const ROLE = { light: 'scout', medium: 'flex', heavy: 'brawl', td: 'sniper' };
 
 const weighted = (rng, entries) => {
@@ -90,6 +91,24 @@ function botEntry(rng, def, name, skill) {
     consumables: CONSUMABLES.slice(), crewSkill: +(0.55 + 0.42 * skill).toFixed(2) };
 }
 
+// Bot respawns (sim MAX_DEPLOYS): each bot gets DEPLOYS - 1 spare Entries (same name, skill and
+// nation; same class if possible; tier within ±1 of its own and inside the battle's tier range;
+// a different tank when one exists). Its own rng stream, so the teams are unchanged.
+export const DEPLOYS = 3;
+export function botSpares(rng, e, lo, hi, n = DEPLOYS - 1) {
+  const d0 = e.def, ok = (d) => d.nation === d0.nation && Math.abs(d.tier - d0.tier) <= 1 && d.tier >= lo && d.tier <= hi;
+  let pool = TANK_LIST.filter((d) => ok(d) && d.cls === d0.cls);
+  if (pool.length < 2) pool = pool.concat(TANK_LIST.filter((d) => ok(d) && d.cls !== d0.cls));
+  const other = pool.filter((d) => d !== d0);
+  const out = [];
+  for (let k = 0; k < n; k++) {
+    const list = other.length ? other.filter((d) => !out.some((x) => x.def === d)) : [];
+    const d = list.length ? rng.pick(list) : other.length ? rng.pick(other) : d0;
+    out.push(botEntry(rng, d, e.name, e.bot.skill));
+  }
+  return out;
+}
+
 // tankId: the tank to spawn in first, or the whole lineup (array, spawn order; also opts.lineup).
 // opts.start: the lineup tank to spawn in (default lineup[0]). The battle tier comes from the
 // highest-tier lineup tank; the other lineup tanks (lineup order) become battle.reserve[playerTeam]
@@ -134,9 +153,11 @@ export function buildBattle(profile, tankId, opts = {}) {
     const order = { heavy: 0, medium: 1, td: 2, light: 3 };
     teams[team].sort((a, b) => b.def.tier - a.def.tier || order[a.def.cls] - order[b.def.cls] || a.name.localeCompare(b.name));
   }
+  const lo = Math.min(...tiers), hi = Math.max(...tiers), srng = makeRng((seed ^ 0x2545f491) >>> 0);
+  for (const tm of teams) for (const e of tm) if (e.bot) e.spares = botSpares(srng, e, lo, hi);
   const avgSkill = teams.map((tm) => +(tm.filter((e) => e.bot).reduce((a, e) => a + e.bot.skill, 0) / Math.max(1, tm.filter((e) => e.bot).length)).toFixed(3));
   return {
-    mapId: map.id, map: null, seed, timeLimit: opts.timeLimit ?? 900, mode: opts.mode || 'standard', teams,
+    mapId: map.id, map: null, seed, timeLimit: opts.timeLimit ?? BATTLE_TIME, mode: opts.mode || 'standard', teams, lives: DEPLOYS,
     reserve: [0, 1].map((t) => (t === playerTeam ? lineup.filter((id) => id !== tankId).map((id) => playerEntry(profile, id)) : [])),
     meta: { mapId: map.id, mapName: map.name, blurb: map.blurb, theme: map.theme, size, template,
       tiers: [Math.min(...tiers), Math.max(...tiers)], playerTeam, playerIndex: teams[playerTeam].findIndex((e) => e.player),

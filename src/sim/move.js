@@ -133,8 +133,10 @@ export function collideTanks(world, dt) {
   const T = world.tanks, n = T.length;
   for (let i = 0; i < n; i++) {
     const A = T[i], ha = A.def.hull, ra = ha.W / 2 + ha.track.w, La = Math.max(0, ha.L / 2 - ra);
+    if (A.gone) continue;   // cleared wreck
     for (let j = i + 1; j < n; j++) {
       const B = T[j];
+      if (B.gone) continue;
       const dx0 = B.pos.x - A.pos.x, dz0 = B.pos.z - A.pos.z, R = (ha.L + B.def.hull.L) / 2 + 0.5;
       if (dx0 * dx0 + dz0 * dz0 > R * R || Math.abs(B.pos.y - A.pos.y) > 4) continue;
       const hb = B.def.hull, rb = hb.W / 2 + hb.track.w, Lb = Math.max(0, hb.L / 2 - rb);

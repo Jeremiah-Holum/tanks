@@ -111,6 +111,19 @@ use cover. A sniper sitting behind its bush may shoot out to 445 m (the shot kee
 engine / destroyed gun in combat / damaged ammo rack (unicums), medkit on a dead crew member;
 all after a skill-scaled delay (0.4–2.9 s).
 
+## Respawns (3 deploys per bot, 2026-09-26)
+- The sim respawns bots (`respawnBots`, 6 s after death, next `Entry.spares` tank); the harness (session, battle-sim) gives
+  each `respawn{bot}` event's tank a new Brain. `TeamBrain.register` marks a brain created after the opening split as
+  `respawned`: no staging / scouting opening; `decide` gives it `rejoinPost` (TDs: sniper / bush point, lights: bush /
+  flank, heavies / mediums: a point on the lane where the enemy outnumbers us most). Dead bots release their points.
+- Strength ratio and "few enemies left" rules count spawns left as fresh tanks of the team's mean value (public info).
+- `PHASE` (team.js): push 180 s, all-in 300 s, everyone caps 330 s (was 300 / 450 / 560); sim `CAPTURE.rate` 2 (was 1).
+  `battle-sim --phase push=…,allIn=…,cap=… --cap rate=…,max=…,decay=… --lives n` for A/B.
+- Measured (`--n 8 --workers 2`, 32 battles): before (1 life, 15 min) median 6.1 min, 3% time-outs, 11:20:1, stuck 8;
+  after (3 deploys, 20 min, wreck cap 10) median 10.2 min (mean 10.2, 7.1–14.3), 0 time-outs, 16:16:0, 19 captures /
+  13 destroyed, stuck 14 (≈ same per tank-minute; the kessel bridge ~450,390 and kolvik ~380,480 chokepoints). With a
+  20-wreck cap stuck was 28: wrecks piling in chokepoints are the main cause.
+
 ## Tuning knobs
 In `index.js`: `ENGAGE_RANGE`, `FIRE_RANGE`, the skill formulas at the top of the `Brain`
 constructor (react, evalN, aimErrBase, errFloor, patience, patienceK, leadK, goldBudget,

@@ -4,9 +4,12 @@
 // counts battles to tier V, VII and X along each line for an "average player", and the post-war
 // tiers VIII–X (research chain, rewards, full tier VIII–X battles).
 import { TANKS, TANK_LIST, NATIONS, MAPS, STUB_TANKS, STUB_MAPS, ROMAN, MAX_TIER, childrenOf } from '../src/meta/roster.js';
-import { newProfile, migrate, ownedIds, selectTank, START_CREDITS, defaultAmmo, startTankOf } from '../src/meta/profile.js';
+import { newProfile, migrate, ownedIds, selectTank, START_CREDITS, defaultAmmo, startTankOf, LINEUP_MAX, fixLineup } from '../src/meta/profile.js';
 import * as eco from '../src/meta/economy.js';
-import { buildBattle } from '../src/meta/matchmaker.js';
+import { buildBattle, DEPLOYS, BATTLE_TIME } from '../src/meta/matchmaker.js';
+import { createBattle, respawnTank, stepBattle, MAX_DEPLOYS, deploysLeft, spawnsLeft } from '../src/sim/battle.js';
+import { kill } from '../src/sim/damage.js';
+import { testMap } from '../src/sim/testmap.js';
 import { summarize, applyReport } from '../src/meta/results.js';
 import { makeRng } from '../src/meta/rng.js';
 
@@ -325,10 +328,14 @@ function simulate(line, seed) {
   ok(eco.addToLineup(p, own[2]).reason === 'slots', 'lineup is full at 2 slots');
   p.credits = 24999;
   ok(eco.slotPrice(p) === 25000 && eco.buySlot(p).reason === 'credits', '3rd slot costs 25,000');
-  p.credits = 25000 + 60000 + 120000 + 7;
+  p.credits = 25000 + 60000 + 120000 + 200000 + 300000 + 450000 + 650000 + 900000 + 7;
   ok(eco.buySlot(p).ok && p.lineupSlots === 3 && eco.slotPrice(p) === 60000, 'buy 3rd slot, 4th costs 60,000');
-  ok(eco.buySlot(p).ok && eco.slotPrice(p) === 120000 && eco.buySlot(p).ok && p.lineupSlots === 5 && p.credits === 7, 'slots 4 and 5 (120,000), credits spent');
-  ok(eco.slotPrice(p) === null && eco.buySlot(p).reason === 'max', 'max 5 slots');
+  ok(eco.buySlot(p).ok && eco.slotPrice(p) === 120000 && eco.buySlot(p).ok && p.lineupSlots === 5, 'slots 4 and 5 (120,000)');
+  const prices = [];
+  while (eco.slotPrice(p) != null) { prices.push(eco.slotPrice(p)); if (!eco.buySlot(p).ok) break; }
+  ok(prices.join() === '200000,300000,450000,650000,900000' && p.lineupSlots === 10 && p.credits === 7, 'slots 6–10 escalate (200k … 900k), credits spent');
+  ok(LINEUP_MAX === 10 && eco.slotPrice(p) === null && eco.buySlot(p).reason === 'max', 'max 10 slots');
+  { const f = newProfile('F'); f.lineupSlots = 99; fixLineup(f); ok(f.lineupSlots === 10, 'fixLineup clamps slots to 10'); }
   ok(eco.addToLineup(p, own[2]).ok && p.lineup.length === 3, 'add a tank to a bought slot');
   ok(eco.removeFromLineup(p, own[1]).ok && !p.lineup.includes(own[1]), 'remove a tank from the lineup');
   // selling removes the tank from the lineup; buying fills a free slot
@@ -362,12 +369,38 @@ function simulate(line, seed) {
   if (outside) { selectTank(q, outside); ok(startTankOf(q) === q.lineup[0], 'a selected tank outside the lineup: start in lineup #1'); }
   selectTank(q, q0);
 
+  // deploys: a 5-tank lineup still deploys at most 3 tanks; bots get 2 spares each
+  {
+    const L = newProfile('Deploy'), five = TANK_LIST.filter((d) => d.tier >= 2 && d.tier <= 3).slice(0, 4);
+    for (const d of five) L.tanks[d.id] = { ...L.tanks[L.selected], owned: true, gun: 0, guns: [0], ammo: defaultAmmo(d, 0) };
+    L.lineupSlots = 5; eco.setLineup(L, [L.selected, ...five.map((d) => d.id)].slice(0, 5));
+    const B = buildBattle(L, L.lineup, { seed: 11 }), pt = B.meta.playerTeam;
+    ok(DEPLOYS === 3 && MAX_DEPLOYS === 3 && B.lives === 3 && B.timeLimit === BATTLE_TIME && BATTLE_TIME === 1200, 'battles: 3 deploys each, 20 min');
+    ok(B.reserve[pt].length === L.lineup.length - 1 && L.lineup.length === 5, 'the whole lineup is offered in reserve (5 tanks)');
+    const bots = B.teams.flat().filter((e) => e.bot), [lo, hi] = B.meta.tiers;
+    ok(bots.every((e) => e.spares.length === 2 && e.spares.every((s) => s.bot && s.name === e.name && s.bot.skill === e.bot.skill && s.def.nation === e.def.nation
+      && Math.abs(s.def.tier - e.def.tier) <= 1 && s.def.tier >= lo && s.def.tier <= hi)), 'bot spares: 2 each, same name / skill / nation, tier ±1 inside the battle');
+    ok(bots.filter((e) => e.spares.some((s) => s.def !== e.def)).length >= bots.length * 0.8, 'bot spares are mostly other tanks');
+    const B2 = buildBattle(L, L.lineup, { seed: 11 });
+    ok(JSON.stringify(B2.teams.flat().map((e) => (e.spares || []).map((s) => s.def.id))) === JSON.stringify(B.teams.flat().map((e) => (e.spares || []).map((s) => s.def.id))), 'bot spares are deterministic');
+    // the sim caps the player at 3 deploys even with 4 lineup tanks in reserve
+    const W = createBattle({ map: testMap(), seed: 3, teams: [[{ ...B.teams[pt].find((e) => e.player) }], [{ ...bots[0], spares: [] }]], reserve: [B.reserve[pt], []] });
+    const me = W.tanks[0], foe = W.tanks[1], slot = W.slotOf[me.id];
+    ok(deploysLeft(W, slot) === 2 && spawnsLeft(W, 0) === 2, 'player: 2 respawns left at the start (4 lineup tanks in reserve)');
+    kill(W, me, foe.id, 'shot'); const r1 = respawnTank(W, 0, 3);
+    kill(W, r1, foe.id, 'shot'); const r2 = respawnTank(W, 0, 0);
+    kill(W, r2, foe.id, 'shot'); const r3 = respawnTank(W, 0, 0);
+    ok(r1 && r2 && !r3 && r2.life === 3 && r2.slot === me.id && W.reserve[0].length === 2 && deploysLeft(W, slot) === 0, '3rd death: no 4th tank although 2 lineup tanks are unused');
+    stepBattle(W, new Map());
+    ok(W.result && W.result.winner === 1 && W.result.reason === 'destroyed', 'after 3 deploys the team is defeated');
+  }
+
   // per-tank rewards: two tanks driven, each with its own stats
   const rng = makeRng(5);
   const w = fakeWorld(b, { won: true, survived: false, stats: { dmg: 120, shots: 4, hits: 3, pens: 2, kills: 1 } }, rng);
   const first = w.tanks.find((t) => t.player);
   const e2 = b.reserve[b.meta.playerTeam][0];
-  const second = { id: 99, team: first.team, def: e2.def, gunDef: e2.def.guns[0], name: first.name, player: true, alive: true, hp: Math.round(e2.def.hp * 0.5), maxHp: e2.def.hp,
+  const second = { id: 99, slot: first.id, life: 2, team: first.team, def: e2.def, gunDef: e2.def.guns[0], name: first.name, player: true, alive: true, hp: Math.round(e2.def.hp * 0.5), maxHp: e2.def.hp,
     ammo: e2.ammo.slice(), consumables: e2.consumables.map((k) => ({ kind: k, ready: true, cd: 0 })),
     stats: { dmg: 900, assist: 0, blocked: 0, kills: 2, shots: 6, hits: 5, pens: 5, received: 400, spotted: 1, capture: 0, defended: 0 } };
   second.ammo[0] -= 6;

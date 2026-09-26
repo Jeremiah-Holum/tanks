@@ -21,11 +21,11 @@ acceptance.
 ## State: playable end to end ✅
 | Check | Result |
 |---|---|
-| `node tools/rules-test.mjs` | 103/103 (armour, ballistics, dispersion, spotting, capture, respawn, regressions, tier VIII–X armour) |
+| `node tools/rules-test.mjs` | 111/111 (armour, ballistics, dispersion, spotting, capture, respawn, deploys + wreck cap, regressions, tier VIII–X armour) |
 | `node tools/maps-test.mjs` | 1356/1356 (4 maps, nav, spawns, fairness, raycasts) |
-| `node tools/meta-test.mjs` | 77/77 (economy, research, matchmaker, results, lineup, tiers VIII–X) |
-| `node tools/battle-sim.mjs` | 64 bot battles: median 6.5 min, 3% time-outs, 29:33 wins, 2/1920 stuck. Tier VIII–X: `--tiers 9,10 --n 2` 8 battles, `--tiers 7,8 --n 1` 4 battles, no errors, 1 stuck tank (kolvik), pens 68–85% of hits for every new tank |
-| `tools/capped.sh -- node tools/verify.mjs low` / `medium` | low 21/21 (2026-09-26, Windows, system Chrome, start pick: 1 then 2, respawn into #1); medium 18/18 before the lineup: full flow by real input, zero console errors |
+| `node tools/meta-test.mjs` | 87/87 (economy, research, matchmaker, results, lineup, 10 slots, 3-deploy limit, bot spares, tiers VIII–X) |
+| `node tools/battle-sim.mjs` | 3 deploys per bot (2026-09-26, `--n 8 --workers 2`): 32 battles, median 10.2 min, 0% time-outs (20 min limit), 16:16 wins, 19 captures / 13 destroyed, 14 stuck (before the change: median 6.1 min, 3% time-outs, 11:20:1, 8 stuck). Older: 64 bot battles: median 6.5 min, 3% time-outs, 29:33 wins, 2/1920 stuck. Tier VIII–X: `--tiers 9,10 --n 2` 8 battles, `--tiers 7,8 --n 1` 4 battles, no errors, 1 stuck tank (kolvik), pens 68–85% of hits for every new tank |
+| `tools/capped.sh -- node tools/verify.mjs low` / `medium` | low 22/22 (2026-09-26, deploys: Spawns 2/2 → 1/2, last tank → spectate, zero console errors); low 21/21 (2026-09-26, Windows, system Chrome, start pick: 1 then 2, respawn into #1); medium 18/18 before the lineup: full flow by real input, zero console errors |
 | `node tools/build.mjs` | `dist/` ≈ 1.2 MB, fully static |
 
 What works:
@@ -51,9 +51,9 @@ What works:
 
 ## Battle lineup (2026-09-26)
 Owner request: "lineup limited to 2 tanks, buy more spots, respawn with a tank when you die" (War Thunder style).
-- Profile `lineup` + `lineupSlots` (2, buy up to 5: 25k / 60k / 120k credits). Old saves get [selected, next owned].
+- Profile `lineup` + `lineupSlots` (2, buy up to 5: 25k / 60k / 120k credits; up to 10 since "Deploys" below). Old saves get [selected, next owned].
 - Garage: the carousel starts with the lineup slots (order, remove, empty slots, buy slot); BATTLE! uses the lineup.
-- Matchmaking tier = the highest-tier lineup tank. Bots are unchanged and never respawn.
+- Matchmaking tier = the highest-tier lineup tank. Bots never respawned (superseded: see "Deploys" below).
 - Battle: when your tank dies and lineup tanks remain, a panel counts down 5 s (1–5 / click picks), then you respawn
   at your spawn area in that tank (`respawnTank` in the sim). Your team isn't beaten while you can still respawn.
   Leaving forfeits the respawns.
@@ -65,6 +65,22 @@ Owner request: "lineup limited to 2 tanks, buy more spots, respawn with a tank w
   when it is in the lineup; the lineup order decides the respawn list); lineups may mix nations; each respawn earns its own participation reward; a new tank fills a free slot.
 - Headless tools on Windows: `tools/lib-browser.mjs` now falls back to a node static server (no python3) and to the
   installed Chrome / Edge when Playwright's Chromium isn't installed (`SF_CHANNEL=chrome|msedge` forces one).
+
+## Deploys: 3 tanks per battle, for everyone (2026-09-26)
+Owner: "do all the AI get 3 tanks?" / "we can have however many but we should only get to choose 3 throughout the course of the game".
+- Lineup: up to 10 slots (6th–10th: 200k / 300k / 450k / 650k / 900k). In a battle the player deploys at most 3 tanks
+  (start + 2 respawns) chosen from the unused lineup tanks; after the 3rd death: spectate.
+- Bots: 3 tanks each. The sim respawns a dead bot after 6 s at its team's safest spawn point in its next spare (matchmaker
+  `botSpares`: same nation, class if possible, tier ±1 inside the battle's range, deterministic); the new brain rejoins the
+  team plan (`rejoinPost`). A team loses when it has no live tank and no spawns left, or its base is captured; time-out = draw.
+- Pace: battle timer 20 min (was 15), capture rate ×2, AI phases earlier (push 180 s / all-in 300 s / cap 330 s).
+- HUD: team lists one row per player/bot with "+N" spawns left; top counter shows team spawns ("+28 14 : 14 +30");
+  "Spawns 3/3" under the timer; Tab panel per player. Results: one row per player/bot (stats summed).
+- Performance: at most `WRECK_MAX` = 10 wrecks; older ones sink away and are removed (sim: no collision/hits). Spare tank
+  types are prewarmed at load. Sim cost 0.11 → 0.16 ms/tick (battle-sim).
+- Decisions made without the owner: 10-slot cap and prices; bots respawn in a different tank of their nation (not the
+  same one); 6 s bot delay; wreck cap 10 (20 doubled stuck bots at chokepoints); "Spawns X/Y" counts the tank you are in.
+- Details: docs/notes/meta.md "Deploys", sim.md "Deploys and wrecks", ai.md "Respawns", integration.md "Deploys".
 
 ## Post-war tiers VIII–X (2026-09-26)
 Owner request: "more tanks… more modern… maybe 3–4 per tech tree". Twelve tanks continue the tier VII lines:

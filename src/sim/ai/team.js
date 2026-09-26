@@ -2,7 +2,7 @@
 // what the team has seen), lane strengths, push / all-in phases, base defence, and a nav cost
 // overlay that spreads paths (congestion) so the team doesn't funnel down one street.
 import { mapInfo, clamp, hyp, headingTo, snapPassable } from './util.js';
-import { makeRng } from '../battle.js';
+import { makeRng, spawnsLeft } from '../battle.js';
 import { lineClear, heightAt } from '../map/query.js';
 
 const SHARED = new WeakMap();
@@ -42,6 +42,9 @@ export function evalBudget(world, team, force = false) {
 const PRIOR_W = 0.35;   // danger per enemy sniper spot that sees a cell (map knowledge)
 const CLS_W = { light: 0.7, medium: 1, heavy: 1.25, td: 1 };
 // tier matters a lot: each tier up roughly doubles combat value (hp · dpm)
+// Battle phases (s): push (heavies / mediums advance), all-in (everyone), late cap (everyone caps).
+// Tuned for 3 deploys per bot (docs/notes/ai.md "Respawns"); battle-sim --phase push=…,allIn=…,cap=….
+export const PHASE = { push: 180, allIn: 300, cap: 330 };
 const value = (def, hpFrac) => CLS_W[def.cls] * Math.pow(1.7, def.tier - 5) * (0.35 + 0.65 * hpFrac);
 
 export class TeamBrain {
@@ -68,7 +71,7 @@ export class TeamBrain {
       this.nav = { cell: nav.cell, cols: nav.cols, rows: nav.rows, cost: this.navCost };
       this.navS = { cell: nav.cell, cols: nav.cols, rows: nav.rows, cost: this.navStatic };
     } else this.nav = this.navS = null;
-    this.wrecks = new Set();
+    this.wrecks = new Set(); this.cleared = new Set();   // wrecks (nav cost added) / cleared wrecks (cost removed)
     this.lastDecay = 0;
     this.assigned = false;
     // danger map: coarse cells seen by recently spotted enemies (computed a slice per tick)
@@ -79,7 +82,28 @@ export class TeamBrain {
     this.planScratch = this.nav ? new Float32Array(this.navCost.length) : null;
   }
 
-  register(b) { this.brains.push(b); this.byTank.set(b.t.id, b); }
+  // A brain made after the opening split is a respawned bot (sim respawnBots): it skips the
+  // opening (staging, scouting) and rejoins the plan with a post where the team needs it.
+  register(b) {
+    this.brains.push(b); this.byTank.set(b.t.id, b);
+    if (this.assigned) { b.respawned = true; b.stageUntil = 0; b.openingT = 0; b.scoutPhase = 0; }
+  }
+  rejoinPost(b) {
+    let p = null;
+    if (b.cls === 'td') p = this.leastUsed(this.ownPoints(['sniper', 'bush']));
+    else if (b.cls === 'light') p = this.leastUsed(this.ownPoints(['bush', 'flank']));
+    let g = this.info.brawlLane;
+    if (!p) {
+      // heavies / mediums: the lane where the enemy outnumbers us most (ties: the brawl lane)
+      let bs = -Infinity;
+      for (let i = 0; i < this.info.lanes.length; i++) {
+        const s = (this.laneE[i] || 0) - (this.laneA[i] || 0) + (i === this.info.brawlLane && b.cls === 'heavy' ? 0.5 : 0) + this.rng() * 0.3;
+        if (s > bs) { bs = s; g = i; }
+      }
+      p = this.leastUsed(this.ownPoints(b.cls === 'heavy' ? ['brawl', 'hulldown'] : ['hulldown', 'flank', 'bush', 'brawl'], g));
+    }
+    return p ? this.postAt(p, b.cls === 'heavy' ? 12 : 14) : this.lanePost(g, 0.35);
+  }
   // Team-relative lane progress (0 at our base, 1 at theirs).
   prog(x, z, g) { const s = this.info.lanes[g].project(x, z).s; return this.team === 0 ? s : 1 - s; }
   laneAt(g, s) { return this.info.lanes[g].at(this.team === 0 ? s : 1 - s); }
@@ -96,7 +120,8 @@ export class TeamBrain {
     for (const t of world.tanks) {
       if (!t.alive) {
         if (t.team !== this.team) this.known.delete(t.id);
-        if (!this.wrecks.has(t.id)) { this.wrecks.add(t.id); this.addWreck(t.pos.x, t.pos.z); }
+        if (t.gone) { if (this.wrecks.has(t.id) && !this.cleared.has(t.id)) { this.cleared.add(t.id); this.addWreck(t.pos.x, t.pos.z, -1); } }
+        else if (!this.wrecks.has(t.id)) { this.wrecks.add(t.id); this.addWreck(t.pos.x, t.pos.z); }
         continue;
       }
       if (t.team === this.team) {
@@ -111,14 +136,20 @@ export class TeamBrain {
       sE += value(t.def, k ? k.hp / t.maxHp : 1);
       if (k && world.time - k.t < 25) this.laneE[this.info.geo(k.x, k.z)]++;
     }
-    for (const b of this.brains) if (b.t.alive && b.target) this.focus.set(b.target.id, (this.focus.get(b.target.id) || 0) + 1);
+    for (const b of this.brains) {
+      if (b.t.alive) { if (b.target) this.focus.set(b.target.id, (this.focus.get(b.target.id) || 0) + 1); }
+      else if (b.post && b.post.point) { this.releasePoint(b.post.point); b.post = null; }   // dead bots free their spot
+    }
+    // spawns left (public: the score bar shows them) count as fresh tanks of the team's mean value
+    const spA = spawnsLeft(world, this.team), spE = spawnsLeft(world, this.enemy);
+    if (spA || spE) { sA += spA * sA / Math.max(1, aA); sE += spE * sE / Math.max(1, aE); aA += spA; aE += spE; }
     this.aliveA = aA; this.aliveE = aE;
     this.ratio = sA / Math.max(0.05, sE);
     // Phase: push when stronger or as time passes; all-in late or when crushing.
     const T = world.time;
     let push = 0;
-    if ((T > 150 && this.ratio > 1.35) || T > 300 || (aE <= 3 && aA >= aE + 2)) push = 1;
-    if (T > 450 || this.ratio > 2.2 || aE <= 2 || (T > 200 && this.ratio > 1.8)) push = 2;
+    if ((T > 150 && this.ratio > 1.35) || T > PHASE.push || (aE <= 3 && aA >= aE + 2)) push = 1;
+    if (T > PHASE.allIn || this.ratio > 2.2 || aE <= 2 || (T > 200 && this.ratio > 1.8)) push = 2;
     this.push = Math.max(this.push === 2 && this.ratio > 0.7 ? 2 : 0, push);
     // Base defence: our base is being captured.
     const b = world.bases.find((x) => x.team === this.team);
@@ -241,7 +272,7 @@ export class TeamBrain {
     }
   }
   // A wreck is a permanent obstacle: its cell (and the ones it overlaps) get dearer.
-  addWreck(x, z) {
+  addWreck(x, z, sign = 1) {
     if (!this.nav) return;
     const { cell, cols, rows } = this.nav, cc = Math.floor(x / cell), rr = Math.floor(z / cell);
     for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
@@ -250,7 +281,7 @@ export class TeamBrain {
       // overlap of a ~4.5 m wreck circle with the neighbouring cell
       const nx = Math.max(q * cell, Math.min(x, (q + 1) * cell)), nz = Math.max(r * cell, Math.min(z, (r + 1) * cell));
       if (Math.hypot(nx - x, nz - z) > 4.5) continue;
-      const k = r * cols + q, add = dr || dc ? 1.5 : 4;
+      const k = r * cols + q, add = (dr || dc ? 1.5 : 4) * sign;
       if (isFinite(this.navStatic[k])) { this.navStatic[k] += add; this.navCost[k] += add; }
     }
   }

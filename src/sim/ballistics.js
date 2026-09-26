@@ -11,7 +11,7 @@ const _o = {}, _d = {}, _n = {};
 function firstTank(world, o, d, L, skipId, skipPiece) {
   let best = null, bt = L;
   for (const t of world.tanks) {
-    if (t.id === skipId) continue;
+    if (t.id === skipId || t.gone) continue;
     // segment vs bounding sphere around the hull centre
     const cx = t.pos.x - o.x, cy = t.pos.y + t.cy - o.y, cz = t.pos.z - o.z;
     const along = cx * d.x + cy * d.y + cz * d.z;

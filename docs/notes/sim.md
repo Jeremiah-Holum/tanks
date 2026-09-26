@@ -85,6 +85,18 @@ Not fixed (not requested): a muzzle buried in a hill with the pivot above ground
 ## Contract change requests
 - None blocking. Please bless as contract: `steer +1 = right`, events keyed by `type` with `shellType` for the shell type, `capture.by`, the magazine fields above.
 
+## Deploys and wrecks (2026-09-26)
+- `createBattle({ …, lives = MAX_DEPLOYS (3) })`. Every starting tank is a slot (`world.slots`, `world.slotOf[id]`;
+  `t.slot` = the first tank's id, `t.life` = 1..lives). Player slot: `respawnTank` refuses past `lives`. Bot slots
+  (`Entry.spares`): `respawnBots` brings the next spare in `BOT_RESPAWN_DELAY` = 6 s after a death at the safest spawn
+  point (same placement as the player's). `deploysLeft(world, slot)`, `spawnsLeft(world, team)`. A team is defeated when
+  it has no live tank and no spawn left (or its base is captured, or time-out → draw).
+- `CAPTURE` = { rate 2 (was 1), max 3, decay 5 }: 100 points in 17 s with 3 cappers.
+- Wreck cap: `WRECK_MAX` = 10. Beyond it the oldest wreck (by `diedAt`) gets `t.gone` + event `wreckGone`: no
+  collision, no shell hits, not stepped, skipped by AI avoidance / nav (its wreck cost is removed); stats kept.
+- rules-test "deploys" section: spawns left, not defeated while spawns remain, respawn delay / spare / fresh consumables,
+  3rd tank then defeat, determinism, no spares → no respawn, wreck cap.
+
 ## Tiers VIII–X (post-war, 2026-09-26)
 Twelve tanks, four per nation, continuing the tier VII lines (MT VIII → IX → X, HT VIII):
 | tank | tier | hp | top gun (AP / premium, dmg, reload) | armour idea |

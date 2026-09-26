@@ -75,12 +75,12 @@ screens.startBattle()                     // what BATTLE! does: buildBattle(prof
   from `battle` entry ammo − `tank.ammo`.
 
 ## Battle lineup (War Thunder style)
-- Profile: `lineupSlots` (starts at `LINEUP_START` = 2, max `LINEUP_MAX` = 5) and `lineup` = owned tank ids in
+- Profile: `lineupSlots` (starts at `LINEUP_START` = 2, max `LINEUP_MAX` = 10 since "Deploys" below) and `lineup` = owned tank ids in
   spawn order (1..slots, no duplicates). `fixLineup(p)` validates it (called by `newProfile`, `migrate`, `sell`);
   old saves migrate to `[selected, next owned]`. `lineupOf(p)` = the validated copy. `selected` stays the tank
   shown in the garage (loadout editing); the battle always uses the lineup. `startTankOf(p)` = the default starting
   tank: `selected` if it is in the lineup, else `lineup[0]` (the player can pick another during the countdown).
-- Economy: `SLOT_PRICES` 3rd 25,000 · 4th 60,000 · 5th 120,000 (≈1–3 battles of net income at the tier where a
+- Economy: `SLOT_PRICES` 3rd 25,000 · 4th 60,000 · 5th 120,000 (6th–10th: see "Deploys") (≈1–3 battles of net income at the tier where a
   player first owns that many tanks); `slotPrice/slotInfo/buySlot`, `setLineup` (owned only, no duplicates,
   1..slots), `addToLineup/removeFromLineup/moveInLineup`. Buying a tank fills a free slot; selling removes it
   (an emptied lineup refills with the selected tank).
@@ -97,6 +97,18 @@ screens.startBattle()                     // what BATTLE! does: buildBattle(prof
 - Garage: the carousel starts with the lineup (numbered slots, ◀ spawn earlier, ✕ remove, empty slots, a
   "Buy slot" card with the price), then the other owned tanks (+ adds to the lineup). Under BATTLE!: tanks,
   battle tier and "you start in the X" (the selected lineup tank, else #1).
+
+## Deploys (3 tanks per battle, 2026-09-26)
+Owner: "we can have however many but we should only get to choose 3 throughout the course of the game".
+- `LINEUP_MAX` = 10. `SLOT_PRICES` 3rd 25k · 4th 60k · 5th 120k · 6th 200k · 7th 300k · 8th 450k · 9th 650k · 10th 900k
+  (6–10 are a late-game credit sink: more slots = more choice, not more lives).
+- The whole lineup (minus the start tank) is still `battle.reserve[playerTeam]`; the sim caps deploys (`battle.lives` =
+  `DEPLOYS` = 3 = sim `MAX_DEPLOYS`): start + 2 respawns, picked from the unused lineup tanks.
+- Bots: every bot Entry gets `spares` (2 Entries, `botSpares`): same name, skill and nation, same class when possible,
+  tier within ±1 of its own and inside the battle's tier range, a different tank when one exists; drawn from their own
+  rng stream (`seed ^ 0x2545f491`) so team make-up is unchanged for a seed.
+- `BATTLE_TIME` = 1200 s (20 min, was 15). Results: one team row per slot (the last tank it drove, stats and XP summed,
+  `deploys`); `report.size` = slots. Player rewards unchanged (per tank driven).
 
 ## Economy (live roster)
 Reward rates are **derived from the roster** (average research cost and price of tier t+1), so an

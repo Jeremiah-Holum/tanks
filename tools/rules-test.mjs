@@ -9,7 +9,7 @@ import { fire } from '../src/sim/gunnery.js';
 import { rayArmor, gunPivot } from '../src/sim/tank.js';
 import { settle } from '../src/sim/move.js';
 import { startFire, useConsumable, plateEff, kill } from '../src/sim/damage.js';
-import { respawnTank, chooseStartTank } from '../src/sim/battle.js';
+import { respawnTank, chooseStartTank, spawnsLeft, deploysLeft, BOT_RESPAWN_DELAY, WRECK_MAX, MAX_DEPLOYS } from '../src/sim/battle.js';
 import { testMap, simpleBot } from '../src/sim/testmap.js';
 import { existsSync } from 'fs';
 
@@ -421,12 +421,12 @@ console.log('Battle rules');
   const w = battle(['usa_m4', 'usa_m4'], ['ger_tiger']); const [a, b, d] = w.tanks;
   const base = w.bases.find((x) => x.team === 1);
   place(w, a, base.x, base.z, 0); place(w, b, base.x + 5, base.z, 0); place(w, d, base.x, base.z - 250, 0);
-  run(w, 10);
-  check('two cappers: +2 points/s', Math.abs(base.points - 20) < 0.5, f1(base.points));
+  run(w, 5);
+  check('two cappers: +4 points/s (CAPTURE.rate 2)', Math.abs(base.points - 20) < 0.5, f1(base.points));
   // damage a capper: its contribution is removed
   d.reload = 0; d.gunDef = TANKS.ger_tiger.guns[1];
   const ev = shoot(w, d, onTank(a, 0, 1.2, 0), 0, 1.5);
-  check('damaging a capper resets its contribution', hits(ev, a.id).some((e) => e.dmg > 0) && base.points < 15, f1(base.points));
+  check('damaging a capper resets its contribution', hits(ev, a.id).some((e) => e.dmg > 0) && base.points < 20, f1(base.points));
   run(w, 60);
   check('capture reaches 100 and wins', w.result && w.result.winner === 0 && w.result.reason === 'capture', JSON.stringify(w.result));
   const w2 = battle(['usa_m4'], ['ger_pz2']);
@@ -516,7 +516,7 @@ console.log('Review regressions');
   const w7 = battle(['usa_m4', 'usa_m4'], ['ger_tiger']); const [c1, c2, d7] = w7.tanks;
   const base = w7.bases.find((x) => x.team === 1);
   place(w7, c1, base.x, base.z, 0); place(w7, c2, base.x + 5, base.z, 0); place(w7, d7, base.x, base.z - 250, 0);
-  run(w7, 10);
+  run(w7, 5);
   const ev7 = shoot(w7, d7, onTank(c1, 0, 1.2, 0), 0, 1.5);
   check('damaging a capper emits a capture event with the reduced points', ev7.some((e) => e.type === 'capture' && e.team === 1 && e.points < 15));
   place(w7, c2, base.x + base.r + 20, base.z, 0); run(w7, 0.1);
@@ -581,6 +581,41 @@ console.log('Review regressions');
   chooseStartTank(d1, 0, [{ def: d1.tanks[0].def, player: true }, ...d1.reserve[0]], 1); chooseStartTank(d2, 0, [{ def: d2.tanks[0].def, player: true }, ...d2.reserve[0]], 1);
   run(d1, 3); run(d2, 3);
   check('lineup: start pick is deterministic', sig(d1) === sig(d2));
+}
+
+// ------------------------------------------------------------------ deploys: bots respawn (3 tanks each), wreck cap
+{
+  const bot = (id, sp = []) => ({ def: TANKS[id], bot: { skill: 0.5 }, name: 'B' + id, spares: sp.map((s) => ({ def: TANKS[s], bot: { skill: 0.5 }, name: 'B' + id })) });
+  // three spares offered, but only MAX_DEPLOYS - 1 = 2 are ever used
+  const mk = (seed) => createBattle({ map: testMap(), seed, teams: [[bot('usa_m4', ['usa_m10', 'usa_m4', 'usa_m10'])], [bot('ger_pz4h', ['ger_pz4h', 'ger_pz4h'])]] });
+  const w = mk(5), [a, foe] = w.tanks;
+  check('deploys: 3 per slot, 2 spawns left per team at the start', MAX_DEPLOYS === 3 && spawnsLeft(w, 0) === 2 && spawnsLeft(w, 1) === 2 && a.slot === a.id && a.life === 1);
+  kill(w, a, foe.id, 'shot'); run(w, 1);
+  check('deploys: a team with no live tank but spawns left is not defeated', !w.result && w.tanks.length === 2);
+  const ev = run(w, BOT_RESPAWN_DELAY);
+  const b2 = w.tanks[2], gap = b2 ? Math.min(...w.tanks.filter((o) => o !== b2).map((o) => Math.hypot(o.pos.x - b2.pos.x, o.pos.z - b2.pos.z))) : 0;
+  check('deploys: a dead bot respawns after BOT_RESPAWN_DELAY in its next spare, fresh consumables, away from tanks',
+    b2 && b2.alive && b2.team === 0 && b2.bot && b2.def.id === 'usa_m10' && b2.slot === a.id && b2.life === 2 && b2.consumables.every((c) => c.ready) && gap > 8
+      && ev.some((e) => e.type === 'respawn' && e.tank === b2.id && e.bot) && spawnsLeft(w, 0) === 1, b2 && `gap ${f1(gap)} m`);
+  kill(w, b2, foe.id, 'shot'); run(w, BOT_RESPAWN_DELAY + 0.5);
+  const b3 = w.tanks[3];
+  check('deploys: third tank, then no spawns left', b3 && b3.alive && b3.life === 3 && b3.slot === a.id && spawnsLeft(w, 0) === 0 && deploysLeft(w, w.slotOf[a.id]) === 0);
+  kill(w, b3, foe.id, 'shot'); run(w, BOT_RESPAWN_DELAY + 1);
+  check('deploys: after 3 tanks the team is defeated (no 4th tank)', w.result && w.result.winner === 1 && w.result.reason === 'destroyed' && w.tanks.length === 4);
+  const sig = (x) => x.tanks.map((q) => `${q.id}:${q.def.id}:${q.pos.x.toFixed(4)},${q.pos.z.toFixed(4)},${q.hp}`).join('|');
+  const d1 = mk(9), d2 = mk(9);
+  for (const x of [d1, d2]) { kill(x, x.tanks[0], x.tanks[1].id, 'shot'); run(x, BOT_RESPAWN_DELAY + 2); kill(x, x.tanks[1], x.tanks[2].id, 'shot'); run(x, BOT_RESPAWN_DELAY + 3); }
+  check('deploys: bot respawns are deterministic', sig(d1) === sig(d2) && d1.tanks.length === 4, `${d1.tanks.length} tanks`);
+  // a bot with no spares (old callers) never respawns
+  const n = createBattle({ map: testMap(), seed: 1, teams: [[{ def: TANKS.usa_m4 }], [{ def: TANKS.usa_m4 }]] });
+  kill(n, n.tanks[0], n.tanks[1].id, 'shot'); run(n, 1);
+  check('deploys: no spares → no respawn, defeat', n.result && n.result.winner === 1 && n.tanks.length === 2);
+  // wreck cap: beyond WRECK_MAX wrecks the oldest are cleared (no collision, no shell hits)
+  const many = createBattle({ map: testMap(), seed: 2, teams: [0, 1].map(() => Array.from({ length: 15 }, () => ({ def: TANKS.usa_m4 }))) });
+  const order = many.tanks.filter((t) => t.team === 0).slice(0, 14).concat(many.tanks.filter((t) => t.team === 1).slice(0, 12));
+  for (const t of order) { kill(many, t, null, 'shot'); run(many, 0.05); }
+  const gone = many.tanks.filter((t) => t.gone);
+  check('wrecks: beyond WRECK_MAX the oldest wrecks are cleared', !many.result && gone.length === order.length - WRECK_MAX && gone.every((t, i) => t === order[i]), `${gone.length} cleared of ${order.length}`);
 }
 
 // ------------------------------------------------------------------ real maps

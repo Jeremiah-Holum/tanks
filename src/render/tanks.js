@@ -13,6 +13,7 @@ import { TankScars } from './decals.js';
 import { tankMatrix } from '../sim/tank.js';
 
 const LOD_DIST = { low: 45, medium: 75, high: 110 };
+const WRECK_SINK = 4;   // s for a cleared wreck to sink out of sight
 const GROUND = ['grass', 'dirt', 'road', 'sand', 'rock', 'mud', 'shallow', 'deep', 'field', 'snow'];
 const lerpAngle = (a, b, t) => { let d = b - a; d -= Math.round(d / (Math.PI * 2)) * Math.PI * 2; return a + d * t; };
 const _m = new THREE.Matrix4(), _v = new THREE.Vector3(), _arr = new Array(16);
@@ -24,6 +25,7 @@ export class TankRenderer {
     scene.add(this.group);
     this.quality = LOD_DIST[quality] ? quality : 'medium';
     this.entries = new Map();
+    this.cleared = new Set();   // ids of cleared wrecks (models freed)
     this.scars = new TankScars();
     this.shellCal = new Map();
     this.time = 0;
@@ -73,6 +75,7 @@ export class TankRenderer {
     for (const e of this.entries.values()) e.seen = false;
     const map = world.map;
     for (const t of world.tanks) {
+      if (t.gone && (this.cleared.has(t.id) || !this.entries.has(t.id))) { this.cleared.add(t.id); continue; }
       const e = this.entries.get(t.id) || this._entry(t);
       e.seen = true;
       // ---- interpolation snapshots (prev ← cur when the sim advanced)
@@ -100,6 +103,13 @@ export class TankRenderer {
       const model = this._model(e, lod);
       if (e.lod !== lod) { if (e.models[e.lod]) e.models[e.lod].group.visible = false; model.group.visible = true; e.lod = lod; }
       // ---- world matrix (sim convention via tankMatrix)
+      // cleared wreck (sim WRECK_MAX): sinks into the ground over WRECK_SINK s, then its models are freed
+      if (t.gone) {
+        if (e.goneAt == null) e.goneAt = this.time;
+        const k = (this.time - e.goneAt) / WRECK_SINK;
+        if (k >= 1) { this._remove(t.id); this.cleared.add(t.id); continue; }
+        s.pos.y -= 3.2 * k * k;
+      }
       tankMatrix(s, _arr);
       e.root.matrix.fromArray(_arr); e.root.matrixWorldNeedsUpdate = true;
       // ---- damage state
@@ -145,6 +155,7 @@ export class TankRenderer {
     const info = model.info, W = e.root.matrix;
     const fwdX = Math.sin(s.yaw), fwdZ = Math.cos(s.yaw);
     const wp = (x, y, z) => _v.set(x, y, z).applyMatrix4(W);
+    if (t.gone) return;
     if (t.alive) {
       if (Math.abs(speed) > 0.8) {
         let ground = 'grass';
@@ -188,6 +199,8 @@ export class TankRenderer {
     }
   }
   // Build both LODs of every tank up front (≈35 ms per new tank type) to avoid hitches later.
+  // Build both LODs of these tank types once (geometry is cached per def / lod / gun): bot respawn spares.
+  prewarmDefs(list) { for (const { def, gunIndex } of list) for (const lod of [0, 1]) buildTankModel(def, { lod, gunIndex, number: 100 }).dispose(); }
   prewarm(world) { for (const t of world.tanks) { const e = this.entries.get(t.id) || this._entry(t); this._model(e, 0); this._model(e, 1); } }
   // Shader warm-up (BattleView.warmup): every built model in each material variant, compile() per pass.
   warm(compile) {

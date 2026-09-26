@@ -188,11 +188,11 @@ function renderCarousel(S, el, onPick) {
   if (price != null) {
     const info = eco.slotInfo(p);
     slots.push(h('button.car-card.add.lu-buy' + (info.ok ? '' : '.poor'), {
-      title: `Buy lineup slot ${p.lineupSlots + 1} of ${LINEUP_MAX}: one more tank (and one more life) per battle`,
+      title: `Buy lineup slot ${p.lineupSlots + 1} of ${LINEUP_MAX}: one more tank to choose from (you deploy at most 3 per battle)`,
       onclick: async () => {
         if (!info.ok) return S.toast(`Not enough credits: ${fmt(info.missing)} missing`, 'warn');
         if (await S.confirm({ title: 'Buy lineup slot', ok: 'Buy',
-          body: [h('p', `Buy lineup slot ${p.lineupSlots + 1} for ${fmt(price)} credits?`), h('p', 'Each lineup tank is one more life in battle: when your tank is destroyed you respawn in the next one.')] })) {
+          body: [h('p', `Buy lineup slot ${p.lineupSlots + 1} for ${fmt(price)} credits?`), h('p', 'You can deploy up to 3 lineup tanks per battle (start + 2 respawns); more slots give you more tanks to choose from.')] })) {
           const r = eco.buySlot(p);
           if (r.ok) { S.sfx('buy'); S.save(); onPick(); S.toast(`Lineup slot ${r.slots} unlocked`, 'good'); }
         }

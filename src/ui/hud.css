@@ -262,3 +262,15 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0d0c; }
 .rsp-cd { display: flex; flex-direction: column; align-items: center; gap: 3px; font: 600 15px/1 var(--cond); letter-spacing: .1em; text-transform: uppercase; color: var(--text2); }
 .rsp-cd b { font: 22px/1 var(--head); color: var(--amber2); }
 .rsp-cd small { font: 500 12px/1 var(--cond); letter-spacing: .06em; text-transform: none; color: var(--muted); }
+
+/* ---------------------------------------------------------------- deploys (3 per player / bot) */
+.hud-count .hs { font: 600 13px/1 var(--cond); color: var(--text2); align-self: center; min-width: 22px; }
+.hud-count .hs:first-child { text-align: right; }
+.hud-spawns { display: none; font: 600 12px/1 var(--cond); letter-spacing: .12em; text-transform: uppercase; color: var(--text2); text-shadow: var(--shadow-t); padding: 2px 8px; background: rgba(0,0,0,.3); }
+.hud-spawns.on { display: block; } .hud-spawns.last { color: var(--amber2); }
+.tl-lives { flex: none; margin-left: auto; font-size: 11px; color: var(--text2); opacity: .8; }
+.hud-list.enemy .tl-lives { margin-left: 0; margin-right: auto; }
+.tl-row.wait { opacity: .7; }
+.tl-row.wait .tl-tank, .tl-row.wait .tl-name { color: var(--muted); }
+.sp-row.wait { opacity: .7; }
+.sp-tank small { color: var(--text2); font-weight: 500; }

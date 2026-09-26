@@ -76,9 +76,18 @@ Owner of `src/main.js`, `src/game/*`, `src/ui/hud.js`, `src/ui/hud.css`, `index.
   session switches `this.player`, camera, aim, god mode and autopilot; `hud.setPlayer(t)` rebuilds the damage
   panel and shell bar and adds a team-list row. `this.driven` = every tank driven → `onExit({ playerIds })` →
   `finishBattle`. The sim treats a team with reserve left as alive (no "all destroyed" defeat while the player
-  can still respawn). Leaving forfeits the reserve (`forfeitReserve`). Bots never respawn. With no reserve left:
+  can still respawn). Leaving forfeits the reserve (`forfeitReserve`). Bots respawn too since "Deploys" below. With no reserve left:
   the old spectate flow. A respawned tank model is built at the respawn (~35 ms headless); shaders are shared,
   so no compile. Test hook: `__sf.killPlayer()`; `__sf.state()` has `player.id/tankId`, `driven`, `reserve`, `respawn`.
+- Deploys (3 per battle): `_deploysLeft()` = sim `deploysLeft(world, slot)` (unused lineup tanks, capped at 3 tanks per
+  battle); the respawn panel only opens while it is > 0 (header "N spawns left"), else the old spectate flow. Keys 1–9, 0
+  pick cards (lineups up to 10). Bots respawn inside the sim: `_botRespawns` gives each `respawn{bot}` event's tank a brain
+  (all `stepBattle` call sites). Loading prewarms every spare / reserve tank type (`tanks.prewarmDefs`, geometry cache) so
+  a respawn never builds a new type mid-battle. HUD: team lists = one row per slot (current tank, "+N" spawns left, dimmed
+  while waiting to respawn, struck out when out); top counter "+N alive : alive +N" (team spawns); "Spawns 3/3" under the
+  timer (tanks left incl. the current one; max = min(3, lineup)); Tab panel per slot (dmg / kills summed, "+N"). Cleared
+  wrecks (`t.gone`) sink for 4 s then their models are freed (`TankRenderer.cleared`); minimap and aim rays skip them.
+  `__sf.state().spawns` = { mine, team: [a, b], tanks, gone }.
 - Esc menu: Resume / Settings (the Screens settings dialog shown over the battle: the root gets
   `.sf-overlay`) / Leave battle. The sim pauses while the menu or settings are open. Losing pointer lock
   (browser Esc) opens the menu. Leaving = defeat with the tank destroyed (`deathCause 'left'`); leaving after death has no penalty: the rest of
