@@ -215,6 +215,35 @@ kbd { font: 600 11px/1 var(--cond); color: var(--muted); border: 1px solid var(-
 .car-card.add { display: grid; place-items: center; color: var(--muted); border-style: dashed; background: rgba(0, 0, 0, 0.3); }
 .car-card.add .ico { width: 30px; height: 30px; margin-bottom: 14px; }
 .car-card.add .car-name { background: none; text-align: center; color: var(--text2); }
+/* battle lineup (first in the carousel) */
+.lu-head { flex: none; width: 30px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; }
+.lu-head b { writing-mode: vertical-rl; transform: rotate(180deg); font: 700 13px/1 var(--cond); text-transform: uppercase; letter-spacing: 0.16em; color: var(--amber2); }
+.lu-head small { font: 700 12px/1 var(--cond); color: var(--text2); }
+.lu-sep { flex: none; width: 1px; margin: 6px 6px; background: linear-gradient(180deg, transparent, var(--line2), transparent); }
+.car-card.lu { border-color: rgba(159, 176, 90, 0.45); background: linear-gradient(180deg, #2a3122, #171b14); }
+.car-card.lu.on { border-color: var(--amber); }
+.lu-num { position: absolute; right: 6px; top: 5px; min-width: 18px; height: 18px; padding: 0 4px; display: grid; place-items: center; border-radius: 9px;
+  font: 700 12px/1 var(--cond); color: #1a1a10; background: var(--olive2); }
+.car-card.lu:first-child .lu-num, .lu-head + .car-card.lu .lu-num { background: var(--amber); }
+.lu-acts { position: absolute; right: 4px; top: 28px; display: flex; flex-direction: column; gap: 3px; opacity: 0; transition: opacity 0.12s; }
+.car-card:hover .lu-acts, .car-card.on .lu-acts { opacity: 1; }
+.lu-act { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 2px; color: var(--text); background: rgba(0, 0, 0, 0.6); border: 1px solid var(--line2); }
+.lu-act .ico { width: 13px; height: 13px; }
+.lu-act:hover { color: var(--amber2); border-color: var(--amber-dim); }
+.lu-act.add { color: var(--olive2); }
+.lu-act.full { opacity: 0.45; }
+.car-card.lu-empty, .car-card.lu-buy { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; width: 128px; text-align: center; }
+.car-card.lu-empty { border-color: rgba(159, 176, 90, 0.35); color: var(--muted); }
+.car-card.lu-empty:hover { transform: none; }
+.car-card.lu-empty .lu-num { background: var(--faint); color: var(--text2); }
+.lu-empty-t { font: 700 14px/1 var(--cond); text-transform: uppercase; letter-spacing: 0.08em; color: var(--text2); }
+.car-card.lu-empty small, .car-card.lu-buy small { font: 500 12px/1 var(--cond); color: var(--muted); }
+.car-card.lu-buy .ico { width: 22px; height: 22px; margin: 0; color: var(--amber); }
+.car-card.lu-buy .lu-price { display: inline-flex; align-items: center; gap: 4px; font: 700 14px/1 var(--cond); color: var(--credits); }
+.car-card.lu-buy .lu-price .ico { width: 14px; height: 14px; }
+.car-card.lu-buy.poor .lu-price { color: var(--red2); }
+.hg-lineup-note { font: 500 12px/1 var(--cond); color: var(--text2); background: rgba(8, 10, 9, 0.7); padding: 4px 10px; border: 1px solid var(--line); border-radius: var(--r); white-space: nowrap; }
+.hg-lineup-note b { color: var(--olive2); text-transform: uppercase; letter-spacing: 0.06em; }
 
 /* ---------------------------------------------------------------- modals & toasts */
 .sf-modals { position: absolute; inset: 0; pointer-events: none; z-index: 20; }
@@ -456,6 +485,21 @@ kbd { font: 600 11px/1 var(--cond); color: var(--muted); border: 1px solid var(-
 .rs-line.total b { font-size: 20px; }
 .rs-line.total.loss b { color: var(--red2); }
 .rs-line.sub { font-size: 13px; }
+/* per-vehicle breakdown (lineup respawns) */
+.rs-vehicles { margin-bottom: 4px; }
+.rs-vrow { display: grid; grid-template-columns: minmax(90px, 1fr) 46px 30px 42px 54px; gap: 4px; align-items: center; padding: 3px 2px; font-size: 14px; color: var(--text2);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04); font-variant-numeric: tabular-nums; }
+.rs-vrow > span:not(.v) { text-align: right; }
+.rs-vrow .v { display: flex; align-items: center; gap: 5px; min-width: 0; white-space: nowrap; overflow: hidden; }
+.rs-vrow .v b { color: var(--text); text-transform: uppercase; overflow: hidden; text-overflow: ellipsis; }
+.rs-vrow .v .tier { font: 14px/1 var(--head); color: var(--amber); }
+.rs-vrow .v .n { font: 700 11px/1 var(--cond); font-style: normal; color: #1a1a10; background: var(--olive2); border-radius: 8px; padding: 2px 5px; }
+.rs-vrow.dead .v b { color: var(--muted); }
+.rs-vrow .x { color: var(--xp); }
+.rs-vrow .c.loss { color: var(--red2); }
+.rs-vrow.head { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+.rs-vrow.total { border-top: 1px solid var(--line2); border-bottom: 0; color: var(--text); font-weight: 700; }
+.rs-tank-name.multi b { font-size: 18px; }
 .rs-mastery { display: flex; align-items: center; gap: 14px; padding: 8px 10px; background: rgba(0, 0, 0, 0.25); border: 1px solid rgba(255, 255, 255, 0.05); }
 .rs-mastery.got { border-color: rgba(226, 182, 74, 0.35); background: radial-gradient(ellipse at 15% 50%, rgba(226, 182, 74, 0.18), rgba(0, 0, 0, 0.25) 60%); }
 .rs-mastery b { display: block; font: 700 20px/1.1 var(--cond); text-transform: uppercase; }

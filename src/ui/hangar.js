@@ -1,8 +1,8 @@
 // Garage screen: 3D hangar, BATTLE! with mode choice, tank parameters, gun / ammo / consumables
-// loadout and the carousel of owned tanks.
+// loadout and the carousel: the battle lineup (slots in spawn order, buy more slots) + other owned tanks.
 import { h, clear, fmt, roman, ICON, svg, classIcon, flag, shellIcon, masteryIcon, pct } from './dom.js';
 import { TANKS, NATIONS, CLASS_LABEL } from '../meta/roster.js';
-import { ownedIds, tankState, selectTank, defaultAmmo, CONSUMABLES } from '../meta/profile.js';
+import { ownedIds, tankState, selectTank, defaultAmmo, CONSUMABLES, fixLineup, LINEUP_MAX } from '../meta/profile.js';
 import * as eco from '../meta/economy.js';
 import { MASTERY_NAMES } from '../meta/economy.js';
 import { scores } from './tankStats.js';
@@ -13,7 +13,8 @@ export function buildHangar(S) {
   const left = h('aside.hg-left.sf-panel');
   const right = h('aside.hg-right.sf-panel');
   const carousel = h('div.hg-carousel');
-  const battle = battleBox(S);
+  const note = h('div.hg-lineup-note');
+  const battle = battleBox(S, note);
   const el = h('section.hangar', stage, h('div.hg-vignette'), battle, left, right, carousel);
 
   const sc = S.scene3d();
@@ -24,20 +25,22 @@ export function buildHangar(S) {
     renderLeft(S, left, def, ts);
     renderRight(S, right, def, ts, () => refresh(false));
     renderCarousel(S, carousel, () => refresh(true));
+    clear(note).append(...lineupNote(p));
     if (sc && (snap || sc._shown !== id + ':' + ts.gun)) { sc._shown = id + ':' + ts.gun; sc.setTank(def, { gun: ts.gun, snap: true }); }
   };
   refresh(true);
   return { el, cleanup: () => { sc?.stop(); }, refresh };
 }
 
-function battleBox(S) {
+function battleBox(S, note) {
   const mode = (size, label, sub) => h('button.hg-mode' + (S.battleSize === size ? '.on' : ''), {
     onclick: (e) => { S.battleSize = size; S.profile.settings.battleSize = size; S.save();
       for (const b of e.currentTarget.parentNode.children) b.classList.toggle('on', b === e.currentTarget); },
   }, h('b', label), h('small', sub));
   return h('div.hg-battle',
     h('button.sf-battle', { onclick: () => S.startBattle() }, h('span', 'BATTLE!')),
-    h('div.hg-modes', mode(15, 'Standard', '15 vs 15'), mode(7, 'Skirmish', '7 vs 7')));
+    h('div.hg-modes', mode(15, 'Standard', '15 vs 15'), mode(7, 'Skirmish', '7 vs 7')),
+    note);
 }
 
 // ------------------------------------------------------------------ left: tank card & parameters
@@ -144,28 +147,76 @@ function renderRight(S, el, def, ts, rerender) {
       h('div', h('span', 'Ammo, if all fired'), h('b', svg(ICON.credits), fmt(maxAmmoBill)))));
 }
 
-// ------------------------------------------------------------------ carousel
+/// ------------------------------------------------------------------ carousel: battle lineup + other owned tanks
+// The lineup (War Thunder style) comes first: numbered slots in spawn order (each tank is one life
+// in battle), empty slots, and a locked slot to buy. Then the owned tanks outside the lineup.
 function renderCarousel(S, el, onPick) {
   const p = S.profile;
-  const cards = ownedIds(p).map((id) => {
-    const def = TANKS[id], ts = p.tanks[id];
+  const lineup = fixLineup(p);
+  const act = (icon, title, fn, cls = '') => h('span.lu-act' + cls, { title, role: 'button',
+    onclick: (e) => { e.stopPropagation(); fn(); } }, svg(ICON[icon]));
+  const change = (r, msg) => { if (r.ok) { S.save(); onPick(); } else if (msg) S.toast(msg, 'warn'); };
+  const card = (id, i) => {
+    const def = TANKS[id], ts = p.tanks[id], inLu = i >= 0;
     const img = h('img.car-img', { alt: '' });
     S.thumb(def).then((url) => { if (url) { img.src = url; img.classList.add('ok'); } });
-    return h('button.car-card' + (id === p.selected ? '.on' : ''), {
-      'data-id': id,
-      title: def.name,
+    const acts = inLu
+      ? h('div.lu-acts',
+        i > 0 ? act('arrowL', 'Spawn earlier', () => change(eco.moveInLineup(p, id, -1))) : null,
+        lineup.length > 1 ? act('close', 'Remove from lineup', () => change(eco.removeFromLineup(p, id))) : null)
+      : h('div.lu-acts', act('plus', lineup.length < p.lineupSlots ? 'Add to lineup' : 'Lineup full: buy a slot or remove a tank',
+        () => change(eco.addToLineup(p, id), 'Lineup is full: buy a slot or remove a tank first'), lineup.length < p.lineupSlots ? '.add' : '.full'));
+    return h('button.car-card.tank' + (inLu ? '.lu' : '') + (id === p.selected ? '.on' : ''), {
+      'data-id': id, title: def.name + (inLu ? ` · lineup #${i + 1}${i === 0 ? ' (you spawn in it first)' : ''}` : ''),
       onclick: () => { if (id !== p.selected) { selectTank(p, id); S.save(); onPick(); } },
       ondblclick: () => S.showDetails(id),
     },
     flag(def.nation, 'flag car-flag'),
     img,
     h('div.car-top', h('span.car-tier', roman(def.tier)), classIcon(def.cls, 13), ts.mastery ? masteryIcon(ts.mastery, 16) : null),
+    inLu ? h('span.lu-num', String(i + 1)) : null,
+    acts,
     h('div.car-name', def.short || def.name));
-  });
-  cards.push(h('button.car-card.add', { onclick: () => S.showTree(TANKS[p.selected].nation), title: 'Research and buy vehicles' },
-    svg(ICON.plus), h('div.car-name', 'Tech Tree')));
+  };
+  const slots = [];
+  lineup.forEach((id, i) => slots.push(card(id, i)));
+  for (let i = lineup.length; i < p.lineupSlots; i++) {
+    slots.push(h('div.car-card.add.lu-empty', { title: 'Empty lineup slot: press + on a vehicle to add it' },
+      h('span.lu-num', String(i + 1)), h('div.lu-empty-t', 'Empty slot'), h('small', 'Press + on a vehicle')));
+  }
+  const price = eco.slotPrice(p);
+  if (price != null) {
+    const info = eco.slotInfo(p);
+    slots.push(h('button.car-card.add.lu-buy' + (info.ok ? '' : '.poor'), {
+      title: `Buy lineup slot ${p.lineupSlots + 1} of ${LINEUP_MAX}: one more tank (and one more life) per battle`,
+      onclick: async () => {
+        if (!info.ok) return S.toast(`Not enough credits: ${fmt(info.missing)} missing`, 'warn');
+        if (await S.confirm({ title: 'Buy lineup slot', ok: 'Buy',
+          body: [h('p', `Buy lineup slot ${p.lineupSlots + 1} for ${fmt(price)} credits?`), h('p', 'Each lineup tank is one more life in battle: when your tank is destroyed you respawn in the next one.')] })) {
+          const r = eco.buySlot(p);
+          if (r.ok) { S.sfx('buy'); S.save(); onPick(); S.toast(`Lineup slot ${r.slots} unlocked`, 'good'); }
+        }
+      } },
+    svg(ICON.lock), h('div.lu-empty-t', 'Buy slot'), h('small.lu-price', svg(ICON.credits), fmt(price))));
+  }
+  const others = ownedIds(p).filter((id) => !lineup.includes(id)).map((id) => card(id, -1));
+  const cards = [
+    h('div.lu-head', { title: 'Battle lineup: you spawn in slot 1; when a tank is destroyed you pick the next one' },
+      h('b', 'Lineup'), h('small', `${lineup.length}/${p.lineupSlots}`)),
+    ...slots,
+    h('div.lu-sep'),
+    ...others,
+    h('button.car-card.add', { onclick: () => S.showTree(TANKS[p.selected].nation), title: 'Research and buy vehicles' },
+      svg(ICON.plus), h('div.car-name', 'Tech Tree')),
+  ];
   const strip = h('div.car-strip', cards);
   const scroll = (d) => () => strip.scrollBy({ left: d * 400, behavior: 'smooth' });
   clear(el).append(h('button.car-nav', { onclick: scroll(-1) }, svg(ICON.arrowL)), strip, h('button.car-nav', { onclick: scroll(1) }, svg(ICON.arrowR)));
   requestAnimationFrame(() => el.querySelector('.car-card.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
+}
+
+// Lineup summary under BATTLE!: tanks and the battle tier (from the highest-tier lineup tank).
+function lineupNote(p) {
+  const l = fixLineup(p), top = Math.max(...l.map((id) => TANKS[id].tier));
+  return [h('b', `${l.length} ${l.length === 1 ? 'tank' : 'tanks'}`), h('span', ` · tier ${roman(top)} battle · spawn: ${TANKS[l[0]].short || TANKS[l[0]].name}`)];
 }

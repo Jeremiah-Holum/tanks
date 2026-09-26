@@ -39,13 +39,26 @@ function tile(icon, label, value, sub, cls = '') {
   return h('div.rs-tile' + (cls ? '.' + cls : ''), svg(ICON[icon]), h('b', value), h('span', label), sub ? h('small', sub) : null);
 }
 
+// Per-vehicle breakdown (lineup respawns): each tank's damage, kills, XP and net credits, plus the totals.
+function vehicles(r) {
+  const row = (x, i) => h('div.rs-vrow' + (x.survived ? '' : '.dead'),
+    h('span.v', h('i.n', String(i + 1)), h('span.tier', roman(x.tier)), classIcon(x.cls, 12), h('b', x.short), x.mastery ? masteryIcon(x.mastery, 16) : null),
+    h('span.d', fmt(x.stats.dmg)), h('span.k', x.stats.kills), h('span.x', fmt(x.xp.total)), h('span.c' + (x.credits.net < 0 ? '.loss' : ''), signed(x.credits.net)));
+  return h('div.rs-vehicles',
+    h('h3.sf-h', svg(ICON.garage), 'Vehicles'),
+    h('div.rs-vrow.head', h('span.v', 'Vehicle'), h('span.d', 'Damage'), h('span.k', 'Kills'), h('span.x', 'XP'), h('span.c', 'Credits')),
+    r.tanks.map(row),
+    h('div.rs-vrow.total', h('span.v', 'Total'), h('span.d', fmt(r.stats.dmg)), h('span.k', r.stats.kills), h('span.x', fmt(r.xp.total)), h('span.c' + (r.credits.net < 0 ? '.loss' : ''), signed(r.credits.net))));
+}
+
 function summary(S, r, def) {
-  const s = r.stats;
+  const s = r.stats, multi = r.tanks && r.tanks.length > 1;
   const img = h('img.rs-img', { alt: '' });
   S.thumb(def).then((u) => { if (u) { img.src = u; img.classList.add('ok'); } });
   const personal = h('div.rs-col.rs-personal.sf-panel',
     h('div.rs-tank', flag(def.nation, 'flag rs-flag'), img,
-      h('div.rs-tank-name', h('span.tier', roman(def.tier)), classIcon(def.cls, 14), h('b', def.name)),
+      multi ? h('div.rs-tank-name.multi', h('b', r.tanks.map((x) => x.short).join(' → ')))
+        : h('div.rs-tank-name', h('span.tier', roman(def.tier)), classIcon(def.cls, 14), h('b', def.name)),
       h('div.rs-state' + (r.survived ? '.alive' : '.dead'), r.survived ? `Survived · ${fmt(r.hpLeft)} / ${fmt(r.maxHp)} HP`
         : r.killedBy?.name ? `Destroyed by ${r.killedBy.name} (${r.killedBy.short})` : 'Destroyed')),
     h('div.rs-tiles',
@@ -64,6 +77,7 @@ function summary(S, r, def) {
   const xl = r.xp.lines.map((l) => h('div.rs-line', h('span', LINE_LABEL[l.key] || l.key), h('b.xp', fmt(l.xp))));
   const cl = r.credits.lines.map((l) => h('div.rs-line', h('span', LINE_LABEL[l.key] || l.key), h('b', fmt(l.cr))));
   const earn = h('div.rs-col.rs-earn.sf-panel',
+    multi ? vehicles(r) : null,
     h('div.rs-ledger',
       h('h3.sf-h', svg(ICON.xp), 'Experience'),
       ...xl,
@@ -83,7 +97,7 @@ function summary(S, r, def) {
   const th = masteryThresholds(r.tier);
   const nextM = r.mastery < 4 ? th[r.mastery + 1] : null;
   const ach = h('div.rs-col.rs-ach.sf-panel',
-    h('h3.sf-h', 'Mastery badge'),
+    h('h3.sf-h', multi ? `Mastery badge · ${r.tanks[0].short}` : 'Mastery badge'),
     h('div.rs-mastery' + (r.mastery ? '.got' : ''), masteryIcon(r.mastery, 64),
       h('div', h('b', r.mastery ? MASTERY_NAMES[r.mastery] : 'No badge'),
         h('small', r.mastery ? (r.masteryNew ? 'New best on this vehicle!' : `Base XP ${fmt(r.xp.base)}`) : `Base XP ${fmt(r.xp.base)} of ${fmt(th[1])} needed`),
@@ -109,10 +123,13 @@ function teamScore(r) {
 // Research progress towards the next vehicles in this tank's line.
 function progress(S, r) {
   const p = S.profile;
-  const next = childrenOf(r.tankId).filter((d) => !p.researched.includes(d.id)).slice(0, 2);
+  const from = r.tanks && r.tanks.length ? r.tanks.map((x) => x.tankId) : [r.tankId];
+  const next = [];
+  for (const id of from) for (const d of childrenOf(id)) if (!p.researched.includes(d.id) && !next.some((n) => n.d.id === d.id)) next.push({ d, from: id });
+  next.splice(2);
   if (!next.length) return null;
-  return h('div.rs-next', h('h3.sf-h', 'Research progress'), next.map((d) => {
-    const ri = researchInfo(p, d.id), have = Math.min(d.xp, (p.tanks[r.tankId]?.xp || 0) + p.freeXp), f = have / Math.max(1, d.xp);
+  return h('div.rs-next', h('h3.sf-h', 'Research progress'), next.map(({ d, from: src }) => {
+    const ri = researchInfo(p, d.id), have = Math.min(d.xp, (p.tanks[src]?.xp || 0) + p.freeXp), f = have / Math.max(1, d.xp);
     return h('div.rs-nrow' + (ri.ok ? '.ok' : ''),
       h('div.rs-ntop', h('span.tier', roman(d.tier)), classIcon(d.cls, 12), h('b', d.name),
         h('span.rs-nval', ri.ok ? 'Ready to research!' : `${fmt(have)} / ${fmt(d.xp)} XP`)),
