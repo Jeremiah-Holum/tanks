@@ -44,8 +44,11 @@ function how(name, cal, len, heat, heDmg, v, reload, disp, aim, o = {}) {
     { type: 'HE', pen: Math.round(cal / 2), dmg: heDmg, v, splash: +(0.8 + cal / 35).toFixed(2) },
   ]);
 }
+// Owner feedback: every gun was too sprayey. Base dispersion is scaled for all guns (movement/traverse
+// bloom multiplies it, so everything tightens in proportion).
+const SPREAD = 0.6; // 40% tighter than the original numbers
 function base(name, cal, len, reload, disp, aim, o, shells) {
-  name = o.name ?? name; reload = o.reload ?? reload; disp = o.disp ?? disp; aim = o.aim ?? aim; len = o.len ?? len;
+  name = o.name ?? name; reload = o.reload ?? reload; disp = (o.disp ?? disp) * SPREAD; aim = o.aim ?? aim; len = o.len ?? len;
   const g = { name, cal, len, muzzleBrake: !!o.brake, xp: o.xp ?? 0, reload, aim, disp,
     dMove: o.dMove, dHull: o.dHull, dTurret: o.dTurret, dShot: o.dShot ?? (o.clip ? 1.08 : cal >= 85 ? 4.5 : cal >= 50 ? 4 : 3), // magazine guns bloom a little per round so bursts stay tight
     dep: o.dep, elev: o.elev, ammo: o.ammo ?? (cal <= 20 ? 200 : cal <= 40 ? 120 : cal <= 50 ? 90 : cal <= 60 ? 80 : cal <= 76 ? 70 : cal <= 90 ? 50 : cal <= 105 ? 40 : 30),
