@@ -42,7 +42,9 @@ function cycleWave(ctx, E, seed, missing = -1) {
     for (let j = 0; j < M; j++) { let ph = j / M - at; if (ph < 0) ph += 1; if (ph > 6 * tau) continue; x[j] += amp * Math.exp(-ph / tau) * Math.sin(2 * Math.PI * ph / lam); }
   }
   const N = Math.min(192, E.cyl * 16), re = new Float32Array(N), im = new Float32Array(N);
-  for (let n = 1; n < N; n++) { let a = 0, b = 0; for (let j = 0; j < M; j++) { const w = 2 * Math.PI * n * j / M; a += x[j] * Math.cos(w); b += x[j] * Math.sin(w); } re[n] = a * 2 / M; im[n] = b * 2 / M; }
+  // DFT with a cos/sin table (n·j mod M): was ~200k Math.cos+sin per engine type, a 10–30 ms hitch
+  const CS = cycleWave.cs || (cycleWave.cs = (() => { const t = new Float64Array(M * 2); for (let j = 0; j < M; j++) { t[j] = Math.cos(2 * Math.PI * j / M); t[M + j] = Math.sin(2 * Math.PI * j / M); } return t; })());
+  for (let n = 1; n < N; n++) { let a = 0, b = 0; for (let j = 0, k = 0; j < M; j++, k = (k + n) & (M - 1)) { a += x[j] * CS[k]; b += x[j] * CS[M + k]; } re[n] = a * 2 / M; im[n] = b * 2 / M; }
   return ctx.createPeriodicWave(re, im);
 }
 
@@ -73,6 +75,14 @@ function shared(A) {
   const K = A.kit, c = A.ctx;
   return (A._eng = { white: K.src(K.white, c.currentTime, null, 1), brown: K.src(K.brown, c.currentTime, null, 1), waves: {}, pulse: pulseWave(c) });
 }
+
+function engineWave(A, type, eng) {
+  const W = shared(A).waves, key = type + ':' + eng;
+  return W[key] || (W[key] = cycleWave(A.ctx, ENGINES[type], type.length * 7919 + 17, eng === 'damaged' ? 3 : -1));
+}
+// Build every engine character's cycle wave (ok + damaged) up front, so a newly heard tank type or a
+// damaged engine never computes one mid-battle.
+export function prewarmEngines(A) { if (!A.ctx) return; for (const type in ENGINES) for (const eng of ['ok', 'damaged']) engineWave(A, type, eng); }
 
 class EngineVoice {
   constructor(A) {
@@ -112,8 +122,7 @@ class EngineVoice {
   setType(tank) {
     const type = engineType(tank.def), eng = tank.modules?.engine?.state === 'damaged' ? 'damaged' : 'ok', key = type + ':' + eng;
     if (this.type === key) return; this.type = key; this.E = ENGINES[type];
-    const W = shared(this.A).waves; if (!W[key]) W[key] = cycleWave(this.A.ctx, this.E, type.length * 7919 + 17, eng === 'damaged' ? 3 : -1);
-    this.ex.setPeriodicWave(W[key]);
+    this.ex.setPeriodicWave(engineWave(this.A, type, eng));
     this.gravBp.frequency.value = this.E.grav; this.gravBp.Q.value = this.E.gravQ;
   }
   // ?debug=audio: every gain stage of this voice (keys ending in G) + the output level
@@ -190,7 +199,9 @@ export class EnginePool {
       const d = isPlayer ? 0 : A._dist(tank.pos);
       if (d > MAX_DIST) return;
       v = this.voices.find((x) => x.id === null);
-      if (!v && this.voices.length < this.max) { v = new EngineVoice(A); this.voices.push(v); }
+      // building a voice is ~25 audio nodes: at most one per 50 ms, so a group of tanks coming into
+      // earshot at once (spotting) doesn't build 7 in one frame; the others get theirs next frames
+      if (!v && this.voices.length < this.max) { if (ms - (this._builtAt || 0) < 50) return; this._builtAt = ms; v = new EngineVoice(A); this.voices.push(v); }
       if (!v) { // steal the farthest non-player voice if this tank is clearly closer
         let far = null; for (const x of this.voices) if (x.d > 0 && (!far || x.d > far.d)) far = x;
         if (!far || far.d < d + 15) return;

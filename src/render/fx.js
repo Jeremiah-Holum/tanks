@@ -250,6 +250,10 @@ function cone(x, y, z, a, out = {}) {
   return out;
 }
 const _c = {};
+// tracer colours (core + the dimmer glow around it) and the scratch spawn object
+const trc = (r, g, b) => Object.assign([r, g, b], { glow: [r * 0.25, g * 0.2, b * 0.15] });
+const TR_HE = trc(5, 2.4, 0.9), TR_GOLD = trc(5, 4.2, 2.2), TR_AP = trc(6, 3.4, 1.1);
+const _tr = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 1e-4, s0: 0, s1: 0, frame: T.SPARK, streak: 0, r: 0, g: 0, b: 0, a: 1, drag: 0, fadeIn: 0, rot: 0, rotV: 0 };
 
 export class FxRenderer {
   constructor(scene, quality = 'medium') {
@@ -605,9 +609,9 @@ export class FxRenderer {
         if (!s.alive || s.tracer === false) continue;
         const v = s.vel, sp = Math.hypot(v.x, v.y, v.z) || 1, cal = s.cal || 75;
         const len = Math.min(26, sp * 0.028), k = len / sp, wd = 0.08 + cal / 1000 * 1.1;
-        const warm = s.type === 'HE' ? [5, 2.4, 0.9] : s.type === 'APCR' || s.gold ? [5, 4.2, 2.2] : [6, 3.4, 1.1];
+        const warm = s.type === 'HE' ? TR_HE : s.type === 'APCR' || s.gold ? TR_GOLD : TR_AP;
         this._tracer(s.pos, v, k, wd, warm, 1);
-        this._tracer(s.pos, v, k * 1.1, wd * 4, [warm[0] * 0.25, warm[1] * 0.2, warm[2] * 0.15], 0.6);
+        this._tracer(s.pos, v, k * 1.1, wd * 4, warm.glow, 0.6);
       }
     }
     const A = this.add; // write tracer particles (appended after the step, drawn this frame)
@@ -620,7 +624,9 @@ export class FxRenderer {
   }
   _tracer(p, v, k, wd, c, a) {
     // life ≈ 0: it survives the zero-length update that uploads it, then dies next frame
-    this.add.spawn({ x: p.x, y: p.y, z: p.z, vx: v.x, vy: v.y, vz: v.z, life: 1e-4, s0: wd, s1: wd, frame: T.SPARK, streak: k, r: c[0], g: c[1], b: c[2], a, drag: 0, fadeIn: 0, rot: 0, rotV: 0 });
+    // one scratch object for every tracer (2 per live shell per frame): no garbage in a volley
+    const o = _tr; o.x = p.x; o.y = p.y; o.z = p.z; o.vx = v.x; o.vy = v.y; o.vz = v.z; o.s0 = o.s1 = wd; o.streak = k; o.r = c[0]; o.g = c[1]; o.b = c[2]; o.a = a;
+    this.add.spawn(o);
   }
   stats() { return { add: this.add.n, alpha: this.alpha.n, decals: this.decals.mesh.count }; }
 }

@@ -89,7 +89,8 @@ setting or `?q=` disables it. `renderScale` (settings) multiplies the view's pix
 | `autopilot=1` | the player's tank is driven by the AI |
 | `bots=simple` | use the test bot instead of the AI |
 | `countdown=s` | countdown length (0 = none) |
-| `perf=1`, `debug=1` | per-phase timing strip (also F3 in battle and the "Show FPS" setting) |
+| `perf=1`, `debug=1` | per-phase timing strip (also F3 in battle and the "Show FPS" setting), incl. the worst frame of the last 2 s and its top subsystem |
+| `debug=hitch` | the strip, plus a `[hitch]` console line for every frame > 25 ms of main-thread time: per-subsystem split, shaders compiled that frame, event counts (also `__sf.session.hitches`) |
 | `scale=0.5..1` | render scale |
 
 ## Controls
@@ -104,6 +105,9 @@ F3 perf strip · Esc menu. Sensitivities and invert Y come from Settings.
 - `tools/capped.sh -- node tools/shot-game.mjs name='map=ashford&tank=usa_m4&t=45&q=medium' …`
   (tool params: `press=ShiftLeft,Wheel1`, `hold=Tab`, `yaw=deg`, `wait=ms`), into `shots/game/`.
 - `node tools/build.mjs` → `dist/` (game.js, ui.css, hud.css, index.html).
+- `tools/capped.sh -- node tools/hitch-test.mjs [q=medium] [secs=90] [scale=0.5]`: 15 v 15, the enemy team is
+  teleported 130 m in front of the player (mass spotting, then a close brawl); prints the worst main-thread
+  frame after spot events and in volleys, and every shader program compiled after loading (should be none).
 
 ## Verify results / perf (SwiftShader, 4 shared cores, 1024×576)
 - **verify low: 18/18 passed in 349 s**: hangar → pick tank → BATTLE! → loading → countdown (Space) → W drives
@@ -117,6 +121,31 @@ F3 perf strip · Esc menu. Sensitivities and invert Y come from Settings.
   `view.stats()`: low 80–150 draw calls, 0.3–0.4 M tris; medium ~100–160 calls, ~1.05 M tris.
 - FX and tank animations age with sim time (`dt × speed`), so a sped-up test battle doesn't pile up particles.
 
+## Hitches
+Two owner reports on medium (60 fps, short freezes): a new enemy spotted, and many shots at once.
+- Instrumentation: `session._spike` (per frame: sim / ai / render (GL) / tanks (TankRenderer.sync) / fx (event
+  handling + particles) / hud / audio / other, and `renderer.info.programs` growth). F3 strip shows
+  `worst 2 s: N ms (top subsystem[, +k shaders])`; `?debug=hitch` logs frames > 25 ms. Ask for a screenshot.
+- Causes found / fixes:
+  1. Shader compiles mid-battle (3 programs: the hit-scar material on the first tank hit, the CHARRED tank
+     variant on the first kill; the transparent fade-in variants at the first fade). `BattleView.warmup()` at
+     load (after `tanks.prewarm`): every model, both LODs, in 4 material variants (live, faded, charred,
+     charred+faded) through `renderer.compile` WITH post's HDR target bound (the old plain `compile()` built
+     sRGB-output variants the game never uses). Scar material is DoubleSide from the start.
+  2. Each spotting created new transparent clone materials (fade-in) and leaked them; now cached per model.
+  3. Engine sound: the cycle wave (a 192×1024 DFT, 7 ms+) was built the first time a tank of a new engine type,
+     or with a damaged engine, came within earshot; now table-driven (3× faster) and built for all types at
+     unlock / load (`audio.prewarm()`). New engine voices (~25 nodes each) are built at most one per 50 ms.
+  4. Crew voice: `speechSynthesis.speak/cancel` (can block on Windows) now run in `requestIdleCallback`.
+  5. HUD: markers for every tank are built with the HUD (no DOM creation on spotting); damage floats pooled.
+  6. Volleys: at most 12 placed one-shots (a louder one fades out the quietest, otherwise it is dropped; was 40,
+     only quiet ones dropped); distant (> 60 m) shots / impacts / hits within 30 ms of one of the same kind are
+     merged into it (power-summed gain). No per-event `filter()` arrays. Tracers spawn from a scratch object.
+     FX, decals and scars were already pooled (no geometry/material per event).
+- Headless numbers are CPU/JS only (SwiftShader, 5 catch-up steps a frame, noisy): mid-battle shader compiles
+  3 → 0; audio time in the mass-spot frame 16.6 → 7.7 ms; worst volley frame audio 9.4 → 1.4 ms. AI replanning
+  (up to 15–40 ms over 5 steps headless) is the remaining largest spike source; not changed here.
+
 ## Known issues / unfinished (priority order)
 1. verify must fit capped.sh's 900 s under SwiftShader; the end leg uses the test hooks `__sf.endIn(45)` and
    `__sf.setSpeed(4)` (both only change the remaining time / sim speed). Low takes ~350 s, medium ~480 s.
@@ -128,5 +157,5 @@ F3 perf strip · Esc menu. Sensitivities and invert Y come from Settings.
    In the latest runs the player's tank is drawn in arcade view (e.g. `shots/verify/low/07-firing.png`).
 6. The dispersion circle has a 6 px floor added to the true angular radius (readability in arcade).
 7. No tree/prop occlusion test for markers; no shell fly-by; no replay of the damage log after death.
-8. Audio can spike (65 ms in one headless frame at 4× with many one-shots); worth a look on real hardware.
+8. Audio can spike (65 ms in one headless frame at 4× with many one-shots); capped at 12 one-shots now (see Hitches).
 9. Enemy markers can overlap the side team lists. The perf strip (F3, `?debug=1`, `?perf=1` or the Show FPS setting) is wide at 1024 px.
