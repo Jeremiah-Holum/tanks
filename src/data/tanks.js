@@ -47,7 +47,7 @@ function how(name, cal, len, heat, heDmg, v, reload, disp, aim, o = {}) {
 function base(name, cal, len, reload, disp, aim, o, shells) {
   name = o.name ?? name; reload = o.reload ?? reload; disp = o.disp ?? disp; aim = o.aim ?? aim; len = o.len ?? len;
   const g = { name, cal, len, muzzleBrake: !!o.brake, xp: o.xp ?? 0, reload, aim, disp,
-    dMove: o.dMove, dHull: o.dHull, dTurret: o.dTurret, dShot: o.dShot ?? (o.clip ? 1.15 : cal >= 85 ? 4.5 : cal >= 50 ? 4 : 3), // magazine guns bloom a little per round so bursts stay tight
+    dMove: o.dMove, dHull: o.dHull, dTurret: o.dTurret, dShot: o.dShot ?? (o.clip ? 1.08 : cal >= 85 ? 4.5 : cal >= 50 ? 4 : 3), // magazine guns bloom a little per round so bursts stay tight
     dep: o.dep, elev: o.elev, ammo: o.ammo ?? (cal <= 20 ? 200 : cal <= 40 ? 120 : cal <= 50 ? 90 : cal <= 60 ? 80 : cal <= 76 ? 70 : cal <= 90 ? 50 : cal <= 105 ? 40 : 30),
     shells };
   if (o.clip) g.clip = { n: o.clip[0], t: o.clip[1] }; // magazine: n rounds o.clip[1] s apart, then `reload`
@@ -65,8 +65,8 @@ const G = {
   us76b:  (o) => gun('76 mm Gun M1A2', 76, 4.2, 128, 115, 792, 2.7, 0.37, 1.9, { apcr: 177, brake: true, ...o }),
   us3in:  (o) => gun('3-inch Gun M7', 76, 3.8, 108, 115, 792, 3.4, 0.40, 2.0, o),
   us90:   (o) => gun('90 mm Gun M3', 90, 4.77, 160, 240, 853, 7.0, 0.38, 2.3, { apcr: 243, brake: true, ...o }),
-  de20:   (o) => gun('2 cm KwK 30 L/55', 20, 1.1, 23, 11, 780, 4.0, 0.50, 1.8, { apcr: 46, clip: [10, 0.22], ...o }),
-  de20b:  (o) => gun('2 cm KwK 38 L/55', 20, 1.1, 23, 11, 780, 3.4, 0.46, 1.7, { apcr: 46, clip: [10, 0.15], ...o }),
+  de20:   (o) => gun('2 cm KwK 30 L/55', 20, 1.1, 23, 11, 780, 4.0, 0.40, 1.8, { apcr: 46, clip: [10, 0.22], ...o }),
+  de20b:  (o) => gun('2 cm KwK 38 L/55', 20, 1.1, 23, 11, 780, 3.4, 0.36, 1.7, { apcr: 46, clip: [10, 0.15], ...o }),
   de37:   (o) => gun('3.7 cm KwK 36 L/46.5', 37, 1.72, 48, 40, 745, 1.9, 0.45, 1.7, o),
   de50:   (o) => gun('5 cm KwK 38 L/42', 50, 2.1, 70, 70, 685, 2.6, 0.42, 1.9, o),
   de50l:  (o) => gun('5 cm KwK 39 L/60', 50, 3.0, 86, 70, 835, 2.3, 0.38, 1.7, { apcr: 130, ...o }),
