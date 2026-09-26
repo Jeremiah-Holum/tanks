@@ -30,7 +30,8 @@ Owner of `src/main.js`, `src/game/*`, `src/ui/hud.js`, `src/ui/hud.css`, `index.
   gun is behind the camera; ×2/×4/×8 of the arcade fov; look pitch limited to the gun's depression/elevation
   (±3°) plus the hull pitch along the view. Switching modes keeps the aim point under the crosshair.
 - `src/game/aim.js` `aimRay`: screen-centre ray vs terrain, water surface, solid props (`raycastObjects
-  'shell'`) and tanks (bounding sphere, then `rayArmor`), 720 m. Unspotted enemies are skipped. In arcade the
+  'shell'`) and tanks (bounding sphere, then `rayArmor`), 720 m. The session no longer passes `visible`, so
+  unspotted (but drawn) enemies can be aimed at and shot manually; lock-on still needs a spotted target. In arcade the
   ray starts at the pivot so nothing between the camera and the tank is aimed at.
 - `src/game/input.js`: keys (codes), mouse deltas (pointer lock requested on click; plain `movementX/Y`
   works without it), wheel notches, button edges. Jumps > 300 px per event are ignored (lock spikes).
@@ -130,7 +131,7 @@ Two owner reports on medium (60 fps, short freezes): a new enemy spotted, and ma
   1. Shader compiles mid-battle (3 programs: the hit-scar material on the first tank hit, the CHARRED tank
      variant on the first kill; the transparent fade-in variants at the first fade). `BattleView.warmup()` at
      load (after `tanks.prewarm`): every model, both LODs, in 4 material variants (live, faded, charred,
-     charred+faded) through `renderer.compile` WITH post's HDR target bound (the old plain `compile()` built
+     charred+faded; pass 1 is now "live highlighted", see Visibility) through `renderer.compile` WITH post's HDR target bound (the old plain `compile()` built
      sRGB-output variants the game never uses). Scar material is DoubleSide from the start.
   2. Each spotting created new transparent clone materials (fade-in) and leaked them; now cached per model.
   3. Engine sound: the cycle wave (a 192×1024 DFT, 7 ms+) was built the first time a tank of a new engine type,
@@ -145,6 +146,19 @@ Two owner reports on medium (60 fps, short freezes): a new enemy spotted, and ma
 - Headless numbers are CPU/JS only (SwiftShader, 5 catch-up steps a frame, noisy): mid-battle shader compiles
   3 → 0; audio time in the mass-spot frame 16.6 → 7.7 ms; worst volley frame audio 9.4 → 1.4 ms. AI replanning
   (up to 15–40 ms over 5 steps headless) is the remaining largest spike source; not changed here.
+
+## Visibility (all tanks drawn)
+- `TankRenderer.sync` draws every tank; terrain, props, foliage and fog hide them. `visible` only drives the
+  spotted highlight: `e.fade` (0..1, ±4/s) is the highlight level for live spotted enemies, fed to
+  `model.setHighlight(h)` = per-model cached OPAQUE clones of the tank material sharing one `uSpot` uniform
+  (red fresnel rim + faint tint added to `totalEmissiveRadiance`, `FSPOT` in tankModel.js). Same defines and
+  `customProgramCacheKey` ('steelfront-tank-2') as the shared material → same program; warm pass 1 covers it.
+  `setOpacity` (transparent clones) is unused in battle now. Continuous tank FX run for all tanks.
+- HUD markers, minimap icons, lock-on, engine audio and bots still use `world.visible[team]` only.
+- AI: unscheduled target re-evaluations (the target just died) go through `evalBudget` (team.js, 3 per team
+  per tick incl. the scheduled ones, which always run), so a kill no longer makes every bot shooting at it
+  run perceive + bestAim in the same tick. Path plans were already capped (`planBudget`, 2/team/tick);
+  headless node profiling found no spot-correlated spikes beyond these.
 
 ## Known issues / unfinished (priority order)
 1. verify must fit capped.sh's 900 s under SwiftShader; the end leg uses the test hooks `__sf.endIn(45)` and

@@ -6,7 +6,7 @@
 // The bot only uses what its team has spotted (world.visible[team]); no wallhacks.
 import { aimSolution, predictImpact, DT, makeRng, penPreview, hullToWorld } from '../battle.js';
 import { heightAt, lineClear, waterDepthAt, resolveCircle } from '../map/query.js';
-import { teamBrain, planBudget } from './team.js';
+import { teamBrain, planBudget, evalBudget } from './team.js';
 import { plan, Follower, segClear } from './path.js';
 import { bestAim, candWorld, lineTo, gunFacing, alphaOf, chooseShell, chanceWith, pHit } from './combat.js';
 import { wrap, clamp, hyp, headingTo, shellSlots, snapPassable, passable, TAU } from './util.js';
@@ -106,7 +106,8 @@ export class Brain {
     this.team.work(world);
     this.events(world);
     const k = world.step + this.phase;
-    if (k % this.evalN === 0 || (this.target && !this.target.alive)) this.perceive(world);
+    if (k % this.evalN === 0) { evalBudget(world, t.team, true); this.perceive(world); }
+    else if (this.target && !this.target.alive && evalBudget(world, t.team)) this.perceive(world);
     if (k % 15 === 0 || !this.goal) this.decide(world);
     this.drive(world);
     this.gun(world);

@@ -18,7 +18,7 @@ Status: ☐ todo · ☑ done. The detail for each item lives in HANDOFF.md and d
 - ◐ Real-GPU fps: owner home PC, medium = 60 fps vsync-locked (render 3.8 ms, audio 0.17 ms, 240 calls, 1.6 M tris); still to check high and a heavy fight. Audio listening pass: in progress with the owner
 - ☑ Audio CPU: 0.17 ms per frame measured on the owner PC (no problem)
 - ☐ Ultra-low graphics tier for integrated GPUs (owner plays on Intel iGPU)
-- ☐ NEXT (queued after the perf fix): render ALL tanks (natural occlusion + fog; unspotted enemies visible if in line of sight), spotted enemies highlighted (outline/glow + marker + minimap + autoaim); bots keep using spotting
+- ☑ Render ALL tanks (natural occlusion + fog; unspotted enemies visible if in line of sight), spotted enemies highlighted (outline/glow + marker + minimap + autoaim); bots keep using spotting
 - ☐ AI: skill → survival correlation, light-tank survival, fewer long-range kills, map length balance
 - ☐ Garage: Sell button; show available vehicle XP (+ free XP) on owned tank cards in the tech tree (owner could not find their XP); add "Total XP earned" to Service Record and the top bar next to rank
 - ☐ HUD: scale bottom panels at 1080p+; "skip to results" after leaving dead

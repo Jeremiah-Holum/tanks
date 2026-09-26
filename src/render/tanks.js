@@ -1,6 +1,6 @@
 // TankRenderer: places a tank model per sim tank, interpolated between sim ticks, with turret yaw,
 // gun pitch, recoil, suspension rock, wheel spin / track scroll, damage state (broken tracks,
-// wrecks, ammo-rack turret toss), hit scars, fade-out of enemies that aren't spotted, LOD by
+// wrecks, ammo-rack turret toss), hit scars, red rim highlight on spotted enemies (all tanks drawn), LOD by
 // camera distance, and the continuous FX (track dust, exhaust, fire, wreck smoke).
 //
 //   const tr = new TankRenderer(scene, quality)
@@ -43,7 +43,7 @@ export class TankRenderer {
       id: t.id, def: t.def, gunIndex: t.gunIndex ?? (t.def.guns ? Math.max(0, t.def.guns.indexOf(t.gunDef)) : 0),
       number: 100 + ((t.id * 53 + t.team * 7) % 800),
       root: new THREE.Group(), models: [null, null], lod: -1,
-      prev: null, cur: null, t: -1, fade: 1, recoilT: 9, dmgKey: '', deadAt: -1,
+      prev: null, cur: null, t: -1, fade: 0, recoilT: 9, dmgKey: '', deadAt: -1,
       susp: { p: 0, pv: 0, r: 0, rv: 0 }, lastSpeed: 0, accel: 0, yawRate: 0, seen: true,
     };
     e.root.name = 'tank#' + t.id; e.root.matrixAutoUpdate = false;
@@ -84,11 +84,11 @@ export class TankRenderer {
       };
       let ty = lerpAngle(P.ty, C.ty, a), gp = P.gp + (C.gp - P.gp) * a;
       const speed = P.speed + (C.speed - P.speed) * a, yawRate = P.yr + (C.yr - P.yr) * a;
-      // ---- visibility: unspotted enemies fade out, wrecks and allies stay
+      // ---- every tank is drawn (terrain, props and fog hide them); spotted live enemies get a red
+      // rim highlight that fades in/out (e.fade is the highlight level now, not the opacity)
       const enemy = myTeam != null && t.team !== myTeam;
-      const show = !enemy || !visible || visible.has(t.id) || !t.alive;
-      e.fade = Math.max(0, Math.min(1, e.fade + (show ? 4 : -4) * dt));
-      if (e.fade <= 0) { e.root.visible = false; continue; }
+      const hl = enemy && t.alive && !!visible && visible.has(t.id);
+      e.fade = Math.max(0, Math.min(1, e.fade + (hl ? 4 : -4) * dt));
       e.root.visible = true;
       // ---- LOD by camera distance (zoom-aware)
       let lod = 0;
@@ -134,9 +134,9 @@ export class TankRenderer {
       const recoil = rt < 0.04 ? rmax * rt / 0.04 : rt < 0.6 ? rmax * Math.pow(1 - (rt - 0.04) / 0.56, 2) : 0;
       if (dead) { gp = Math.min(gp, -0.08); }
       model.update({ turretYaw: ty, gunPitch: gp, speed: dead ? 0 : speed, yawRate: dead ? 0 : yawRate, recoil, bodyPitch: sp.p, bodyRoll: sp.r, bodyY: bump }, dt);
-      model.setOpacity(e.fade);
+      if (model.setHighlight) model.setHighlight(e.fade);
       // ---- continuous FX
-      if (fx && e.fade > 0.5) this._fx(fx, e, t, model, s, speed, dt, map);
+      if (fx) this._fx(fx, e, t, model, s, speed, dt, map);
     }
     // tanks that left the world (new battle): drop them
     for (const [id, e] of this.entries) if (!e.seen) this._remove(id);

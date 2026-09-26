@@ -26,6 +26,18 @@ export function planBudget(world, team) {
   S.plans[team]++;
   return true;
 }
+// Target re-evaluation budget: a kill (or a burst of new contacts) used to make every bot that
+// was shooting at it re-run perceive + bestAim in the same tick (15–40 ms in the browser). The
+// scheduled evaluations (staggered by Brain.phase) always run and count; the unscheduled ones
+// (target just died) wait for a free slot, i.e. they are spread over the next ticks.
+const EVALS_PER_TICK = 3;
+export function evalBudget(world, team, force = false) {
+  const S = shared(world);
+  if (S.evalStep !== world.step) { S.evalStep = world.step; S.evals = [0, 0]; }
+  if (!force && S.evals[team] >= EVALS_PER_TICK) return false;
+  S.evals[team]++;
+  return true;
+}
 
 const PRIOR_W = 0.35;   // danger per enemy sniper spot that sees a cell (map knowledge)
 const CLS_W = { light: 0.7, medium: 1, heavy: 1.25, td: 1 };

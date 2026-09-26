@@ -354,7 +354,8 @@ export class BattleSession {
       const p = cam.pivot, s = Math.max(0, (p.x - o.x) * d.x + (p.y - o.y) * d.y + (p.z - o.z) * d.z - 0.5);
       o = { x: o.x + d.x * s, y: o.y + d.y * s, z: o.z + d.z * s };
     }
-    aimRay(world, o, d, { skipId: this._focusTank()?.id, visible: world.visible[this.team], res: this.aim });
+    // unspotted enemies are drawn and can be aimed at / shot manually (no lock, no marker)
+    aimRay(world, o, d, { skipId: this._focusTank()?.id, res: this.aim });
     if (!me.alive) { this.impact = null; this.pen = null; return; }
     // release a lock on a target that died or went out of sight
     if (this.lockTarget != null) {

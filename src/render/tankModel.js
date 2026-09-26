@@ -5,7 +5,7 @@
 //   buildTankModel(def, { paint, lod, gunIndex, number }) → {
 //     group, parts: { hull, turret, gun, mantlet, trackL, trackR, wheelsL, wheelsR, yaw, body },
 //     info: { exhausts, trackRear, trackFront, engine, top, recoil, muzzleLen },
-//     update(state, dt), setDamage({ tracks, burning, dead, ammorack }), setOpacity(a), warm(pass), dispose() }
+//     update(state, dt), setDamage({ tracks, burning, dead, ammorack }), setOpacity(a), setHighlight(h), warm(pass), dispose() }
 //
 // One shader (MeshStandardMaterial + onBeforeCompile) draws every tank surface. Per-vertex
 // attributes pick the look: aSurf = (metalness, roughness, paint mask, edge 0..1), aExt = (dirt,
@@ -181,8 +181,16 @@ const FPARS = /* glsl */`
 uniform vec3 uPaint, uCamoA, uCamoB, uMud, uDust, uSeed;
 uniform sampler2D uDecal, uTrack;
 uniform float uTravel;
+uniform float uSpot;
 varying vec4 vSurf; varying vec4 vExt; varying vec3 vObj; varying vec3 vONrm; varying vec2 vTUv;
 ${NOISE}`;
+// spotted-enemy highlight: red fresnel rim + faint body tint (uSpot 0..1, 0 on the shared materials)
+const FSPOT = /* glsl */`
+if (uSpot > 0.0) {
+  float tkRim = 1.0 - abs(dot(normalize(normal), normalize(vViewPosition)));
+  totalEmissiveRadiance += vec3(1.0, 0.06, 0.03) * uSpot * (0.12 + 6.0 * tkRim * tkRim * tkRim);
+}
+`;
 const FCOLOR = /* glsl */`
 vec3 P = vObj;
 float kind = vExt.y;
@@ -248,6 +256,7 @@ function attachShader(m) {
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, U.uni);
     sh.uniforms.uTravel = U.uTravel;
+    sh.uniforms.uSpot = U.uSpot || (U.uSpot = { value: 0 });
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\n' + VPARS)
       .replace('#include <beginnormal_vertex>', VNORMAL)
@@ -257,9 +266,10 @@ function attachShader(m) {
       .replace('#include <color_fragment>', '#include <color_fragment>\n' + FCOLOR)
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = tRough;')
       .replace('#include <metalnessmap_fragment>', 'float metalnessFactor = tMetal;')
-      .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + FBUMP);
+      .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + FBUMP)
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n' + FSPOT);
   };
-  m.customProgramCacheKey = () => 'steelfront-tank-1';
+  m.customProgramCacheKey = () => 'steelfront-tank-2';
   return m;
 }
 const MATS = new Map();
@@ -1461,7 +1471,7 @@ export function buildTankModel(def, opts = {}) {
       if (d.dead && !st.dead) {
         st.dead = true;
         for (const m of meshes) { liveMat.set(m, charred); m.material = charred; }
-        st.opacity = 1; st.fadeMats = null;
+        st.opacity = 1; st.fadeMats = null; st.hlMats = null;
         if (d.ammorack && !D.fixed) startFly(d.seed ?? Math.random());
       } else if (d.dead === false && st.dead) {
         st.dead = false;
@@ -1490,20 +1500,43 @@ export function buildTankModel(def, opts = {}) {
       }
       for (const c of st.fadeMats.values()) c.opacity = a;
     },
-    // Load-time shader warm-up: pass 0 live, 1 live faded, 2 charred, 3 charred faded, -1 restore.
+    // Spotted highlight 0..1 (red rim): swaps to per-instance OPAQUE clones sharing one uSpot uniform.
+    // Same defines + cache key as the shared material = same program (warmed in pass 1 anyway).
+    setHighlight(h) {
+      if (st.dead) h = 0;
+      if (h <= 0.001) {
+        if (st.hlMats) { for (const m of meshes) m.material = liveMat.get(m); st.hlMats = null; }
+        return;
+      }
+      if (!st.hlMats) {
+        const cache = st.hlCache || (st.hlCache = new Map());
+        const u = st.hlU || (st.hlU = { value: 0 });
+        st.hlMats = true;
+        for (const m of meshes) {
+          const src = liveMat.get(m);
+          let c = cache.get(src);
+          if (!c) { c = cloneMat(src, false); c.userData.uTravel = src.userData.uTravel; c.userData.uSpot = u; attachShader(c); cache.set(src, c); }
+          m.material = c;
+        }
+      }
+      st.hlU.value = h;
+    },
+    // Load-time shader warm-up: pass 0 live, 1 live highlighted, 2 charred, 3 charred faded, -1 restore.
     // Each pass puts that variant's materials on every mesh (renderer.compile then builds them).
     warm(pass) {
-      this.setOpacity(1);
+      this.setOpacity(1); this.setHighlight(0);
       if (!st.warmLive) st.warmLive = new Map(liveMat);
       const ch = pass === 2 || pass === 3;
       for (const m of meshes) { const mat = ch ? charred : st.warmLive.get(m); liveMat.set(m, mat); m.material = mat; }
-      if (pass === 1 || pass === 3) this.setOpacity(0.5);
+      if (pass === 1) this.setHighlight(0.5);
+      if (pass === 3) this.setOpacity(0.5);
       if (pass < 0) { st.warmLive = null; this.setOpacity(1); }
     },
     get state() { return st; },
     dispose() {
       if (!lod) { runMats[1].dispose(); runMats[-1].dispose(); }
       if (st.fadeCache) for (const c of st.fadeCache.values()) c.dispose();
+      if (st.hlCache) for (const c of st.hlCache.values()) c.dispose();
       group.removeFromParent();
     },
   };

@@ -16,5 +16,6 @@ Counted: AUDIO overhaul 202k.
 Counted: AUDIO cannon "loud bang" pass +20k.
 Counted: AUDIO "weight + samples" pass +29k.
 Counted: PERF hitch fix 172k.
-Total counted ≈ 2.93M of the 3.5M cap.
+Counted: VISIBILITY 119k.
+Total counted ≈ 3.05M of the 3.5M cap.
 - ☐ Graphics: 'ultra-low' tier for integrated GPUs (no shadows/post, lower res, fewer trees and grass). Owner plays on Intel integrated graphics.
