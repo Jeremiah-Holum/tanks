@@ -8,7 +8,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { buildTankModel, triCount, modelStats } from '../src/render/tankModel.js';
 import { TankRenderer } from '../src/render/tanks.js';
 import { FxRenderer } from '../src/render/fx.js';
-import { TANKS } from '../src/data/tanks.js';
+import { TANKS, TIER_ROMAN } from '../src/data/tanks.js';
 
 const Q = new URLSearchParams(location.search);
 const num = (k, d) => (Q.has(k) ? +Q.get(k) : d);
@@ -215,7 +215,7 @@ async function grid() {
     const el = document.createElement('div');
     el.style.left = c * tw + 'px'; el.style.top = r * th + 'px';
     const tris = triCount(models[k].group);
-    el.innerHTML = `${TANKS[id].name} <span>${['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII'][TANKS[id].tier]} ${TANKS[id].cls} · ${Math.round(tris / 100) / 10}k</span>`;
+    el.innerHTML = `${TANKS[id].name} <span>${TIER_ROMAN[TANKS[id].tier]} ${TANKS[id].cls} · ${Math.round(tris / 100) / 10}k</span>`;
     labels.appendChild(el);
     out[id] = tris;
   });

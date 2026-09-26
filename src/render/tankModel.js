@@ -15,7 +15,7 @@
 // materials are the two running-gear clones (they carry uTravel for wheel spin and track scroll)
 // and they share the compiled program.
 import * as THREE from 'three';
-import { buildArmor, solidFaces } from '../sim/armor.js';
+import { buildArmor, solidFaces, turretSection } from '../sim/armor.js';
 
 const DEG = Math.PI / 180;
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -28,6 +28,7 @@ export const PAINTS = {
   dunkelgelb_camo: { base: 0xa8935f, camoA: 0x4a5431, camoB: 0x6a4330 }, // + Olivgrün / Rotbraun
   grey: { base: 0x575c5c },                                    // Panzergrau
   '4bo': { base: 0x48532f },                                   // Soviet 4BO green
+  gelboliv: { base: 0x4e4b34 },                                // Bundeswehr RAL 6014 Gelboliv (post-war)
   winter: { base: 0xd6d6cc },
 };
 const NATION_PAINT = { usa: 'olive', germany: 'dunkelgelb', ussr: '4bo' };
@@ -515,12 +516,12 @@ function dims(def) {
   const rearZ = (y) => zOn(up[2], y);
   const sideX = (y) => (up[3].d - up[3].n[1] * y) / up[3].n[0];
   const tp = pc.turret.planes;
-  const tFrontZ = (y) => zOn(tp[0], y), tRearZ = (y) => zOn(tp[1], y);
-  const tSideX = (y) => (tp[2].d - tp[2].n[1] * y) / tp[2].n[0];
+  const tFrontZ = (y) => turretSection(t, y, tp).zF, tRearZ = (y) => turretSection(t, y, tp).zR;
+  const tSideX = (y) => turretSection(t, y, tp).x;
   return {
     h, t, tr, arm, pc, top, trackTop, fullW: h.sponson === false ? h.W : h.W + 2 * tr.w, xT: h.W / 2 + tr.w / 2, sponson: h.sponson !== false,
     noseY: h.clr + h.H * (1 - h.upper.frac), frontZ, rearZ, sideX, tFrontZ, tRearZ, tSideX,
-    upperFront: up[0], turretPos: arm.turretPos, nation: def.nation,
+    upperFront: up[0], turretPos: arm.turretPos, nation: def.nation, tier: def.tier,
     fixed: t.shape === 'casemate', open: t.shape === 'open' || !!t.open, cast: t.shape === 'cast',
     dirtH: Math.max(0.7, trackTop * 0.95),
   };
@@ -530,7 +531,7 @@ function dims(def) {
 const TT = 0.075; // track thickness
 function gearLayout(def, D) {
   const h = def.hull, tr = h.track, style = tr.style || 'torsion';
-  const big = style === 'christie' || style === 'interleaved';
+  const big = style === 'christie' || style === 'interleaved' || tr.rollers === 0;
   const Lt = h.L * (tr.len ?? 0.96);
   const front = def.look?.drive ? def.look.drive === 'front' : def.nation !== 'ussr';
   const topLim = D.trackTop - 0.03;
@@ -572,8 +573,8 @@ function gearLayout(def, D) {
     }
   } else { // christie, torsion
     for (let k = 0; k < n; k++) wheels.push({ z: even(k, n, zLo, zHi), y: yW, r: R, x: 0, w: W * (style === 'christie' ? 0.7 : 0.58) });
-    if (style === 'torsion') {
-      const nr = Math.max(2, Math.round(n / 2));
+    if (style === 'torsion' && tr.rollers !== 0) {
+      const nr = tr.rollers ?? Math.max(2, Math.round(n / 2));
       for (let k = 0; k < nr; k++) rollers.push({ z: even(k, nr, zLo + 0.3, zHi - 0.3), y: yTop - TT / 2 - Rr, r: Rr, x: 0, w: W * 0.4 });
     }
   }
@@ -1046,6 +1047,40 @@ function turretDetails(gb, D, def) {
   gb.cyl(M(0, roofY + 0.04, zR + Lr * 0.62, 0, 0, 0, 0.1, 0.08, 0.1), null, 10);
   gb.cyl(M(0, roofY + 0.09, zR + Lr * 0.62, 0, 0, 0, 0.14, 0.03, 0.14), null, 10);
   if (D.fixed) return;
+  // --- post-war kit: searchlight (look.searchlight 'top' over the gun, 'left'/'right' beside it)
+  //     and a US-style turret bustle rack (look.basket)
+  if (look.searchlight) {
+    const sl = look.searchlight;
+    if (sl === 'top') {
+      const y = H + 0.16, z = D.tFrontZ(H) + 0.02;
+      gb.st = ST.steel; gb.box(M(0, H + 0.03, z - 0.12, 0, 0, 0, 0.12, 0.08, 0.2));
+      gb.st = ST.paint; gb.box(M(0, y, z, 0, 0, 0, 0.56, 0.42, 0.34));
+      gb.st = ST.dark; gb.box(M(0, y, z + 0.172, 0, 0, 0, 0.46, 0.33, 0.01));
+      gb.st = ST.glass; gb.box(M(0, y, z + 0.176, 0, 0, 0, 0.42, 0.29, 0.004));
+    } else {
+      const s = sl === 'left' ? 1 : -1, y = H * 0.72, x = s * Math.min(0.62, D.tSideX(y) * 0.55), z = D.tFrontZ(y) + 0.05;
+      const soviet = nation === 'ussr', R = soviet ? 0.15 : 0.2;
+      gb.st = ST.steel; gb.box(M(x, y - R - 0.04, z - 0.1, 0, 0, 0, 0.06, 0.1, 0.25));
+      gb.st = ST.paint;
+      if (soviet) gb.lathe([[0, 0.2], [R, 0.2], [R * 1.05, 0.05], [R * 0.8, -0.18], [0, -0.2]], 14, M(x, y, z, 0, -Math.PI / 2, 0));
+      else gb.box(M(x, y, z, 0, 0, 0, 0.44, 0.4, 0.36));
+      gb.st = ST.glass;
+      if (soviet) gb.cyl(M(x, y, z + 0.2, Math.PI / 2, 0, 0, R * 0.85, 0.01, R * 0.85), null, 14);
+      else gb.box(M(x, y, z + 0.182, 0, 0, 0, 0.34, 0.3, 0.004));
+    }
+  }
+  if (look.basket) {
+    const y = H * 0.55, z = D.tRearZ(y) - 0.3, w = Math.min(2.2, D.tSideX(y) * 1.7);
+    gb.st = ST.steel;
+    gb.box(M(0, y - 0.15, z, 0, 0, 0, w, 0.03, 0.62));
+    for (const yy of [y, y + 0.14]) {
+      gb.box(M(0, yy, z - 0.3, 0, 0, 0, w, 0.03, 0.03));
+      for (const s of [1, -1]) gb.box(M(s * w / 2, yy, z, 0, 0, 0, 0.03, 0.03, 0.62));
+    }
+    for (let k = 0; k < 5; k++) gb.box(M(-w / 2 + w * k / 4, y - 0.01, z - 0.3, 0, 0, 0, 0.025, 0.3, 0.025));
+    gb.st = ST.tarp; gb.cyl(M(w * 0.18, y - 0.02, z, 0, 0, Math.PI / 2, 0.14, w * 0.5, 0.14), null, 10);
+    gb.st = ST.canvas; gb.box(M(-w * 0.28, y - 0.04, z + 0.02, 0, 0, 0, w * 0.3, 0.22, 0.4));
+  }
   // --- nation-specific: German bustle box + smoke dischargers, Soviet handrails, US antenna
   if (nation === 'germany') {
     if (look.stowage !== false && t.shape !== 'cast') {
@@ -1214,7 +1249,7 @@ function hullMarkings(gb, upperFaces, D) {
     const left = f.plane.n[0] > 0, fwd = (x) => (left ? 1 - x : x); // u runs rear→front on the right side
     if (D.nation === 'usa') stick(gb, f, fwd(0.62), 0.5, 0.55, 0.55, ATLAS.usStar);
     else if (D.nation === 'germany') stick(gb, f, fwd(0.35), 0.5, 0.45, 0.45, ATLAS.cross);
-    else stick(gb, f, fwd(0.3), 0.5, 1.4, 0.35, left ? ATLAS.slogan0 : ATLAS.slogan1);
+    else if (D.tier < 8) stick(gb, f, fwd(0.3), 0.5, 1.4, 0.35, left ? ATLAS.slogan0 : ATLAS.slogan1); // no wartime slogans post-war
   }
   if (D.nation === 'germany') {
     const rear = upperFaces.find((f) => f.plane.plate === 'hull.rear');
@@ -1270,7 +1305,7 @@ function barrel(gb, gun, nation, lod) {
   const le = len - bl;
   const prof = [[rb, le - 0.35, ST.bore], [rb, le, ST.paint]];
   if (!brake && nation !== 'germany') prof.push([rm * 1.12, le], [rm * 1.12, le - 0.1], [rm, le - 0.16]); else prof.push([rm, le]);
-  if (gun.evacuator) { const ze = le * 0.72; prof.push([rm * 1.02, ze + 0.25], [rm * 1.55, ze + 0.18], [rm * 1.55, ze - 0.12], [rt, ze - 0.2]); }
+  if (gun.evacuator) { const ze = le * (typeof gun.evacuator === 'number' ? gun.evacuator : 0.72); prof.push([rm * 1.02, ze + 0.25], [rm * 1.55, ze + 0.18], [rm * 1.55, ze - 0.12], [rt, ze - 0.2]); }
   prof.push([rt, sl + 0.03], [rs, sl], [rs, -0.12], [0, -0.12]);
   gb.lathe(prof, seg, m);
   if (brake) {

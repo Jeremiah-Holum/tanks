@@ -2,12 +2,13 @@
 //   tools/capped.sh -- node tools/shot-tanks.mjs [--w=1280 --h=720] <outdir> name='query' [name='query' ...]
 // Each name=query loads lab-tanks.html?query in the same browser, waits for __lab.ready and
 // saves <outdir>/<name>.png. A query may carry js=... (URL-encoded) that runs with `lab` first.
-import { chromium } from 'playwright';
+import { launch, startServer } from './lib-browser.mjs';
 const args = process.argv.slice(2);
 const opt = Object.fromEntries(args.filter((a) => a.startsWith('--')).map((a) => a.slice(2).split('=')));
 const [outdir = 'shots/tanks', ...shots] = args.filter((a) => !a.startsWith('--'));
 const W = +(opt.w || 1280), H = +(opt.h || 720);
-const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+const server = await startServer(); // a node static server if nothing listens on 8477
+const browser = await launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 try {
   const page = await browser.newPage({ viewport: { width: W, height: H } });
   const logs = [];
@@ -25,4 +26,4 @@ try {
     console.log(name, Date.now() - t0, 'ms', JSON.stringify(res));
   }
   console.log(logs.slice(0, 30).join('\n') || 'no console errors');
-} finally { await browser.close(); }
+} finally { await browser.close(); if (server) server.kill(); }

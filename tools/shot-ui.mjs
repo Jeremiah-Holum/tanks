@@ -2,7 +2,7 @@
 // Run through the browser lock:  tools/capped.sh -- node tools/shot-ui.mjs [screen[:query] ...] [--size 1280x720] [--out dir]
 // Default: every screen. Example: node tools/shot-ui.mjs results:result=defeat tree:nation=ussr
 // Needs the dev server on :8477 (python3 -m http.server 8477 from the repo root).
-import { chromium } from 'playwright';
+import { launch, startServer } from './lib-browser.mjs';
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { tmpdir } from 'os';
@@ -17,7 +17,8 @@ const list = args.length ? args : ['hangar', 'tree', 'details', 'loading', 'resu
 mkdirSync(out, { recursive: true });
 const external = (u) => !/^https?:\/\/(127\.0\.0\.1|localhost)[:/]/.test(u) && !u.startsWith('data:') && !u.startsWith('blob:');
 const fonts = (u) => /^https:\/\/fonts\.(googleapis|gstatic)\.com\//.test(u);
-const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+const server = await startServer(); // a node static server if nothing listens on 8477
+const browser = await launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 let errors = 0;
 try {
   const page = await browser.newPage({ viewport: { width: W, height: H }, ignoreHTTPSErrors: true });
@@ -44,7 +45,7 @@ try {
     await page.screenshot({ path: name, timeout: 120000 });
     console.log(name, `${Date.now() - t0} ms`);
   }
-} finally { await browser.close(); }
+} finally { await browser.close(); if (server) server.kill(); }
 
 // --flow: click through research → buy → garage → battle → settings on a fresh profile and assert the state.
 async function runFlow(page) {

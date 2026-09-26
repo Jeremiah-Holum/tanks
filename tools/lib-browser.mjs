@@ -33,7 +33,7 @@ if(u.endsWith('/')){const i=path.join(f,'index.html');if(fs.existsSync(i))f=i;el
 fs.readFile(f,(e,d)=>{if(e){r.writeHead(404);return r.end();}r.writeHead(200,{'Content-Type':T[path.extname(f)]||'application/octet-stream','Cache-Control':'no-cache'});r.end(d);});}).listen(+process.argv[1],'127.0.0.1');`;
 
 // Playwright's own Chromium; if it isn't installed, the system Chrome / Edge (SF_CHANNEL=chrome|msedge to force one).
-async function launch(opts) {
+export async function launch(opts) {
   if (process.env.SF_CHANNEL) return chromium.launch({ ...opts, channel: process.env.SF_CHANNEL });
   try { return await chromium.launch(opts); } catch (e) {
     for (const channel of ['chrome', 'msedge']) { try { return await chromium.launch({ ...opts, channel }); } catch { /* next */ } }
