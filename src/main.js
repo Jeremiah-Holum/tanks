@@ -30,6 +30,7 @@ async function startBattle(tankId, battle) {
   // URL overrides for testing: map, size, seed, limit
   if (params.has('map') || params.has('size') || params.has('seed')) {
     battle = buildBattle(screens.profile, battle?.meta?.lineup || tankId, {
+      start: battle?.meta?.tankId,
       size: +(params.get('size') || screens.battleSize), mapId: params.get('map') || undefined,
       seed: params.has('seed') ? +params.get('seed') : undefined,
     });
@@ -85,6 +86,7 @@ window.__sf = {
       alive: w ? [0, 1].map((k) => w.tanks.filter((t) => t.team === k && t.alive).length) : null,
       driven: s?.driven ? s.driven.slice() : null, reserve: w ? w.reserve[s.team].map((e) => e.def.id) : null,
       respawn: s?.respawn ? { left: +s.respawn.t.toFixed(1), pick: s.respawn.pick } : null,
+      startPick: s?.startPick ? { left: +s.startPick.t.toFixed(1), pick: s.startPick.pick, lineup: s.lineup.map((e) => e.def.id) } : null,
       menu: s?.menuOpen || false, score: s?.scoreOpen || false, lock: s?.lockTarget ?? null,
       perf: s ? { ...s.perf, win: undefined } : null, lastReport: this.lastReport ? { result: this.lastReport.result, xp: this.lastReport.xp?.total, credits: this.lastReport.credits?.net } : null,
     };
@@ -99,6 +101,6 @@ window.__sf = {
 if (params.get('auto') === '1') {
   const id = params.get('tank') && TANKS[params.get('tank')] ? params.get('tank') : screens.profile.selected;
   if (params.get('tank') && TANKS[id]) screens.profile.selected = id;
-  const battle = buildBattle(screens.profile, params.get('tank') ? [id] : lineupOf(screens.profile), { size: +(params.get('size') || screens.battleSize), mapId: params.get('map') || undefined, seed: params.has('seed') ? +params.get('seed') : undefined });
+  const battle = buildBattle(screens.profile, params.get('tank') ? [id] : lineupOf(screens.profile), { start: id, size: +(params.get('size') || screens.battleSize), mapId: params.get('map') || undefined, seed: params.has('seed') ? +params.get('seed') : undefined });
   startBattle(id, battle);
 } else screens.showHangar();

@@ -63,6 +63,12 @@ Owner of `src/main.js`, `src/game/*`, `src/ui/hud.js`, `src/ui/hud.css`, `index.
   name < 100 m or under the crosshair), scaled with distance, overlaps stacked then faded.
 - Tab score panel (tier, class icon, vehicle, player, damage, kills; sorted by tier; unspotted dimmed).
 - Death: "Destroyed by X · tank · cause" banner, then spectating allies (LMB/RMB next/previous).
+- Lineup start pick: with 2+ lineup tanks and a countdown, `start()` shows the same panel (`respawnPanel(session.lineup,
+  { t, pick, start: true })`, title "Choose your starting vehicle") over the whole lineup, default = the matchmaker's
+  start tank. 1–5 / click → `chooseStartTank(world, team, lineup, i)` (sim, deterministic, only at `world.step === 0`)
+  swaps the player tank in place (same id and spawn); reserve = the others in lineup order. The session rebuilds the
+  models (`view.tanks.replace(t)`, both LODs) and the HUD; the panel closes when the countdown ends (or Space).
+  `__sf.state().startPick`.
 - Lineup respawn: if `world.reserve[team]` has tanks left, the respawn panel (`hud.respawnPanel`) lists them and
   counts down 5 s (`RESPAWN_DELAY`); 1–5 or a click picks one (the cursor is freed without opening the menu). At 0
   `respawnTank(world, team, pick)` (sim, deterministic) adds a new tank with that entry's own loadout at the team's

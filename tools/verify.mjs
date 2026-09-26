@@ -1,8 +1,9 @@
 // End-to-end check of the real game flow with real input (Playwright + SwiftShader):
-// hangar → pick a tank → BATTLE! → loading → countdown (skipped with Space) → drive (W), turn the
+// hangar → pick a tank → BATTLE! → loading → countdown with the lineup start picker (1, then 2: start in
+// the second lineup tank; skipped with Space) → drive (W), turn the
 // turret (mouse), fire (LMB), switch shells (1/3), sniper mode (Shift + wheel), score panel (Tab),
 // minimap size (M), Esc menu → resume, lineup: destroy the tank (test hook) → respawn panel → 1 →
-// the second lineup tank deploys, then wait for the battle to end → results (two-tank breakdown) → garage.
+// the first lineup tank deploys, then wait for the battle to end → results (two-tank breakdown) → garage.
 // ?fast=1 gives the player god mode and lets slow frames advance the sim further; the input tests
 // run at speed 1, then the test hooks __sf.endIn(70) + __sf.setSpeed(8) play the last 45 s at 4×.
 // Fails on any console error or page error. Screenshots: shots/verify/<quality>/NN-step.png.
@@ -46,7 +47,7 @@ const perfNote = (s) => s.perf && s.perf.fps ? `${s.perf.fps.toFixed(1)} fps, fr
 
 try {
   await check('boot → hangar', async () => {
-    await page.goto(`http://127.0.0.1:${PORT}/index.html?fast=1&speed=1&q=${q}`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`http://127.0.0.1:${PORT}/index.html?fast=1&speed=1&countdown=60&q=${q}`, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.hangar .sf-battle', { timeout: 120000 });
     await wait(1500);
     await shot('hangar');
@@ -65,13 +66,14 @@ try {
     return { ok: after !== before, detail: `${before} → ${after}` };
   });
 
-  let lineup = null;
+  let lineup = null, start = null;
   await check('garage shows the battle lineup (2 slots + buy slot)', async () => {
     const d = await page.evaluate(() => ({ lineup: window.__sf.screens.profile.lineup.slice(), slots: window.__sf.screens.profile.lineupSlots,
       cards: [...document.querySelectorAll('.car-card.lu')].map((e) => e.dataset.id), buy: !!document.querySelector('.car-card.lu-buy'), head: document.querySelector('.lu-head')?.textContent,
-      note: document.querySelector('.hg-lineup-note')?.textContent }));
+      note: document.querySelector('.hg-lineup-note')?.textContent, selected: window.__sf.screens.profile.selected }));
     lineup = d.lineup;
-    return { ok: d.slots === 2 && d.lineup.length === 2 && d.cards.join() === d.lineup.join() && d.buy && (d.head || '').includes('2/2'), detail: d };
+    start = lineup.includes(d.selected) ? d.selected : lineup[0];
+    return { ok: d.slots === 2 && d.lineup.length === 2 && d.cards.join() === d.lineup.join() && d.buy && (d.head || '').includes('2/2') && (d.note || '').includes('you start in'), detail: { ...d, start } };
   });
 
   await check('BATTLE! → loading screen', async () => {
@@ -87,13 +89,31 @@ try {
     const s = await until(async () => { const s = await st(); return s.phase === 'countdown' || s.phase === 'play' ? s : null; }, 240000, 500);
     await wait(800);
     await shot('countdown');
-    return { ok: !!s && s.player.tankId === lineup[0] && s.reserve.join() === lineup.slice(1).join(), detail: s && `${s.phase}, spawned in ${s.player.tankId}, reserve ${s.reserve.join()}` };
+    const cards = await page.evaluate(() => [...document.querySelectorAll('.hud-respawn.on.start .rsp-card')].map((e) => e.classList.contains('sel')));
+    return { ok: !!s && s.phase === 'countdown' && s.player.tankId === start && s.reserve.join() === lineup.filter((id) => id !== start).join() && s.startPick?.lineup.join() === lineup.join()
+      && cards.length === 2 && cards[lineup.indexOf(start)] === true,
+      detail: s && `${s.phase}, default start ${s.player.tankId} (garage ${start}), reserve ${s.reserve.join()}, picker ${JSON.stringify(cards)}` };
+  });
+
+  await check('start picker: 1, then 2 → start in the second lineup tank', async () => {
+    const id0 = (await st()).player.id;
+    const pick = async (k) => {
+      await page.keyboard.press('Digit' + (k + 1));
+      return until(async () => { const s = await st(); return s.startPick?.pick === k && s.player.tankId === lineup[k] ? s : null; }, 20000, 150);
+    };
+    const a = await pick(0), b = await pick(1);
+    await wait(800);
+    await shot('start-picker');
+    const hud = await page.evaluate(() => ({ dp: document.querySelector('.hud-dmg .dp-name')?.textContent, name: window.__sf.session.player.def.name, huds: document.querySelectorAll('.hud').length }));
+    return { ok: !!a && !!b && b.player.id === id0 && b.phase === 'countdown' && b.reserve.join() === lineup[0] && b.driven.join() === String(id0) && hud.dp === hud.name && hud.huds === 1,
+      detail: `#1 → ${a && a.player.tankId}, #2 → ${b && b.player.tankId} (reserve ${b && b.reserve.join()}), hud ${JSON.stringify(hud)}` };
   });
 
   await check('Space skips the countdown', async () => {
     await page.keyboard.press('Space');
     const s = await until(async () => { const s = await st(); return s.phase === 'play' ? s : null; }, 20000);
-    return { ok: !!s, detail: s && `t=${s.time}` };
+    const panel = await page.evaluate(() => !!document.querySelector('.hud-respawn.on'));
+    return { ok: !!s && !panel && !s.startPick && s.player.tankId === lineup[1], detail: s && `t=${s.time}, in ${s.player.tankId}, panel ${panel}` };
   });
 
   await check('W drives forward', async () => {
@@ -198,7 +218,7 @@ try {
     return { ok: !!a && !!b, detail: '' };
   });
 
-  await check('destroyed → respawn panel → the next lineup tank deploys', async () => {
+  await check('destroyed → respawn panel → the other lineup tank deploys', async () => {
     const a = await st();
     await page.evaluate(() => window.__sf.killPlayer());
     const r = await until(async () => { const s = await st(); return s.respawn ? s : null; }, 20000, 150);
@@ -210,7 +230,7 @@ try {
     await wait(1000);
     await shot('respawned');
     const hud = await page.evaluate(() => ({ dp: document.querySelector('.hud-dmg .dp-name')?.textContent, name: window.__sf.session.player.def.name, panel: !!document.querySelector('.hud-respawn.on'), dead: document.querySelector('.hud').classList.contains('dead') }));
-    return { ok: !!r && cards === 1 && !!b && b.player.tankId === lineup[1] && b.driven.length === 2 && hud.dp === hud.name && !hud.panel && !hud.dead && b.reserve.length === 0,
+    return { ok: !!r && cards === 1 && !!b && b.player.tankId === lineup[0] && b.driven.length === 2 && hud.dp === hud.name && !hud.panel && !hud.dead && b.reserve.length === 0,
       detail: `panel ${cards} card(s); ${a.player.tankId}#${a.player.id} → ${b && b.player.tankId}#${b && b.player.id}, hud ${JSON.stringify(hud)}` };
   });
 
@@ -237,7 +257,7 @@ try {
     const r = await page.evaluate(() => window.__sf.lastReport);
     const rows = await page.evaluate(() => document.querySelectorAll('.rs-vehicles .rs-vrow:not(.head):not(.total)').length);
     const sum = r && r.tanks ? r.tanks.reduce((a, x) => a + x.xp.total, 0) : -1;
-    return { ok: !!r && typeof r.xp?.total === 'number' && r.tanks?.length === 2 && rows === 2 && sum === r.xp.total && r.tanks.map((x) => x.tankId).join() === lineup.join(),
+    return { ok: !!r && typeof r.xp?.total === 'number' && r.tanks?.length === 2 && rows === 2 && sum === r.xp.total && r.tanks.map((x) => x.tankId).join() === [lineup[1], lineup[0]].join(),
       detail: r && `${r.result}, ${r.xp.total} XP (${r.tanks?.map((x) => `${x.tankId} ${x.xp.total}`).join(' + ')}), ${r.credits.net ?? r.credits.total} credits, battle ${r.duration} s, ${rows} vehicle rows` };
   });
 

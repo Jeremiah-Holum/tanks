@@ -151,3 +151,6 @@ export function fixLineup(p) {
 }
 // The lineup to take into battle (validated).
 export const lineupOf = (p) => fixLineup(p).slice();
+// The default starting tank: the garage's selected tank if it is in the lineup, else lineup #1
+// (the player can pick another lineup tank during the pre-battle countdown).
+export const startTankOf = (p) => { const l = fixLineup(p); return l.includes(p.selected) ? p.selected : l[0]; };

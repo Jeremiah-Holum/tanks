@@ -196,6 +196,8 @@ export class TankRenderer {
     for (const pass of [0, 1, 2, 3]) { for (const m of ms) m.warm(pass); compile(); }
     for (const m of ms) m.warm(-1);
   }
+  // The tank behind an id changed (lineup start pick): drop the old models, build both LODs of the new one.
+  replace(t) { this._remove(t.id); const e = this._entry(t); this._model(e, 0); this._model(e, 1); }
   modelOf(id) { const e = this.entries.get(id); return e ? e.models[Math.max(0, e.lod)] : null; }
   _remove(id) {
     const e = this.entries.get(id);

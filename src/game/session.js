@@ -5,10 +5,12 @@
 //   onExit({ world, playerId, playerIds, left }) when the result banner is done (or the player left).
 // Lineup: world.reserve[team] holds the player's other lineup tanks; when the player's tank dies the
 // respawn panel counts down RESPAWN_DELAY s and respawnTank() brings the picked one in (one life each).
+// Start pick: during the pre-battle countdown the same panel lists the whole lineup (1–5 / click);
+// chooseStartTank() swaps the player's tank in place (same id and spawn) before the first sim step.
 // this.player is always the tank being driven now, this.driven every tank driven (for the results).
 // Loop: fixed-step sim (DT = 1/60) with an accumulator and a catch-up cap, render interpolation,
 // every event of every step collected per frame and fed to the view, audio and HUD.
-import { createBattle, stepBattle, DT, predictImpact, penPreview, viewRange, respawnTank, forfeitReserve } from '../sim/battle.js';
+import { createBattle, stepBattle, DT, predictImpact, penPreview, viewRange, respawnTank, forfeitReserve, chooseStartTank } from '../sim/battle.js';
 import { kill } from '../sim/damage.js';
 import { loadMap } from '../sim/map/index.js';
 import { muzzle } from '../sim/tank.js';
@@ -76,7 +78,10 @@ export class BattleSession {
     const world = this.world = createBattle({ ...b, map, timeLimit });
     const me = this.player = world.tanks.find((t) => t.player) || world.tanks[0];
     this.team = me.team;
-    this.driven = [me.id]; this.respawn = null;
+    this.driven = [me.id]; this.respawn = null; this.startPick = null;
+    // the whole lineup in lineup order (the start tank + world.reserve), for the start picker
+    const order = b.meta?.lineup || [], pe = b.teams[this.team].find((e) => e.player);
+    this.lineup = (pe ? [pe, ...world.reserve[this.team]] : []).sort((x, y) => order.indexOf(x.def.id) - order.indexOf(y.def.id));
     if (this.god) this._godOn();
     // prewarm the tank models (both LODs) in chunks so the bar moves
     if (view.tanks?.prewarm) {
@@ -103,7 +108,7 @@ export class BattleSession {
     this.cam = new GameCamera({ fov: this.settings.fov || 70, heightAt: (x, z) => view.heightAt(x, z) });
     this.cam.setYawPitch(me.yaw, -6 * DEG);
     this.input = new Input(canvas);
-    this.hud = new Hud(document.body, { world, playerId: me.id, settings: this.settings, onMenu: (a) => this._menuAction(a), onRespawn: (i) => this._pickRespawn(i) });
+    this.hud = this._makeHud();
     // fast-forward (?t=seconds): the player is driven by a brain meanwhile
     const ff = +(P.get('t') || 0);
     if (ff > 0) {
@@ -137,8 +142,18 @@ export class BattleSession {
     if (s !== 1) { this.view.q = { ...this.view.q, pixelRatio: this.view.q.pixelRatio * s }; this.view.resize(); }
   }
 
+  _makeHud() {
+    return new Hud(document.body, { world: this.world, playerId: this.player.id, settings: this.settings, onMenu: (a) => this._menuAction(a),
+      onRespawn: (i) => (this.startPick ? this._pickStart(i) : this._pickRespawn(i)) });
+  }
+
   start() {
     this.phase = this.countdown > 0 ? 'countdown' : 'play';
+    // choose the starting tank during the countdown (skipped for a one-tank lineup)
+    if (this.phase === 'countdown' && this.world.step === 0 && this.lineup.length > 1) {
+      this.startPick = { t: this.countdown, pick: Math.max(0, this.lineup.findIndex((e) => e.def.id === this.player.def.id)), start: true };
+      this.hud.respawnPanel(this.lineup, this.startPick);
+    }
     this.input.enable(true);
     this.hud.resize();
     try { this.audio?.music?.('battle'); } catch { /* optional */ }
@@ -162,7 +177,8 @@ export class BattleSession {
     // --- countdown
     if (this.phase === 'countdown') {
       this.countdown -= dt;
-      if (this.countdown <= 0 || inp.take('Space')) { this.countdown = 0; this.phase = 'play'; this.hud.flash('BATTLE!'); try { this.audio?.ui?.('battleStart'); } catch { /* */ } }
+      if (this.startPick) { this.startPick.t = this.countdown; this.hud.respawnPanel(this.lineup, this.startPick); }
+      if (this.countdown <= 0 || inp.take('Space')) { this.countdown = 0; this.phase = 'play'; if (this.startPick) { this.startPick = null; this.hud.respawnPanel(null); } this.hud.flash('BATTLE!'); try { this.audio?.ui?.('battleStart'); } catch { /* */ } }
     }
     // --- aim (from the camera of the previous frame, updated for this frame's mouse)
     this._updateCamera(dt);
@@ -264,6 +280,7 @@ export class BattleSession {
       inp.takeRelease(2);
       return;
     }
+    if (this.startPick) for (let k = 0; k < 5; k++) if (inp.take('Digit' + (k + 1)) || inp.take('Numpad' + (k + 1))) this._pickStart(k);
     if (!me.alive) return;
     for (let k = 0; k < 3; k++) if (inp.take('Digit' + (k + 1)) || inp.take('Numpad' + (k + 1))) {
       if (me.gunDef.shells[k] && me.ammo[k] > 0) { this.shell = k; this.hud.flashShell(k); } else this.hud.toast('No ammunition of that type');
@@ -393,6 +410,25 @@ export class BattleSession {
       cam: { pos: cam.pos, look: cam.look, fov: cam.fov }, alpha: this.alpha ?? 1, visible: world.visible[this.team],
       playerId: this.player.id, dt, sniper: cam.sniper, events: this.events,
     });
+  }
+
+  // ------------------------------------------------------------------ lineup start pick
+  // Swap the tank in place (same id and spawn, before the first step); the HUD is rebuilt for it.
+  _pickStart(i) {
+    const sp = this.startPick;
+    if (!sp || this.phase !== 'countdown' || i === sp.pick || !this.lineup[i]) return;
+    const t = chooseStartTank(this.world, this.team, this.lineup, i);
+    if (!t) return;
+    sp.pick = i;
+    this.player = t; this.driven = [t.id];
+    try { this.view.tanks?.replace?.(t); } catch (e) { console.warn('model rebuild failed', e); }
+    this._snap(t, true);
+    this.lockTarget = null; this.gunLock = false; this.shell = null; this.reloadHack = 0; this.fireQueued = false; this.useQueued = null; this._lastReload = t.reload;
+    if (this.god) this._godOn();
+    if (this.autopilot) this.autopilot = makeBrain(this.world, t, this.params.get('bots') || 'ai');
+    this.cam.sniper = false; this.cam.setYawPitch(t.yaw, -6 * DEG);
+    this.hud.dispose(); this.hud = this._makeHud(); this.hud.resize();
+    this.hud.respawnPanel(this.lineup, sp);
   }
 
   // ------------------------------------------------------------------ lineup respawn

@@ -2,7 +2,7 @@
 // loadout and the carousel: the battle lineup (slots in spawn order, buy more slots) + other owned tanks.
 import { h, clear, fmt, roman, ICON, svg, classIcon, flag, shellIcon, masteryIcon, pct } from './dom.js';
 import { TANKS, NATIONS, CLASS_LABEL } from '../meta/roster.js';
-import { ownedIds, tankState, selectTank, defaultAmmo, CONSUMABLES, fixLineup, LINEUP_MAX } from '../meta/profile.js';
+import { ownedIds, tankState, selectTank, defaultAmmo, CONSUMABLES, fixLineup, startTankOf, LINEUP_MAX } from '../meta/profile.js';
 import * as eco from '../meta/economy.js';
 import { MASTERY_NAMES } from '../meta/economy.js';
 import { scores } from './tankStats.js';
@@ -152,7 +152,7 @@ function renderRight(S, el, def, ts, rerender) {
 // in battle), empty slots, and a locked slot to buy. Then the owned tanks outside the lineup.
 function renderCarousel(S, el, onPick) {
   const p = S.profile;
-  const lineup = fixLineup(p);
+  const lineup = fixLineup(p), start = startTankOf(p);
   const act = (icon, title, fn, cls = '') => h('span.lu-act' + cls, { title, role: 'button',
     onclick: (e) => { e.stopPropagation(); fn(); } }, svg(ICON[icon]));
   const change = (r, msg) => { if (r.ok) { S.save(); onPick(); } else if (msg) S.toast(msg, 'warn'); };
@@ -167,7 +167,7 @@ function renderCarousel(S, el, onPick) {
       : h('div.lu-acts', act('plus', lineup.length < p.lineupSlots ? 'Add to lineup' : 'Lineup full: buy a slot or remove a tank',
         () => change(eco.addToLineup(p, id), 'Lineup is full: buy a slot or remove a tank first'), lineup.length < p.lineupSlots ? '.add' : '.full'));
     return h('button.car-card.tank' + (inLu ? '.lu' : '') + (id === p.selected ? '.on' : ''), {
-      'data-id': id, title: def.name + (inLu ? ` · lineup #${i + 1}${i === 0 ? ' (you spawn in it first)' : ''}` : ''),
+      'data-id': id, title: def.name + (inLu ? ` · lineup #${i + 1}${id === start ? ' (you start in it; pick another at battle start)' : ''}` : ''),
       onclick: () => { if (id !== p.selected) { selectTank(p, id); S.save(); onPick(); } },
       ondblclick: () => S.showDetails(id),
     },
@@ -217,6 +217,6 @@ function renderCarousel(S, el, onPick) {
 
 // Lineup summary under BATTLE!: tanks and the battle tier (from the highest-tier lineup tank).
 function lineupNote(p) {
-  const l = fixLineup(p), top = Math.max(...l.map((id) => TANKS[id].tier));
-  return [h('b', `${l.length} ${l.length === 1 ? 'tank' : 'tanks'}`), h('span', ` · tier ${roman(top)} battle · spawn: ${TANKS[l[0]].short || TANKS[l[0]].name}`)];
+  const l = fixLineup(p), top = Math.max(...l.map((id) => TANKS[id].tier)), s = TANKS[startTankOf(p)];
+  return [h('b', `${l.length} ${l.length === 1 ? 'tank' : 'tanks'}`), h('span', ` · tier ${roman(top)} battle · you start in the ${s.short || s.name}` + (l.length > 1 ? ' (change it at battle start)' : ''))];
 }

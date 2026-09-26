@@ -5,7 +5,7 @@
 //   hud.update(state) every frame (see BattleSession._hudState) · hud.event(ev, world) per sim event
 //   hud.toast(msg) · hud.flash(text) · hud.flashShell(k) · hud.cycleMinimap() · hud.menu(on)
 //   hud.destroyed(world, me) · hud.result(world, me, left) · hud.resize() · hud.dispose()
-//   hud.respawnPanel(reserveEntries, { t, pick } | null) · hud.setPlayer(tank) (lineup respawn; onRespawn(i) = a card clicked)
+//   hud.respawnPanel(entries, { t, pick, start? } | null) (start: the pre-battle lineup picker) · hud.setPlayer(tank) (lineup respawn; onRespawn(i) = a card clicked)
 import * as THREE from 'three';
 import { h, clear, shellIcon, classIcon } from './dom.js';
 import { renderMinimap } from './loading.js';
@@ -171,10 +171,13 @@ export class Hud {
     if (!list || !list.length || !st) { if (this.rspEl) cls(this.rspEl, 'on', false); this._rspKey = null; return; }
     if (!this.rspEl) {
       this.rspList = h('div.rsp-list'); this.rspT = h('b');
-      this.rspEl = h('div.hud-respawn', h('h3', 'Choose your next vehicle'), this.rspList,
-        h('div.rsp-cd', h('span', 'Deploying in ', this.rspT, ' s'), this.rspKeys = h('small')));
+      this.rspEl = h('div.hud-respawn', this.rspH = h('h3'), this.rspList,
+        h('div.rsp-cd', h('span', this.rspLbl = h('span'), this.rspT, ' s'), this.rspKeys = h('small')));
       this.el.insertBefore(this.rspEl, this.menuEl);
     }
+    txt(this.rspH, st.start ? 'Choose your starting vehicle' : 'Choose your next vehicle');
+    txt(this.rspLbl, st.start ? 'Battle starts in ' : 'Deploying in ');
+    cls(this.rspEl, 'start', !!st.start);
     const key = list.map((e) => e.def.id).join(',') + ':' + st.pick;
     if (key !== this._rspKey) {
       this._rspKey = key;
@@ -183,7 +186,7 @@ export class Hud {
         h('div.rsp-top', h('span.rsp-tier', ROMAN[e.def.tier] || ''), classIcon(e.def.cls, 14), h('span.rsp-name', e.def.short || e.def.name)),
         h('small', `${e.def.hp} HP · ${e.def.guns[e.gun || 0]?.cal || '?'} mm`))));
     }
-    txt(this.rspKeys, list.length > 1 ? `Press 1–${Math.min(5, list.length)} or click a vehicle to choose` : 'Your last lineup vehicle deploys automatically');
+    txt(this.rspKeys, list.length > 1 ? `Press 1–${Math.min(5, list.length)} or click a vehicle to choose` + (st.start ? ' · Space: start now' : '') : 'Your last lineup vehicle deploys automatically');
     txt(this.rspT, Math.max(0, Math.ceil(st.t)));
     cls(this.rspEl, 'on', true);
   }

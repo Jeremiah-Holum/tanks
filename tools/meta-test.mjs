@@ -4,7 +4,7 @@
 // counts battles to tier V, VII and X along each line for an "average player", and the post-war
 // tiers VIII–X (research chain, rewards, full tier VIII–X battles).
 import { TANKS, TANK_LIST, NATIONS, MAPS, STUB_TANKS, STUB_MAPS, ROMAN, MAX_TIER, childrenOf } from '../src/meta/roster.js';
-import { newProfile, migrate, ownedIds, selectTank, START_CREDITS, defaultAmmo } from '../src/meta/profile.js';
+import { newProfile, migrate, ownedIds, selectTank, START_CREDITS, defaultAmmo, startTankOf } from '../src/meta/profile.js';
 import * as eco from '../src/meta/economy.js';
 import { buildBattle } from '../src/meta/matchmaker.js';
 import { summarize, applyReport } from '../src/meta/results.js';
@@ -353,6 +353,14 @@ function simulate(line, seed) {
   ok(pe.def.id === q.lineup[0] && b.reserve[b.meta.playerTeam].length === 1 && b.reserve[b.meta.playerTeam][0].def.id === t5.id && !b.reserve[1 - b.meta.playerTeam].length,
     'spawn in the first lineup tank, the rest in reserve');
   ok(b.teams.every((tm) => tm.length === 15 && tm.filter((e) => e.player).length <= 1), 'teams stay 15v15 with one player entry');
+  // starting tank: the garage's selected lineup tank (else lineup #1); same matchmaking either way
+  const q0 = q.selected; selectTank(q, t5.id);
+  const bs = buildBattle(q, q.lineup, { seed: 4, start: startTankOf(q) }), pt = bs.meta.playerTeam;
+  ok(startTankOf(q) === t5.id && bs.teams[pt].find((e) => e.player).def.id === t5.id && bs.reserve[pt].map((e) => e.def.id).join() === q0 && bs.meta.tankId === t5.id
+    && bs.meta.lineup.join() === q.lineup.join() && bs.meta.tiers.join() === b.meta.tiers.join() && bs.mapId === b.mapId, 'start in the selected lineup tank, the rest in reserve, same tier and map');
+  const outside = ownedIds(q).find((id) => !q.lineup.includes(id));
+  if (outside) { selectTank(q, outside); ok(startTankOf(q) === q.lineup[0], 'a selected tank outside the lineup: start in lineup #1'); }
+  selectTank(q, q0);
 
   // per-tank rewards: two tanks driven, each with its own stats
   const rng = makeRng(5);

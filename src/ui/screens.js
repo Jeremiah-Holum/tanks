@@ -11,7 +11,7 @@
 // loadMap(battle.mapId) or `await withMap(battle)` from src/meta/matchmaker.js).
 // The screens own the profile (localStorage 'steelfront.v1'); pass opts.profile/opts.storage to override.
 import { h, clear, fmt, ICON, svg, rankIcon } from './dom.js';
-import { loadProfile, saveProfile, rankOf, lineupOf } from '../meta/profile.js';
+import { loadProfile, saveProfile, rankOf, lineupOf, startTankOf } from '../meta/profile.js';
 import { buildBattle } from '../meta/matchmaker.js';
 import { summarize, applyReport } from '../meta/results.js';
 import { buildHangar } from './hangar.js';
@@ -140,8 +140,8 @@ export class Screens {
 
   // Build the battle for the lineup (spawn order; battle.reserve holds the respawns) and hand it to INTEGRATION.
   startBattle() {
-    const lineup = lineupOf(this.profile), id = lineup[0];
-    const battle = buildBattle(this.profile, lineup, { size: this.battleSize });
+    const lineup = lineupOf(this.profile), id = startTankOf(this.profile);
+    const battle = buildBattle(this.profile, lineup, { size: this.battleSize, start: id });
     this.sfx('battle');
     if (this.opts.onBattle) this.opts.onBattle(id, { size: this.battleSize, battle });
     else this.toast('No battle handler connected (lab mode).');

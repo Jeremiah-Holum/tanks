@@ -71,6 +71,20 @@ export function respawnTank(world, team, index = 0) {
   world.events.push({ type: 'respawn', tank: t.id, team });
   return t;
 }
+// Starting tank (lineup picker during the countdown, before the first step): replace the team's
+// player tank with lineup[index], same id and spawn point; world.reserve[team] becomes the other
+// lineup entries in lineup order. lineup: every lineup Entry (the one driven now included).
+// Only valid while world.step === 0. Deterministic. Returns the new tank (or null).
+export function chooseStartTank(world, team, lineup, index) {
+  const i = world.tanks.findIndex((t) => t.player && t.team === team);
+  if (world.step !== 0 || world.result || i < 0 || !lineup || !lineup[index]) return null;
+  const old = world.tanks[i];
+  const t = createTank(old.id, team, lineup[index], { x: old.pos.x, z: old.pos.z, yaw: old.yaw });
+  settle(world.map, t);
+  world.tanks[i] = t; world.byId[t.id] = t;
+  world.reserve[team] = lineup.filter((_, k) => k !== index);
+  return t;
+}
 // Give up the remaining respawns (the player left the battle).
 export function forfeitReserve(world, team) { if (world.reserve[team]) world.reserve[team].length = 0; }
 

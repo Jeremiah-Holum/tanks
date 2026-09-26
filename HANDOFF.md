@@ -21,11 +21,11 @@ acceptance.
 ## State: playable end to end ✅
 | Check | Result |
 |---|---|
-| `node tools/rules-test.mjs` | 100/100 (armour, ballistics, dispersion, spotting, capture, respawn, regressions, tier VIII–X armour) |
+| `node tools/rules-test.mjs` | 103/103 (armour, ballistics, dispersion, spotting, capture, respawn, regressions, tier VIII–X armour) |
 | `node tools/maps-test.mjs` | 1356/1356 (4 maps, nav, spawns, fairness, raycasts) |
-| `node tools/meta-test.mjs` | 75/75 (economy, research, matchmaker, results, lineup, tiers VIII–X) |
+| `node tools/meta-test.mjs` | 77/77 (economy, research, matchmaker, results, lineup, tiers VIII–X) |
 | `node tools/battle-sim.mjs` | 64 bot battles: median 6.5 min, 3% time-outs, 29:33 wins, 2/1920 stuck. Tier VIII–X: `--tiers 9,10 --n 2` 8 battles, `--tiers 7,8 --n 1` 4 battles, no errors, 1 stuck tank (kolvik), pens 68–85% of hits for every new tank |
-| `tools/capped.sh -- node tools/verify.mjs low` / `medium` | low 20/20 (2026-09-26, Windows, system Chrome, after the tier VIII–X roster); medium 18/18 before the lineup: full flow by real input, zero console errors |
+| `tools/capped.sh -- node tools/verify.mjs low` / `medium` | low 21/21 (2026-09-26, Windows, system Chrome, start pick: 1 then 2, respawn into #1); medium 18/18 before the lineup: full flow by real input, zero console errors |
 | `node tools/build.mjs` | `dist/` ≈ 1.2 MB, fully static |
 
 What works:
@@ -57,10 +57,12 @@ Owner request: "lineup limited to 2 tanks, buy more spots, respawn with a tank w
 - Battle: when your tank dies and lineup tanks remain, a panel counts down 5 s (1–5 / click picks), then you respawn
   at your spawn area in that tank (`respawnTank` in the sim). Your team isn't beaten while you can still respawn.
   Leaving forfeits the respawns.
+- Start pick (owner: "I don't get to choose my tank at the start"): the countdown shows the lineup picker (1–5 / click);
+  default = the garage's selected lineup tank (else #1), named under BATTLE!; skipped for a one-tank lineup.
 - Results: each tank driven earns its own XP / credits / repairs / battle count; the results screen shows a per-vehicle table.
 - Details: docs/notes/meta.md "Battle lineup", docs/notes/integration.md (HUD "Lineup respawn").
-- Decisions made without the owner: `selected` stays the tank shown in the garage (the lineup order decides the
-  spawn); lineups may mix nations; each respawn earns its own participation reward; a new tank fills a free slot.
+- Decisions made without the owner: `selected` stays the tank shown in the garage (and is the default start tank
+  when it is in the lineup; the lineup order decides the respawn list); lineups may mix nations; each respawn earns its own participation reward; a new tank fills a free slot.
 - Headless tools on Windows: `tools/lib-browser.mjs` now falls back to a node static server (no python3) and to the
   installed Chrome / Edge when Playwright's Chromium isn't installed (`SF_CHANNEL=chrome|msedge` forces one).
 

@@ -91,12 +91,13 @@ function botEntry(rng, def, name, skill) {
 }
 
 // tankId: the tank to spawn in first, or the whole lineup (array, spawn order; also opts.lineup).
-// The battle tier comes from the highest-tier lineup tank; the other lineup tanks become
-// battle.reserve[playerTeam] (respawns, one life each).
+// opts.start: the lineup tank to spawn in (default lineup[0]). The battle tier comes from the
+// highest-tier lineup tank; the other lineup tanks (lineup order) become battle.reserve[playerTeam]
+// (respawns, one life each; the session may swap the start tank during the countdown).
 export function buildBattle(profile, tankId, opts = {}) {
   const lineup = (opts.lineup || (Array.isArray(tankId) ? tankId : [tankId])).filter((id, i, a) => TANKS[id] && a.indexOf(id) === i);
   if (!lineup.length) throw new Error('buildBattle: unknown tank ' + tankId);
-  tankId = lineup[0];
+  tankId = lineup.includes(opts.start) ? opts.start : lineup[0];
   const def = TANKS[tankId];
   const top = lineup.reduce((a, id) => (TANKS[id].tier > TANKS[a].tier ? id : a), lineup[0]), topDef = TANKS[top];
   const size = opts.size === 7 ? 7 : 15;
@@ -136,7 +137,7 @@ export function buildBattle(profile, tankId, opts = {}) {
   const avgSkill = teams.map((tm) => +(tm.filter((e) => e.bot).reduce((a, e) => a + e.bot.skill, 0) / Math.max(1, tm.filter((e) => e.bot).length)).toFixed(3));
   return {
     mapId: map.id, map: null, seed, timeLimit: opts.timeLimit ?? 900, mode: opts.mode || 'standard', teams,
-    reserve: [0, 1].map((t) => (t === playerTeam ? lineup.slice(1).map((id) => playerEntry(profile, id)) : [])),
+    reserve: [0, 1].map((t) => (t === playerTeam ? lineup.filter((id) => id !== tankId).map((id) => playerEntry(profile, id)) : [])),
     meta: { mapId: map.id, mapName: map.name, blurb: map.blurb, theme: map.theme, size, template,
       tiers: [Math.min(...tiers), Math.max(...tiers)], playerTeam, playerIndex: teams[playerTeam].findIndex((e) => e.player),
       avgSkill, tankId, lineup, topTier: topDef.tier, modeLabel: size === 7 ? 'Skirmish 7v7' : 'Standard Battle' },

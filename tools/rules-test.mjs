@@ -9,7 +9,7 @@ import { fire } from '../src/sim/gunnery.js';
 import { rayArmor, gunPivot } from '../src/sim/tank.js';
 import { settle } from '../src/sim/move.js';
 import { startFire, useConsumable, plateEff, kill } from '../src/sim/damage.js';
-import { respawnTank } from '../src/sim/battle.js';
+import { respawnTank, chooseStartTank } from '../src/sim/battle.js';
 import { testMap, simpleBot } from '../src/sim/testmap.js';
 import { existsSync } from 'fs';
 
@@ -569,6 +569,18 @@ console.log('Review regressions');
   for (const x of [a, b]) { kill(x, x.tanks[0], x.tanks[2].id, 'shot'); run(x, 2); respawnTank(x, 0, 0); run(x, 3); }
   const sig = (x) => x.tanks.map((q) => `${q.id}:${q.pos.x.toFixed(4)},${q.pos.z.toFixed(4)},${q.hp}`).join('|');
   check('lineup: respawn is deterministic', sig(a) === sig(b));
+  // start pick (countdown, before the first step): swap in place, same id and spot, reserve in lineup order
+  const c = mk(7), p0 = c.tanks[0], lu = [{ def: p0.def, player: true }, ...c.reserve[0]];
+  const s1 = chooseStartTank(c, 0, lu, 1);
+  check('lineup: start pick swaps the player tank in place',
+    s1 && s1.id === p0.id && c.tanks[0] === s1 && c.byId[s1.id] === s1 && s1.def === lu[1].def && s1.ammo[0] === 5 && s1.pos.x === p0.pos.x && s1.pos.z === p0.pos.z
+      && c.reserve[0].length === 1 && c.reserve[0][0] === lu[0] && c.tanks.length === 3);
+  run(c, 1);
+  check('lineup: no start pick after the battle has started', chooseStartTank(c, 0, lu, 0) === null);
+  const d1 = mk(7), d2 = mk(7);
+  chooseStartTank(d1, 0, [{ def: d1.tanks[0].def, player: true }, ...d1.reserve[0]], 1); chooseStartTank(d2, 0, [{ def: d2.tanks[0].def, player: true }, ...d2.reserve[0]], 1);
+  run(d1, 3); run(d2, 3);
+  check('lineup: start pick is deterministic', sig(d1) === sig(d2));
 }
 
 // ------------------------------------------------------------------ real maps
