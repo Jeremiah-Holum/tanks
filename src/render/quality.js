@@ -21,9 +21,9 @@ export const QUALITY = {
     detailNormals: true,
   },
   high: {
-    name: 'high', pixelRatio: 1, maxPixelRatio: 2,
+    name: 'high', pixelRatio: 1, maxPixelRatio: 1, // was 2: at 125–150% Windows scaling that drew 1.5–2.25× the pixels + AO → stutter
     terrainStep: 2, outerTerrain: 1.4,
-    shadowMap: 4096, shadowRange: 220, shadowRadius: 3,
+    shadowMap: 3072, shadowRange: 220, shadowRadius: 3,
     grass: { radius: 80, spacing: 0.52 },
     treeLod: 260, wind: true, bloom: true, ao: true, aa: 'smaa', clouds: true, farTrees: 4200,
     detailNormals: true,
