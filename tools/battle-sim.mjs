@@ -4,6 +4,7 @@
 // tick, and how bot skill correlates with damage and survival.
 //   node tools/battle-sim.mjs [--n 4] [--maps ashford,kessel] [--workers 2] [--seed 1] [--limit 900] [--v]
 //     [--skills 0.8,0.3 (force team skills)] [--tune cover=0,danger=0.5 (src/sim/ai TUNE knobs, for A/B)]
+//     [--tiers 8,10 (anchor tank tier range: e.g. 10,10 forces tier VIII–X battles; adds a per-vehicle table)]
 // --n = battles per map. Workers run battles in parallel (worker_threads); keep it ≤ 2 on a busy box.
 import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
 import { performance } from 'perf_hooks';
@@ -11,7 +12,7 @@ import { fileURLToPath } from 'url';
 
 const arg = (k, d) => { const i = process.argv.indexOf('--' + k); return i > 0 ? process.argv[i + 1] : d; };
 
-async function runBattle({ mapId, seed, limit, verbose, skills, tune }) {
+async function runBattle({ mapId, seed, limit, verbose, skills, tune, tiers }) {
   const { loadMap } = await import('../src/sim/map/index.js');
   const { createBattle, stepBattle } = await import('../src/sim/battle.js');
   const { createBrain, TUNE } = await import('../src/sim/ai/index.js');
@@ -21,7 +22,7 @@ async function runBattle({ mapId, seed, limit, verbose, skills, tune }) {
   const { makeRng } = await import('../src/meta/rng.js');
   const rng = makeRng(seed * 31 + 7);
   // a random tier III–VII tank anchors the matchmaker; its "player" slot becomes a bot too
-  const anchorPool = TANK_LIST.filter((d) => d.tier >= 2);
+  const anchorPool = TANK_LIST.filter((d) => (tiers ? d.tier >= tiers[0] && d.tier <= tiers[1] : d.tier >= 2));
   const anchor = anchorPool[Math.floor(rng() * anchorPool.length)];
   const opts = buildBattle(null, anchor.id, { seed, mapId, timeLimit: limit });
   for (const tm of opts.teams) for (const e of tm) if (e.player) { e.player = false; e.bot = { skill: 0.5, role: 'x' }; e.crewSkill = 0.76; }
@@ -85,7 +86,7 @@ async function runBattle({ mapId, seed, limit, verbose, skills, tune }) {
     }
   }
   const top = Math.max(...world.tanks.map((t) => t.def.tier));
-  const tanks = world.tanks.map((t) => ({ below: top - t.def.tier,
+  const tanks = world.tanks.map((t) => ({ below: top - t.def.tier, id: t.def.id,
     team: t.team, cls: t.def.cls, tier: t.def.tier, hp: t.maxHp, skill: t.bot ? t.bot.skill : 0.5, alive: t.alive,
     life: t.alive ? world.time : deathT[t.id] ?? world.time, share: (t.alive ? world.time : deathT[t.id] ?? world.time) / world.time, dmg: t.stats.dmg, shots: t.stats.shots, hits: t.stats.hits, pens: t.stats.pens,
     kills: t.stats.kills, received: t.stats.received, use: use.get(t.id), nf: brains.get(t.id).stats.nf, unsticks: brains.get(t.id).stats.unsticks, spotted: t.stats.spotted,
@@ -109,9 +110,10 @@ if (!isMainThread) {
   const maps = (arg('maps', MAPS.map((m) => m.id).join(','))).split(',');
   const verbose = process.argv.includes('--v');
   const skills = arg('skills', null) ? arg('skills').split(',').map(Number) : null;
+  const tiers = arg('tiers', null) ? arg('tiers').split(',').map(Number) : null;
   const tune = Object.fromEntries((arg('tune', '') || '').split(',').filter(Boolean).map((kv) => { const [k, v] = kv.split('='); return [k, +v]; }));
   const jobs = [];
-  for (let i = 0; i < n; i++) for (const mapId of maps) jobs.push({ mapId, seed: seed0 + i * 101 + mapId.length * 7, limit, verbose, skills, tune });
+  for (let i = 0; i < n; i++) for (const mapId of maps) jobs.push({ mapId, seed: seed0 + i * 101 + mapId.length * 7, limit, verbose, skills, tune, tiers });
   const results = [];
   const t0 = performance.now();
   await new Promise((resolve) => {
@@ -134,6 +136,18 @@ if (!isMainThread) {
     }
   });
   report(results.filter((r) => !r.error), (performance.now() - t0) / 1000);
+  if (tiers) vehicles(results.filter((r) => !r.error), tiers[0] - 2);
+}
+
+// Per-vehicle table (tier ≥ lo): battles, damage dealt / received per own hp, pens per hit, survival.
+function vehicles(R, lo) {
+  const T = R.flatMap((r) => r.tanks).filter((t) => t.id && t.tier >= lo), ids = [...new Set(T.map((t) => t.id))].sort();
+  const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
+  console.log('\nvehicle          tier  n   dmg/hp  recv/hp  pen%(own hits)  surv');
+  for (const id of ids) {
+    const L = T.filter((t) => t.id === id), hi = L.reduce((a, t) => a + t.hits, 0), pe = L.reduce((a, t) => a + t.pens, 0);
+    console.log(`${id.padEnd(16)} ${String(L[0].tier).padStart(4)} ${String(L.length).padStart(3)}   ${mean(L.map((t) => t.dmg / t.hp)).toFixed(2)}     ${mean(L.map((t) => t.received / t.hp)).toFixed(2)}     ${hi ? Math.round(100 * pe / hi) + '%' : '-'}`.padEnd(64) + `${Math.round(100 * L.filter((t) => t.alive).length / L.length)}%`);
+  }
 }
 
 function report(R, secs) {

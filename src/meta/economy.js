@@ -9,7 +9,7 @@
 import { TANKS, TANK_LIST, MAX_TIER } from './roster.js';
 import { tankState, defaultAmmo, isResearched, isOwned, ownedIds, CONSUMABLES, fixLineup, LINEUP_MAX } from './profile.js';
 
-export const TARGET_BATTLES = [0, 1.5, 4, 8, 14, 26, 38, 45]; // battles at tier t to unlock tier t+1
+export const TARGET_BATTLES = [0, 1.5, 4, 8, 14, 26, 38, 45, 55, 65, 80]; // battles at tier t to unlock tier t+1 (X: nothing to unlock; rates extrapolated)
 export const AVG_PERF = 1.93;          // performance units an average player earns (see perfUnits)
 export const WIN_XP = 1.5, WIN_CR = 1.25, FREE_XP = 0.05, FIRST_WIN_XP = 2;
 export const SELL_FACTOR = 0.5;

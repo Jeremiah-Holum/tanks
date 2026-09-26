@@ -1,7 +1,8 @@
 // node tools/meta-test.mjs [--quiet]
 // Deterministic tests for src/meta: starting profile, research → buy → select, reward sanity,
 // service costs vs. a tier-I player, matchmaker validity, and a progression simulation that
-// counts battles to tier V and VII along each line for an "average player".
+// counts battles to tier V, VII and X along each line for an "average player", and the post-war
+// tiers VIII–X (research chain, rewards, full tier VIII–X battles).
 import { TANKS, TANK_LIST, NATIONS, MAPS, STUB_TANKS, STUB_MAPS, ROMAN, MAX_TIER, childrenOf } from '../src/meta/roster.js';
 import { newProfile, migrate, ownedIds, selectTank, START_CREDITS, defaultAmmo } from '../src/meta/profile.js';
 import * as eco from '../src/meta/economy.js';
@@ -228,25 +229,84 @@ function simulate(line, seed) {
 {
   const ls = lines();
   const rows = [];
-  let t5 = [], t7 = [];
+  let t5 = [], t7 = [], t10 = [];
   for (const l of ls) {
     const runs = [1, 2, 3].map((s) => simulate(l, s));
     const at = (tier) => { const v = runs.map((r) => r.reached[tier]).filter(Boolean); return v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length) : null; };
-    const row = { line: l.map((id, i) => `${TANKS[id].short || id} ${ROMAN[TANKS[id].tier]}` + (i ? ` @${Math.round(runs.reduce((a, r) => a + (r.reached[TANKS[id].tier] || 0), 0) / runs.length)}` : '')).join(' → '), t5: at(5), t7: at(7) };
+    const row = { line: l.map((id, i) => `${TANKS[id].short || id} ${ROMAN[TANKS[id].tier]}` + (i ? ` @${Math.round(runs.reduce((a, r) => a + (r.reached[TANKS[id].tier] || 0), 0) / runs.length)}` : '')).join(' → '), t5: at(5), t7: at(7), t10: at(10) };
     rows.push(row);
-    if (row.t5) t5.push(row.t5); if (row.t7) t7.push(row.t7);
+    if (row.t5) t5.push(row.t5); if (row.t7) t7.push(row.t7); if (row.t10) t10.push(row.t10);
   }
   log('\nprogression (average player, 50% wins; @N = battles played when that tank is bought):');
   for (const r of rows) log('  ' + r.line);
   const mean = (a) => Math.round(a.reduce((x, y) => x + y, 0) / Math.max(1, a.length));
-  log(`  mean battles to tier V: ${mean(t5)}, to tier VII: ${mean(t7)}`);
+  log(`  mean battles to tier V: ${mean(t5)}, to tier VII: ${mean(t7)}, to tier X: ${mean(t10)}`);
   ok(mean(t5) >= 25 && mean(t5) <= 40, `tier V in 25–40 battles (${mean(t5)})`);
   if (t7.length) ok(mean(t7) >= 80 && mean(t7) <= 120, `tier VII in 80–120 battles (${mean(t7)})`);
+  ok(t10.length === 3 && mean(t10) >= 220 && mean(t10) <= 340, `tier X in 220–340 battles on each nation's medium line (${t10.join(', ')})`);
   log('\nper-tier rates: tier | expected XP/battle | expected net credits/battle | mastery 3rd/2nd/1st/Ace');
   let mono = true;
   for (let t = 2; t <= MAX_TIER; t++) if (!(eco.expectedXp(t) > eco.expectedXp(t - 1) && eco.expectedNetCredits(t) > eco.expectedNetCredits(t - 1))) mono = false;
   ok(mono, 'XP and net credits per battle rise with every tier');
   for (let t = 1; t <= MAX_TIER; t++) log(`  ${ROMAN[t].padEnd(4)} ${String(Math.round(eco.expectedXp(t))).padStart(6)} ${String(Math.round(eco.expectedNetCredits(t))).padStart(8)}   ${eco.masteryThresholds(t).slice(1).join('/')}`);
+}
+
+// ---------------------------------------------------------------- 7. post-war tiers VIII–X
+{
+  ok(MAX_TIER === 10 && ROMAN[10] === 'X', 'roster runs to tier X');
+  // every nation: tier VIII, IX and X exist and a tier X tank is reachable from a starter
+  for (const n of Object.keys(NATIONS)) {
+    const list = TANK_LIST.filter((d) => d.nation === n);
+    const reach = new Set(list.filter((d) => d.tier === 1).map((d) => d.id));
+    for (let t = 2; t <= MAX_TIER; t++) for (const d of list.filter((x) => x.tier === t)) if (d.parents.some((q) => reach.has(q))) reach.add(d.id);
+    const tops = list.filter((d) => d.tier === 10);
+    ok([8, 9, 10].every((t) => list.some((d) => d.tier === t)) && tops.length && tops.every((d) => reach.has(d.id)), `${n}: tiers VIII–X exist and tier X is reachable from the starter`);
+  }
+  // research + buy along the chain VII → VIII → IX → X (parent XP, then credits)
+  let chainOk = true;
+  for (const top of TANK_LIST.filter((d) => d.tier === 10)) {
+    const chain = [top]; while (chain[0].tier > 7) chain.unshift(TANKS[chain[0].parents[0]]);
+    const p = newProfile('Chain');
+    p.tanks[chain[0].id] = { ...p.tanks[p.selected], owned: true, xp: 0, guns: [0], gun: 0, ammo: defaultAmmo(chain[0], 0) };
+    p.researched.push(chain[0].id);
+    for (let i = 1; i < chain.length; i++) {
+      const d = chain[i], par = chain[i - 1];
+      p.tanks[par.id].xp = d.xp; p.credits = d.price;
+      const rr = eco.researchInfo(p, d.id);
+      if (!(rr.ok && eco.research(p, d.id).ok && eco.buy(p, d.id).ok && ownedIds(p).includes(d.id) && p.credits === 0)) chainOk = false;
+    }
+  }
+  ok(chainOk, 'post-war lines research and buy VII → VIII → IX → X');
+  // economy: research cost and price grow per tier, tier X nets credits for an average player,
+  // service stays a fraction of the gross, and a tier-X loss with 0 damage costs < 1 average battle's net
+  const avg = (t, f) => { const l = TANK_LIST.filter((d) => d.tier === t); return l.reduce((s, d) => s + f(d), 0) / l.length; };
+  ok([8, 9, 10].every((t) => avg(t, (d) => d.xp) > avg(t - 1, (d) => d.xp) && avg(t, (d) => d.price) > avg(t - 1, (d) => d.price)), 'research XP and price rise through tiers VIII–X');
+  let econ = true;
+  for (const t of [8, 9, 10]) {
+    const def = TANK_LIST.find((d) => d.tier === t);
+    const p = newProfile('Eco'); p.tanks[def.id] = { ...p.tanks[p.selected], owned: true, guns: [0], gun: 0, ammo: defaultAmmo(def, 0) };
+    const b = buildBattle(p, def.id, { seed: 70 + t });
+    const w = fakeWorld(b, { won: false, survived: false, stats: { dmg: 0, shots: 10 } }, makeRng(t));
+    const rep = summarize(w, w.tanks.find((x) => x.player).id, p, b);
+    if (!(eco.expectedNetCredits(t) > 0 && rep.credits.net > -eco.expectedNetCredits(t))) econ = false;
+    log(`  tier ${ROMAN[t]} ${def.short}: bad game net ${rep.credits.net}, expected net ${Math.round(eco.expectedNetCredits(t))}, price ${def.price}`);
+  }
+  ok(econ, 'tiers VIII–X: average battle nets credits; a zero-damage loss costs less than one average battle earns');
+  // matchmaker: a tier X tank gets full, mirrored tier VIII–X battles; tier VIII can meet tier X
+  let full = true, sawX = false;
+  for (const def of TANK_LIST.filter((d) => d.tier >= 8)) {
+    const p = newProfile('MMX'); p.tanks[def.id] = { ...p.tanks[p.selected], owned: true, guns: [0], gun: 0, ammo: defaultAmmo(def, 0) };
+    p.lineup = [def.id];
+    for (let s = 0; s < 10; s++) for (const size of [15, 7]) {
+      const b = buildBattle(p, def.id, { size, seed: 500 + s });
+      const all = [...b.teams[0], ...b.teams[1]], tiers = all.map((e) => e.def.tier);
+      if (b.teams[0].length !== size || b.teams[1].length !== size || Math.min(...tiers) < def.tier - 2 || Math.max(...tiers) > Math.min(10, def.tier + 2)) full = false;
+      if (def.tier === 10 && Math.min(...tiers) < 8) full = false;
+      if (def.tier === 8 && Math.max(...tiers) === 10) sawX = true;
+    }
+  }
+  ok(full, 'matchmaker: full 15v15 / 7v7 battles for every tier VIII–X tank, tiers within ±2 and ≤ X');
+  ok(sawX, 'a tier VIII tank sometimes meets tier X');
 }
 
 // ---------------------------------------------------------------- 8. battle lineup (slots, respawns, per-tank rewards)

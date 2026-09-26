@@ -63,8 +63,9 @@ export function buildTree(S, nation) {
     for (const b of tabs.children) b.classList.toggle('on', b.textContent === NATIONS[nation].label);
     el.dataset.nation = nation;
     const L = layoutTree(nation);
-    const W = Math.max(900, body.clientWidth || 1200), Hh = Math.max(300, body.clientHeight || 560);
-    const cols = MAX_TIER, colW = (W - 40) / cols, nodeW = Math.min(176, colW - 24);
+    // ten tiers: columns at least 112 px wide (the canvas scrolls sideways on narrow windows)
+    const cols = MAX_TIER, W = Math.max(900, 40 + cols * 112, body.clientWidth || 1200), Hh = Math.max(300, body.clientHeight || 560);
+    const colW = (W - 40) / cols, nodeW = Math.min(176, colW - (colW < 140 ? 16 : 24));
     const rowH = Math.max(70, Math.min(124, (Hh - 50) / Math.max(1, L.rows))), nodeH = Math.min(88, rowH - 16);
     const top = Math.max(38, (Hh - L.rows * rowH) / 2 + 10);
     const x = (d) => 20 + (d.tier - 1) * colW + (colW - nodeW) / 2, y = (d) => top + L.row[d.id] * rowH;
@@ -78,9 +79,9 @@ export function buildTree(S, nation) {
     }).join('');
     const tiers = h('div.tt-tiers', [...Array(cols)].map((_, i) => h('div.tt-tier', { style: { left: (20 + i * colW) + 'px', width: colW + 'px' } }, roman(i + 1))));
     const cols_bg = [...Array(cols)].map((_, i) => h('div.tt-col' + (i % 2 ? '.odd' : ''), { style: { left: (20 + i * colW) + 'px', width: colW + 'px', height: height + 'px' } }));
-    const canvas = h('div.tt-canvas', { style: { height: height + 'px' } }, cols_bg, svg(`<svg width="${W}" height="${height}">${lines}</svg>`, 'tt-lines'),
+    const canvas = h('div.tt-canvas', { style: { height: height + 'px', width: W + 'px' } }, tiers, cols_bg, svg(`<svg width="${W}" height="${height}">${lines}</svg>`, 'tt-lines'),
       L.defs.map((d) => node(S, d, { left: x(d), top: y(d), w: nodeW, h: nodeH }, tip, render)));
-    clear(body).append(tiers, h('div.tt-scroll', canvas));
+    clear(body).append(h('div.tt-scroll', canvas)); // tier numerals scroll with the columns
   }
   requestAnimationFrame(render);
   const onResize = () => render();
