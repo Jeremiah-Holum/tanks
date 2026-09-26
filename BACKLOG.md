@@ -15,8 +15,8 @@ Status: ☐ todo · ☑ done. The detail for each item lives in HANDOFF.md and d
 - ☑ QA pass: 4 majors fixed, no blockers found
 
 ## Next
-- ☐ Real-GPU fps measurement and quality tuning; a listening pass on the audio
-- ☐ Audio CPU: the reworked SFX use 2–3× more nodes per event; check it on a real PC during heavy fights (verify fast-sim showed 17–28 ms per frame at 4×)
+- ◐ Real-GPU fps: owner home PC, medium = 60 fps vsync-locked (render 3.8 ms, audio 0.17 ms, 240 calls, 1.6 M tris); still to check high and a heavy fight. Audio listening pass: in progress with the owner
+- ☑ Audio CPU: 0.17 ms per frame measured on the owner PC (no problem)
 - ☐ Ultra-low graphics tier for integrated GPUs (owner plays on Intel iGPU)
 - ☐ AI: skill → survival correlation, light-tank survival, fewer long-range kills, map length balance
 - ☐ Garage: Sell button; show available vehicle XP (+ free XP) on owned tank cards in the tech tree (owner could not find their XP); add "Total XP earned" to Service Record and the top bar next to rank
