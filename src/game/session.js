@@ -2,10 +2,14 @@
 // the bot brains, the camera, aiming, input → Controls, the HUD, spectating and auto-quality.
 //   const s = new BattleSession({ battle, screens, audio, settings, params, onExit })
 //   await s.load((p, label) => …)  → s.start()  → s.frame(dtSeconds) every animation frame
-//   onExit({ world, playerId, left }) when the result banner is done (or the player left).
+//   onExit({ world, playerId, playerIds, left }) when the result banner is done (or the player left).
+// Lineup: world.reserve[team] holds the player's other lineup tanks; when the player's tank dies the
+// respawn panel counts down RESPAWN_DELAY s and respawnTank() brings the picked one in (one life each).
+// this.player is always the tank being driven now, this.driven every tank driven (for the results).
 // Loop: fixed-step sim (DT = 1/60) with an accumulator and a catch-up cap, render interpolation,
 // every event of every step collected per frame and fed to the view, audio and HUD.
-import { createBattle, stepBattle, DT, predictImpact, penPreview, viewRange } from '../sim/battle.js';
+import { createBattle, stepBattle, DT, predictImpact, penPreview, viewRange, respawnTank, forfeitReserve } from '../sim/battle.js';
+import { kill } from '../sim/damage.js';
 import { loadMap } from '../sim/map/index.js';
 import { muzzle } from '../sim/tank.js';
 import { BattleView } from '../render/battleView.js';
@@ -16,6 +20,7 @@ import { makeBrain } from './bots.js';
 import { Hud } from '../ui/hud.js';
 
 const DEG = Math.PI / 180;
+const RESPAWN_DELAY = 5;   // s before the next lineup tank deploys (pick with 1–5 or a click meanwhile)
 const TIERS = ['low', 'medium', 'high'];
 const nextFrame = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
 
@@ -71,6 +76,7 @@ export class BattleSession {
     const world = this.world = createBattle({ ...b, map, timeLimit });
     const me = this.player = world.tanks.find((t) => t.player) || world.tanks[0];
     this.team = me.team;
+    this.driven = [me.id]; this.respawn = null;
     if (this.god) this._godOn();
     // prewarm the tank models (both LODs) in chunks so the bar moves
     if (view.tanks?.prewarm) {
@@ -97,7 +103,7 @@ export class BattleSession {
     this.cam = new GameCamera({ fov: this.settings.fov || 70, heightAt: (x, z) => view.heightAt(x, z) });
     this.cam.setYawPitch(me.yaw, -6 * DEG);
     this.input = new Input(canvas);
-    this.hud = new Hud(document.body, { world, playerId: me.id, settings: this.settings, onMenu: (a) => this._menuAction(a) });
+    this.hud = new Hud(document.body, { world, playerId: me.id, settings: this.settings, onMenu: (a) => this._menuAction(a), onRespawn: (i) => this._pickRespawn(i) });
     // fast-forward (?t=seconds): the player is driven by a brain meanwhile
     const ff = +(P.get('t') || 0);
     if (ff > 0) {
@@ -185,8 +191,16 @@ export class BattleSession {
     const alpha = running ? Math.max(0, Math.min(1, this.acc / DT)) : 1;
     this.alpha = alpha;
     // --- phases
-    if (this.phase === 'play' && !me.alive) { this.phase = 'dead'; this.specSince = world.time; this.lockTarget = null; this.cam.sniper = false; this.hud.destroyed(world, me); }
-    if (world.result && this.phase !== 'ending') { this.phase = 'ending'; this.endT = 0; if (this.god) this._godOff(); this.hud.result(world, me, this.left); inp.unlock(); }
+    if (this.phase === 'play' && !me.alive) {
+      this.phase = 'dead'; this.specSince = world.time; this.lockTarget = null; this.cam.sniper = false; this.hud.destroyed(world, me);
+      if (!world.result && !this.resolving && world.reserve[this.team].length) this._offerRespawn();
+    }
+    if (this.respawn && this.phase === 'dead' && !menu && !world.result) {
+      this.respawn.t -= dt;
+      this.hud.respawnPanel(world.reserve[this.team], this.respawn);
+      if (this.respawn.t <= 0) this._respawn();
+    }
+    if (world.result && this.phase !== 'ending') { if (this.respawn) { this.respawn = null; this.hud.respawnPanel(null); } this.phase = 'ending'; this.endT = 0; if (this.god) this._godOff(); this.hud.result(world, me, this.left); inp.unlock(); }
     if (this.phase === 'ending') { this.endT += dt; if (this.endT > (this.left ? 0.2 : 4)) return this._exit(); }
     if (this.phase === 'dead') this._spectate();
     // --- camera for this frame (interpolated focus), render
@@ -243,6 +257,7 @@ export class BattleSession {
     this.scoreOpen = inp.down('Tab');
     const me = this.player;
     if (this.phase === 'dead') {
+      if (this.respawn) for (let k = 0; k < 5; k++) if (inp.take('Digit' + (k + 1)) || inp.take('Numpad' + (k + 1))) this._pickRespawn(k);
       // spectate: LMB next ally, RMB previous
       if (inp.takeBtn(0)) this._specCycle(1);
       if (inp.takeBtn(2)) this._specCycle(-1);
@@ -380,6 +395,46 @@ export class BattleSession {
     });
   }
 
+  // ------------------------------------------------------------------ lineup respawn
+  _offerRespawn() {
+    this.respawn = { t: RESPAWN_DELAY, pick: 0 };
+    this.hud.respawnPanel(this.world.reserve[this.team], this.respawn);
+    // free the cursor so a tank card can be clicked (not treated as a lost pointer lock)
+    if (document.pointerLockElement) { this._unlocking = true; this.input.unlock(); }
+  }
+  _pickRespawn(i) {
+    const list = this.world?.reserve[this.team];
+    if (!this.respawn || !list || !list[i]) return;
+    this.respawn.pick = i;
+    this.hud.respawnPanel(list, this.respawn);
+  }
+  _respawn() {
+    const w = this.world, r = this.respawn;
+    this.respawn = null;
+    this.hud.respawnPanel(null);
+    const t = respawnTank(w, this.team, r.pick);
+    if (!t) return;
+    const ev = w.events[w.events.length - 1];
+    if (ev && ev.type === 'respawn') this.events.push(ev);
+    this.player = t; this.driven.push(t.id);
+    this._snap(t, true);
+    this.phase = 'play'; this.spec = null; this.lockTarget = null; this.gunLock = false; this.shell = null;
+    this.reloadHack = 0; this.fireQueued = false; this.useQueued = null; this._lastReload = t.reload;
+    if (this.god) this._godOn();
+    if (this.autopilot) this.autopilot = makeBrain(w, t, this.params.get('bots') || 'ai');
+    this.cam.sniper = false; this.cam.setYawPitch(t.yaw, -6 * DEG);
+    this.hud.setPlayer(t);
+    this.hud.flash(t.def.short || t.def.name);
+    this.input.flush();
+  }
+  // test hook (window.__sf.killPlayer): destroy the player's tank now
+  debugKill() {
+    const me = this.player;
+    if (!me?.alive || this.world.result) return;
+    if (this.god) this._godOff();
+    kill(this.world, me, null, 'shot');
+  }
+
   // ------------------------------------------------------------------ spectating
   _spectate() {
     const world = this.world;
@@ -461,6 +516,8 @@ export class BattleSession {
   leave() {
     const w = this.world, me = this.player;
     this.left = true; this.menuOpen = false; this.hud.menu(false);
+    // leaving gives up the remaining lineup respawns
+    forfeitReserve(w, this.team); if (this.respawn) { this.respawn = null; this.hud.respawnPanel(null); }
     if (!w.result && !me.alive) {
       // already destroyed: no desertion penalty, the rest of the battle plays out at speed (no sound)
       this.resolving = true; this.speed = Math.max(this.speed, 40); this.maxSteps = Math.max(this.maxSteps, 400);
@@ -480,7 +537,7 @@ export class BattleSession {
     this.phase = 'done';
     this.input.enable(false);
     try { this.audio?.stopAll?.(); } catch { /* */ }
-    this.onExit?.({ world: this.world, playerId: this.player.id, left: this.left, battle: this.battle });
+    this.onExit?.({ world: this.world, playerId: this.player.id, playerIds: this.driven.slice(), left: this.left, battle: this.battle });
   }
 
   // ------------------------------------------------------------------ god mode (?fast / ?god)

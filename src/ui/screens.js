@@ -3,7 +3,7 @@
 //   const screens = new Screens(rootEl, { onBattle(tankId, { size, battle }), onSettings(settings), audio })
 //   screens.showHangar() · showTree(nation?) · showDetails(tankId?) · showRecord() · showSettings()
 //   screens.showLoading(battle, mapMeta?) · setLoadingProgress(0..1, label?) · setLoadingMap(mapData)
-//   screens.finishBattle(world, playerTankId, battle) → report (summarize + apply + save + showResults)
+//   screens.finishBattle(world, playerTankIds, battle) → report (summarize + apply + save + showResults)
 //   screens.showResults(report) (applies it to the profile if report.applied is false)
 //   screens.hideAll() · screens.profile · screens.settings · screens.save() · screens.toast(msg)
 //
@@ -11,7 +11,7 @@
 // loadMap(battle.mapId) or `await withMap(battle)` from src/meta/matchmaker.js).
 // The screens own the profile (localStorage 'steelfront.v1'); pass opts.profile/opts.storage to override.
 import { h, clear, fmt, ICON, svg, rankIcon } from './dom.js';
-import { loadProfile, saveProfile, rankOf } from '../meta/profile.js';
+import { loadProfile, saveProfile, rankOf, lineupOf } from '../meta/profile.js';
 import { buildBattle } from '../meta/matchmaker.js';
 import { summarize, applyReport } from '../meta/results.js';
 import { buildHangar } from './hangar.js';
@@ -131,16 +131,17 @@ export class Screens {
     this.sfxMusic(true);
     return this._show('results', () => buildResults(this, report), { bar: false });
   }
-  finishBattle(world, playerTankId, battle) {
-    const report = summarize(world, playerTankId, this.profile, battle);
+  // playerTankIds: one id, or every tank the player drove (lineup respawns), in order
+  finishBattle(world, playerTankIds, battle) {
+    const report = summarize(world, playerTankIds, this.profile, battle);
     this.showResults(report);
     return report;
   }
 
-  // Build the battle for the selected tank and hand it to INTEGRATION.
+  // Build the battle for the lineup (spawn order; battle.reserve holds the respawns) and hand it to INTEGRATION.
   startBattle() {
-    const id = this.profile.selected;
-    const battle = buildBattle(this.profile, id, { size: this.battleSize });
+    const lineup = lineupOf(this.profile), id = lineup[0];
+    const battle = buildBattle(this.profile, lineup, { size: this.battleSize });
     this.sfx('battle');
     if (this.opts.onBattle) this.opts.onBattle(id, { size: this.battleSize, battle });
     else this.toast('No battle handler connected (lab mode).');

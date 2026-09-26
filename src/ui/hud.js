@@ -5,6 +5,7 @@
 //   hud.update(state) every frame (see BattleSession._hudState) · hud.event(ev, world) per sim event
 //   hud.toast(msg) · hud.flash(text) · hud.flashShell(k) · hud.cycleMinimap() · hud.menu(on)
 //   hud.destroyed(world, me) · hud.result(world, me, left) · hud.resize() · hud.dispose()
+//   hud.respawnPanel(reserveEntries, { t, pick } | null) · hud.setPlayer(tank) (lineup respawn; onRespawn(i) = a card clicked)
 import * as THREE from 'three';
 import { h, clear, shellIcon, classIcon } from './dom.js';
 import { renderMinimap } from './loading.js';
@@ -56,8 +57,8 @@ const penColor = (c) => (c == null ? null : c > 0.75 ? '#5ee05a' : c > 0.25 ? '#
 const _v = new THREE.Vector3();
 
 export class Hud {
-  constructor(parent, { world, playerId, settings, onMenu }) {
-    this.world = world; this.playerId = playerId; this.settings = settings; this.onMenu = onMenu;
+  constructor(parent, { world, playerId, settings, onMenu, onRespawn }) {
+    this.world = world; this.playerId = playerId; this.settings = settings; this.onMenu = onMenu; this.onRespawn = onRespawn;
     this.me = world.byId[playerId]; this.team = this.me.team;
     this.miniSize = settings.minimap in MINI ? settings.minimap : 'medium';
     this.t = 0;
@@ -100,24 +101,7 @@ export class Hud {
     this.toastEl = h('div.hud-toasts');
     this.banner = h('div.hud-banner');
     this.flashEl = h('div.hud-flash');
-    // damage panel
-    const D = this.dp = { name: h('span.dp-name', me.def.name), speed: h('span.dp-speed', '0'), hpBar: h('i'), hpLag: h('i.lag'), hpN: h('span.dp-hpn'), mods: {}, crew: {}, fire: ico('fire', 'hi dp-fire') };
-    const modEls = MODS.map(([k, n]) => { const el = h('div.dp-mod', { title: n }, ico(k), h('span.dp-t')); D.mods[k] = el; return el; });
-    const crewEls = Object.keys(me.crew).map((r) => { const el = h('div.dp-crew', { title: ROLE_NAME[r] || r }, ico('crew'), h('span.dp-role', ROLE[r] || r[0].toUpperCase())); D.crew[r] = el; return el; });
-    this.dmgPanel = h('div.hud-dmg',
-      h('div.dp-head', h('span.dp-tier', ROMAN[me.def.tier] || ''), classIcon(me.def.cls, 14), D.name, h('span.dp-sp', D.speed, h('small', 'km/h'))),
-      h('div.dp-hp', h('div.dp-hpbar', D.hpLag, D.hpBar), D.hpN),
-      h('div.dp-row', h('div.dp-mods', modEls), D.fire),
-      h('div.dp-row.crew', crewEls));
-    // shells & consumables
-    this.slots = me.gunDef.shells.map((s, k) => {
-      const el = h('div.sl-slot.shell', h('span.sl-key', String(k + 1)), shellIcon(s), h('span.sl-type', s.type), h('span.sl-n', '0'));
-      if (s.gold) el.classList.add('gold');
-      return el;
-    });
-    this.cons = me.consumables.map((c, k) => h('div.sl-slot.cons', { title: CONS[c.kind] || c.kind }, h('span.sl-key', String(k + 4)), ico(c.kind === 'repair' ? 'repair' : c.kind === 'medkit' ? 'medkit' : 'extinguisher'), h('span.sl-cd'), h('i.sl-sweep')));
-    this.clipEl = h('div.sl-clip');
-    this.shellsEl = h('div.hud-shells', h('div.sl-group', this.slots), this.clipEl, h('div.sl-group', this.cons));
+    this._tankPanels(me);
     // damage log, kill feed, minimap
     this.logEl = h('div.hud-log');
     this.feedEl = h('div.hud-feed');
@@ -145,6 +129,63 @@ export class Hud {
     this.markerPool = new Map();
     for (const t of this.world.tanks) if (t.id !== this.playerId) this._marker(t, t.team !== this.team);
     this.applySettings();
+  }
+
+  _tankPanels(me) {
+    // damage panel
+    const D = this.dp = { name: h('span.dp-name', me.def.name), speed: h('span.dp-speed', '0'), hpBar: h('i'), hpLag: h('i.lag'), hpN: h('span.dp-hpn'), mods: {}, crew: {}, fire: ico('fire', 'hi dp-fire') };
+    const modEls = MODS.map(([k, n]) => { const el = h('div.dp-mod', { title: n }, ico(k), h('span.dp-t')); D.mods[k] = el; return el; });
+    const crewEls = Object.keys(me.crew).map((r) => { const el = h('div.dp-crew', { title: ROLE_NAME[r] || r }, ico('crew'), h('span.dp-role', ROLE[r] || r[0].toUpperCase())); D.crew[r] = el; return el; });
+    this.dmgPanel = h('div.hud-dmg',
+      h('div.dp-head', h('span.dp-tier', ROMAN[me.def.tier] || ''), classIcon(me.def.cls, 14), D.name, h('span.dp-sp', D.speed, h('small', 'km/h'))),
+      h('div.dp-hp', h('div.dp-hpbar', D.hpLag, D.hpBar), D.hpN),
+      h('div.dp-row', h('div.dp-mods', modEls), D.fire),
+      h('div.dp-row.crew', crewEls));
+    // shells & consumables
+    this.slots = me.gunDef.shells.map((s, k) => {
+      const el = h('div.sl-slot.shell', h('span.sl-key', String(k + 1)), shellIcon(s), h('span.sl-type', s.type), h('span.sl-n', '0'));
+      if (s.gold) el.classList.add('gold');
+      return el;
+    });
+    this.cons = me.consumables.map((c, k) => h('div.sl-slot.cons', { title: CONS[c.kind] || c.kind }, h('span.sl-key', String(k + 4)), ico(c.kind === 'repair' ? 'repair' : c.kind === 'medkit' ? 'medkit' : 'extinguisher'), h('span.sl-cd'), h('i.sl-sweep')));
+    this.clipEl = h('div.sl-clip');
+    this.shellsEl = h('div.hud-shells', h('div.sl-group', this.slots), this.clipEl, h('div.sl-group', this.cons));
+  }
+
+  // Switch to a respawned tank (lineup): new damage panel and shell bar, a team-list row, fresh state.
+  setPlayer(me) {
+    const old = this.me;
+    this.me = me; this.playerId = me.id;
+    const row = h('div.tl-row.me', h('span.tl-tank', me.def.short || me.def.name), h('span.tl-name', me.name));
+    this.rows.set(me.id, row); this.lists[0].append(row);
+    if (old && !this.markerPool.has(old.id)) this._marker(old, false);
+    const dp = this.dmgPanel, sh = this.shellsEl;
+    this._tankPanels(me);
+    dp.replaceWith(this.dmgPanel); sh.replaceWith(this.shellsEl);
+    this._hpLag = null; this._clipKey = null; this.reloadTotal = me.gunDef.reload; this._lastReload = me.reload;
+    this.lampOn = false; this.lampT = -9; this._deadMsg = null; this.wedges.length = 0;
+  }
+
+  // Lineup respawn panel: list = the reserve entries, st = { t: seconds left, pick }; null hides it.
+  respawnPanel(list, st) {
+    if (!list || !list.length || !st) { if (this.rspEl) cls(this.rspEl, 'on', false); this._rspKey = null; return; }
+    if (!this.rspEl) {
+      this.rspList = h('div.rsp-list'); this.rspT = h('b');
+      this.rspEl = h('div.hud-respawn', h('h3', 'Choose your next vehicle'), this.rspList,
+        h('div.rsp-cd', h('span', 'Deploying in ', this.rspT, ' s'), this.rspKeys = h('small')));
+      this.el.insertBefore(this.rspEl, this.menuEl);
+    }
+    const key = list.map((e) => e.def.id).join(',') + ':' + st.pick;
+    if (key !== this._rspKey) {
+      this._rspKey = key;
+      clear(this.rspList).append(...list.map((e, i) => h('button.rsp-card' + (i === st.pick ? '.sel' : ''), { onclick: () => this.onRespawn?.(i) },
+        h('kbd', String(i + 1)),
+        h('div.rsp-top', h('span.rsp-tier', ROMAN[e.def.tier] || ''), classIcon(e.def.cls, 14), h('span.rsp-name', e.def.short || e.def.name)),
+        h('small', `${e.def.hp} HP · ${e.def.guns[e.gun || 0]?.cal || '?'} mm`))));
+    }
+    txt(this.rspKeys, list.length > 1 ? `Press 1–${Math.min(5, list.length)} or click a vehicle to choose` : 'Your last lineup vehicle deploys automatically');
+    txt(this.rspT, Math.max(0, Math.ceil(st.t)));
+    cls(this.rspEl, 'on', true);
   }
 
   applySettings() {
