@@ -133,7 +133,10 @@ export function fire(world, t, p = perf(t)) {
   world.shells.push(s);
   t.ammo[t.shell]--; t.stats.shots++; t.lastShot = world.time;
   world.events.push({ type: 'shot', tank: t.id, shell: s.id, pos: { x: _m.pos.x, y: _m.pos.y, z: _m.pos.z }, dir: { x: dx, y: dy, z: dz }, cal: g.cal, shellType: sh.type });
-  t.disp = Math.min(g.disp * (g.clip ? 1.5 : 8), Math.max(t.disp, t.dispTarget) * g.dShot); // bursts cap at 1.5× base
+  // A shot only ever GROWS the circle: bloom from the current size, capped (bursts at 1.5× base), but never
+  // below where movement / traverse already has it (clamping below dispTarget made it shrink while firing).
+  const dNow = Math.max(t.disp, t.dispTarget);
+  t.disp = Math.max(dNow, Math.min(dNow * g.dShot, g.disp * (g.clip ? 1.5 : 8)));
   if (g.clip) {
     t.clipLeft--;
     if (t.clipLeft > 0) t.reload = g.clip.t;
