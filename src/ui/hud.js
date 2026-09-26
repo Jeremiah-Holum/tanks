@@ -143,6 +143,7 @@ export class Hud {
       this.dmgPanel, this.shellsEl, this.logEl, this.feedEl, this.miniEl, this.banner, this.hint, this.scoreEl, this.perfEl, this.menuEl);
     parent.append(this.el);
     this.markerPool = new Map();
+    for (const t of world.tanks) if (t.id !== playerId) this._marker(t, t.team !== this.team);
     this.applySettings();
   }
 
@@ -187,7 +188,7 @@ export class Hud {
     cls(this.scoreEl, 'on', s.score); if (s.score && (this._scoreT = (this._scoreT || 0) - s.dt) <= 0) { this._scoreT = 0.5; this._scorePanel(w); }
     if (!s.score) this._scoreT = 0;
     cls(this.perfEl, 'on', !!s.perf && s.perfShow);
-    if (s.perf && s.perf.fps) txt(this.perfEl, `${s.perf.fps.toFixed(0)} fps · ${s.perf.frame.toFixed(1)} ms/frame · ${s.perf.steps.toFixed(1)} steps · per step: sim ${s.perf.sim.toFixed(2)} ai ${s.perf.ai.toFixed(2)} · per frame: render ${s.perf.render.toFixed(1)} · hud ${s.perf.hud.toFixed(2)} · audio ${(s.perf.audio || 0).toFixed(2)} · ${s.perf.calls} calls · ${(s.perf.tris / 1e6).toFixed(2)} M tris · ${s.quality}`);
+    if (s.perf && s.perf.fps) txt(this.perfEl, `${s.perf.fps.toFixed(0)} fps · ${s.perf.frame.toFixed(1)} ms/frame · ${s.perf.steps.toFixed(1)} steps · per step: sim ${s.perf.sim.toFixed(2)} ai ${s.perf.ai.toFixed(2)} · per frame: render ${s.perf.render.toFixed(1)} · hud ${s.perf.hud.toFixed(2)} · audio ${(s.perf.audio || 0).toFixed(2)} · ${s.perf.calls} calls · ${(s.perf.tris / 1e6).toFixed(2)} M tris · ${s.quality}${s.perf.worst ? ` · worst 2 s: ${s.perf.worst.ms.toFixed(0)} ms (${s.perf.worst.top} ${s.perf.worst.parts[s.perf.worst.top].toFixed(0)}${s.perf.worst.progs ? `, +${s.perf.worst.progs} shaders` : ''})` : ''}`);
     // hints
     let hint = '';
     if (s.phase === 'dead') hint = s.spec != null ? 'Spectating · LMB / RMB: next / previous ally · Esc: menu' : '';
@@ -285,6 +286,15 @@ export class Hud {
   // Markers over visible enemies (full) and nearby allies (compact: tank + hp; name within 100 m or under
   // the crosshair). Scaled down with distance; overlapping plates stack upwards (nearest keeps its spot),
   // and a plate that still overlaps fades.
+  // One marker per tank, built up front (Hud constructor) so a newly spotted enemy creates no DOM.
+  _marker(t, enemy) {
+    const bar = h('i'), name = h('span.mk-n'), tank = h('span.mk-t', t.def.short || t.def.name), hpn = h('span.mk-hp');
+    const el = h('div.mk' + (enemy ? '.en' : '.al'), h('div.mk-l', tank, name), h('div.mk-bar', bar, hpn));
+    sty(el, 'display', 'none');
+    this.markers.append(el);
+    const m = { el, bar, name, hpn }; this.markerPool.set(t.id, m);
+    return m;
+  }
   _markers(s) {
     const w = s.world, vis = s.visible, cam = s.cam, P = {}, list = this._mkList || (this._mkList = []);
     list.length = 0;
@@ -318,12 +328,7 @@ export class Hud {
     for (const it of list) {
       const t = it.t;
       let m = this.markerPool.get(t.id);
-      if (!m) {
-        const bar = h('i'), name = h('span.mk-n'), tank = h('span.mk-t', t.def.short || t.def.name), hpn = h('span.mk-hp');
-        const el = h('div.mk' + (it.enemy ? '.en' : '.al'), h('div.mk-l', tank, name), h('div.mk-bar', bar, hpn));
-        this.markers.append(el);
-        m = { el, bar, name, hpn }; this.markerPool.set(t.id, m);
-      }
+      if (!m) m = this._marker(t, it.enemy);
       used.add(t.id);
       sty(m.el, 'transform', `translate3d(${it.x.toFixed(1)}px,${it.y.toFixed(1)}px,0) scale(${it.sc.toFixed(2)})`);
       sty(m.el, 'display', '');
@@ -341,7 +346,7 @@ export class Hud {
   _floats() {
     for (let i = this.floats.length - 1; i >= 0; i--) {
       const f = this.floats[i]; f.age += this.s.dt;
-      if (f.age > 1.6) { f.el.remove(); this.floats.splice(i, 1); continue; }
+      if (f.age > 1.6) { sty(f.el, 'display', 'none'); (this._floatFree || (this._floatFree = [])).push(f.el); this.floats.splice(i, 1); continue; }
       const p = this._proj(f.x, f.y + 1.5, f.z);
       if (!p) { sty(f.el, 'opacity', '0'); continue; }
       sty(f.el, 'transform', `translate3d(${p[0].toFixed(1)}px,${(p[1] - f.age * 38).toFixed(1)}px,0)`);
@@ -620,8 +625,9 @@ export class Hud {
     while (this.ribbons.length > 4) this.ribbons.shift().el.remove();
   }
   floatDmg(p, dmg) {
-    const el = h('div.fd', '−' + dmg);
-    this.floatLayer.append(el);
+    let el = this._floatFree && this._floatFree.pop();
+    if (el) { txt(el, '−' + dmg); sty(el, 'display', ''); sty(el, 'opacity', '0'); }
+    else { el = h('div.fd', '−' + dmg); this.floatLayer.append(el); }
     this.floats.push({ el, x: p.x, y: p.y, z: p.z, age: 0 });
   }
   logLine(kind, dmg, other, result) {

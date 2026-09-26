@@ -4,13 +4,15 @@
 //   const view = new BattleView(canvas, { quality })
 //   view.loadMap(map)
 //   view.frame(world, { cam: {pos, look, fov}, alpha, visible, playerId, dt, sniper, events })
-//   view.setQuality(q); view.resize(); view.stats() → { calls, tris, ms }
+//   view.warmup()   // after tanks.prewarm: compiles every tank/FX material variant
+//   view.setQuality(q); view.resize(); view.stats() → { calls, tris, ms, ev, tanks, fx, progs }
 import * as THREE from 'three';
 import { qualityOf } from './quality.js';
 import { Env, themeOf } from './env.js';
 import { Terrain } from './terrain.js';
 import { Props } from './props.js';
 import { Post } from './post.js';
+import { scarWarmMesh } from './decals.js';
 
 const deg = Math.PI / 180;
 
@@ -67,7 +69,24 @@ export class BattleView {
     this.fogBase = map.water ? Math.min(hmin, map.water.level) : hmin;
     this.exposure = th.sky.exposure || 1;
     this.tanks?.setMap?.(map, this); this.fx?.setMap?.(map, this);
-    this.renderer.compile(this.scene, this.camera);
+    this._compile();
+  }
+
+  // renderer.compile with the scene render target bound: the scene is drawn into post's HDR target,
+  // whose programs differ from the canvas ones (linear output), so a plain compile() builds the wrong set.
+  _compile() {
+    const r = this.renderer, prev = r.getRenderTarget();
+    r.setRenderTarget(this.post.sceneRT || null); r.compile(this.scene, this.camera); r.setRenderTarget(prev);
+  }
+  // Load-time warm-up (after TankRenderer.prewarm): every tank model of the battle, both LODs, in each
+  // material variant (live, faded-in, charred, charred+faded), plus the hit-scar material, so neither
+  // spotting a tank, a first hit nor a first kill compiles a shader mid-battle.
+  warmup() {
+    const scar = scarWarmMesh(); this.scene.add(scar);
+    try {
+      if (this.tanks?.warm) this.tanks.warm(() => this._compile()); else this._compile();
+      if (scar.material.map) this.renderer.initTexture(scar.material.map);
+    } finally { scar.removeFromParent(); scar.geometry.dispose(); }
   }
 
   // Terrain height as rendered (bilinear, plus the scenery outside the map).
@@ -110,8 +129,11 @@ export class BattleView {
       if (this.tanks) this.tanks.handle(ev);
       if (this.fx) this.fx.handle(ev, world);
     }
+    const t1 = performance.now();
     if (world && this.tanks) this.tanks.sync(world, { visible, alpha, playerId, dt, camera });
+    const t2 = performance.now();
     if (this.fx) this.fx.update(dt, camera, world);
+    const t3 = performance.now();
     // shadow focus: ahead of the camera (third person), or the looked-at area (sniper)
     const R = this.q.shadowRange, f = this._focus, fwd = this._fwd;
     camera.getWorldDirection(fwd);
@@ -124,7 +146,8 @@ export class BattleView {
     this.renderer.info.reset();
     this.post.render(this.scene, camera, { sniper, exposure: this.exposure, fogBase: this.fogBase || 0 });
     const info = this.renderer.info.render;
-    this._stats = { calls: info.calls, tris: info.triangles, ms: performance.now() - t0 };
+    // ev: event handling (props/tanks/fx), tanks: TankRenderer.sync, fx: particle update; progs: shader programs so far
+    this._stats = { calls: info.calls, tris: info.triangles, ms: performance.now() - t0, ev: t1 - t0, tanks: t2 - t1, fx: t3 - t2, progs: this.renderer.info.programs ? this.renderer.info.programs.length : 0 };
     return this._stats;
   }
 

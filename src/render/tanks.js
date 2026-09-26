@@ -189,6 +189,13 @@ export class TankRenderer {
   }
   // Build both LODs of every tank up front (≈35 ms per new tank type) to avoid hitches later.
   prewarm(world) { for (const t of world.tanks) { const e = this.entries.get(t.id) || this._entry(t); this._model(e, 0); this._model(e, 1); } }
+  // Shader warm-up (BattleView.warmup): every built model in each material variant, compile() per pass.
+  warm(compile) {
+    const ms = [];
+    for (const e of this.entries.values()) for (const m of e.models) if (m && m.warm) ms.push(m);
+    for (const pass of [0, 1, 2, 3]) { for (const m of ms) m.warm(pass); compile(); }
+    for (const m of ms) m.warm(-1);
+  }
   modelOf(id) { const e = this.entries.get(id); return e ? e.models[Math.max(0, e.lod)] : null; }
   _remove(id) {
     const e = this.entries.get(id);

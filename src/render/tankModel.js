@@ -5,7 +5,7 @@
 //   buildTankModel(def, { paint, lod, gunIndex, number }) → {
 //     group, parts: { hull, turret, gun, mantlet, trackL, trackR, wheelsL, wheelsR, yaw, body },
 //     info: { exhausts, trackRear, trackFront, engine, top, recoil, muzzleLen },
-//     update(state, dt), setDamage({ tracks, burning, dead, ammorack }), setOpacity(a), dispose() }
+//     update(state, dt), setDamage({ tracks, burning, dead, ammorack }), setOpacity(a), warm(pass), dispose() }
 //
 // One shader (MeshStandardMaterial + onBeforeCompile) draws every tank surface. Per-vertex
 // attributes pick the look: aSurf = (metalness, roughness, paint mask, edge 0..1), aExt = (dirt,
@@ -1476,20 +1476,34 @@ export function buildTankModel(def, opts = {}) {
         return;
       }
       if (!st.fadeMats) {
+        // the clones are kept (per source material) and reused by every later fade: a newly spotted
+        // tank must not create materials (each new one costs a program lookup, a leaked one memory)
+        const cache = st.fadeCache || (st.fadeCache = new Map());
         st.fadeMats = new Map();
         for (const m of meshes) {
           const src = liveMat.get(m);
-          let c = st.fadeMats.get(src);
-          if (!c) { c = cloneMat(src, true); c.userData.uTravel = src.userData.uTravel; attachShader(c); st.fadeMats.set(src, c); }
+          let c = cache.get(src);
+          if (!c) { c = cloneMat(src, true); c.userData.uTravel = src.userData.uTravel; attachShader(c); cache.set(src, c); }
+          st.fadeMats.set(src, c);
           m.material = c;
         }
       }
       for (const c of st.fadeMats.values()) c.opacity = a;
     },
+    // Load-time shader warm-up: pass 0 live, 1 live faded, 2 charred, 3 charred faded, -1 restore.
+    // Each pass puts that variant's materials on every mesh (renderer.compile then builds them).
+    warm(pass) {
+      this.setOpacity(1);
+      if (!st.warmLive) st.warmLive = new Map(liveMat);
+      const ch = pass === 2 || pass === 3;
+      for (const m of meshes) { const mat = ch ? charred : st.warmLive.get(m); liveMat.set(m, mat); m.material = mat; }
+      if (pass === 1 || pass === 3) this.setOpacity(0.5);
+      if (pass < 0) { st.warmLive = null; this.setOpacity(1); }
+    },
     get state() { return st; },
     dispose() {
       if (!lod) { runMats[1].dispose(); runMats[-1].dispose(); }
-      if (st.fadeMats) for (const c of st.fadeMats.values()) c.dispose();
+      if (st.fadeCache) for (const c of st.fadeCache.values()) c.dispose();
       group.removeFromParent();
     },
   };
