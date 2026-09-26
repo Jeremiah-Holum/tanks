@@ -1,164 +1,155 @@
-// Post stack: scene (HDR, MSAA, depth) → miniature depth-of-field (two separable passes that
-// blur anything off the play board, plus a light tilt band) → bloom → grade/tonemap/vignette/grain.
+// Post stack: scene → HDR target (half float, float depth) → [SSAO from depth, high] → [bloom,
+// medium/high] → composite (aerial-perspective height fog reconstructed from depth, AO,
+// exposure, ACES tone map, grade, vignette, sniper-mode aberration) → FXAA or SMAA → screen.
 import * as THREE from 'three';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
 import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
-
-const COC_FRAG = /* glsl */`
-  uniform sampler2D tDepth; uniform mat4 projInv; uniform mat4 viewInv;
-  uniform vec2 boardHalf; uniform float tiltStrength; uniform float mode; uniform float focus;
-  varying vec2 vUv;
-  void main() {
-    float d = texture2D(tDepth, vUv).x;
-    vec4 v = projInv * vec4(vUv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0); v /= v.w;
-    if (mode > 0.5) {
-      // Chase cam: a macro lens riding behind the turret. Shallow field: the fight a few
-      // cells ahead is sharp, the far board softens, the bedroom melts away.
-      float dist = -v.z;
-      float far = smoothstep(focus * 2.2, focus * 6.0, dist);
-      float nearB = smoothstep(0.9, 0.3, dist);
-      gl_FragColor = vec4(max(far, nearB), 0.0, 0.0, 1.0);
-      return;
-    }
-    vec3 w = (viewInv * v).xyz;
-    // The play board is in focus; anything off it, or tall above it, falls out of focus
-    // the way it would under a macro lens. A light tilt band finishes the miniature look.
-    float off = max(abs(w.x) - boardHalf.x, abs(w.z) - boardHalf.y);
-    float c = clamp(off / 3.5, 0.0, 1.0);
-    c = max(c, clamp((w.y - 1.4) / 3.0, 0.0, 1.0));
-    float t = abs(vUv.y - 0.5) * 2.0;
-    c = max(c, smoothstep(0.72, 1.0, t) * tiltStrength);
-    gl_FragColor = vec4(c, 0.0, 0.0, 1.0);
-  }
-`;
-
-const DOF_FRAG = /* glsl */`
-  uniform sampler2D tColor; uniform sampler2D tCoc;
-  uniform vec2 dir; uniform vec2 texel; uniform float maxRadius;
-  varying vec2 vUv;
-  void main() {
-    float c0 = texture2D(tCoc, vUv).r;
-    vec3 base = texture2D(tColor, vUv).rgb;
-    if (c0 < 0.01) { gl_FragColor = vec4(base, 1.0); return; }
-    vec4 acc = vec4(base, 1.0);
-    float r = c0 * maxRadius;
-    for (int i = 1; i <= 8; i++) {
-      float o = float(i) / 8.0 * r;
-      float w = exp(-float(i*i) / 24.0);
-      for (int s = -1; s <= 1; s += 2) {
-        vec2 uv = vUv + dir * texel * o * float(s);
-        // Sharp pixels do not bleed into the blur, so the board edge stays crisp.
-        float ww = w * clamp(texture2D(tCoc, uv).r * 1.5, 0.0, 1.0);
-        acc += vec4(texture2D(tColor, uv).rgb * ww, ww);
-      }
-    }
-    gl_FragColor = vec4(acc.rgb / acc.a, 1.0);
-  }
-`;
-
-const FINAL_FRAG = /* glsl */`
-  uniform sampler2D tColor; uniform float time; uniform float exposure; uniform float vignette;
-  uniform float grain; uniform float aberration; uniform float flash; uniform vec2 texel;
-  varying vec2 vUv;
-  vec3 ACESFilm(vec3 x) {
-    // Narkowicz fit, with a gentle toe for toy colours.
-    return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0);
-  }
-  vec3 toSRGB(vec3 c) { return mix(c * 12.92, 1.055 * pow(c, vec3(1.0/2.4)) - 0.055, step(0.0031308, c)); }
-  float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233)) + time * 7.13) * 43758.5453); }
-  void main() {
-    vec2 cc = vUv - 0.5;
-    vec2 ab = cc * aberration * texel * 2.0;
-    vec3 col;
-    col.r = texture2D(tColor, vUv + ab).r;
-    col.g = texture2D(tColor, vUv).g;
-    col.b = texture2D(tColor, vUv - ab).b;
-    col *= exposure;
-    col += flash * vec3(1.0, 0.85, 0.6);
-    col = ACESFilm(col);
-    // warm grade: lift shadows toward amber, keep highlights clean
-    col = mix(col, col * vec3(1.04, 1.0, 0.94) + vec3(0.012, 0.006, 0.0), 0.8);
-    float l = dot(col, vec3(0.299, 0.587, 0.114));
-    col = mix(vec3(l), col, 1.08);
-    float v = smoothstep(0.95, 0.25, length(cc * vec2(1.1, 1.0)));
-    col *= mix(1.0, v, vignette);
-    col = toSRGB(col);
-    col += (hash(vUv * 1000.0) - 0.5) * grain;
-    gl_FragColor = vec4(col, 1.0);
-  }
-`;
+import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js';
+import { SKY_GLSL } from './env.js';
 
 const VERT = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
 
+const AO_FRAG = /* glsl */`
+uniform highp sampler2D tDepth; uniform mat4 projInv; uniform mat4 proj; uniform vec2 texel; uniform float radius;
+varying vec2 vUv;
+vec3 viewPos(vec2 uv) { float d = texture2D(tDepth, uv).x; vec4 v = projInv * vec4(uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0); return v.xyz / v.w; }
+float ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
+void main() {
+  float d = texture2D(tDepth, vUv).x;
+  if (d >= 1.0) { gl_FragColor = vec4(1.0); return; }
+  vec3 P = viewPos(vUv);
+  vec3 N = normalize(cross(dFdx(P), dFdy(P)));
+  float occ = 0.0; float a0 = ign(gl_FragCoord.xy) * 6.2831;
+  float r = radius;
+  for (int i = 0; i < 10; i++) {
+    float fi = float(i) + 0.5;
+    float a = a0 + fi * 2.39996, rr = sqrt(fi / 10.0) * r;
+    vec3 dir = vec3(cos(a), sin(a), 0.0);
+    vec3 S = P + (dir * rr);
+    vec4 c = proj * vec4(S, 1.0); vec2 suv = c.xy / c.w * 0.5 + 0.5;
+    vec3 Q = viewPos(suv);
+    vec3 v = Q - P; float l = length(v);
+    float o = max(dot(N, v / max(l, 1e-3)) - 0.1, 0.0) * smoothstep(r * 2.5, 0.0, l);
+    occ += o;
+  }
+  float ao = clamp(1.0 - occ / 10.0 * 1.6, 0.0, 1.0);
+  gl_FragColor = vec4(ao, ao, ao, 1.0);
+}`;
+
+const COMP_FRAG = SKY_GLSL + /* glsl */`
+uniform sampler2D tColor; uniform highp sampler2D tDepth; uniform sampler2D tAO;
+uniform mat4 projInv; uniform mat4 viewInv; uniform vec3 camPos; uniform vec2 texel;
+uniform float exposure; uniform float vignette; uniform float sniper; uniform float aoOn; uniform float fogBase;
+varying vec2 vUv;
+vec3 aces(vec3 x) { // Hill's ACES fit (same as three's ACESFilmic)
+  const mat3 m1 = mat3(0.59719, 0.07600, 0.02840, 0.35458, 0.90834, 0.13383, 0.04823, 0.01566, 0.83777);
+  const mat3 m2 = mat3(1.60475, -0.10208, -0.00327, -0.53108, 1.10813, -0.07276, -0.07367, -0.00605, 1.07602);
+  vec3 v = m1 * x; vec3 a = v * (v + 0.0245786) - 0.000090537; vec3 b = v * (0.983729 * v + 0.4329510) + 0.238081;
+  return clamp(m2 * (a / b), 0.0, 1.0);
+}
+vec3 toSRGB(vec3 c) { return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
+void main() {
+  vec2 cc = vUv - 0.5;
+  vec3 col;
+  if (sniper > 0.5) {
+    vec2 ab = cc * dot(cc, cc) * 0.012;
+    col = vec3(texture2D(tColor, vUv + ab).r, texture2D(tColor, vUv).g, texture2D(tColor, vUv - ab).b);
+  } else col = texture2D(tColor, vUv).rgb;
+  float d = texture2D(tDepth, vUv).x;
+  if (d < 1.0) {
+    vec4 v = projInv * vec4(vUv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0); v /= v.w;
+    vec3 wp = (viewInv * v).xyz;
+    vec3 rd = wp - camPos; float dist = length(rd); rd /= dist;
+    if (aoOn > 0.5) {
+      float ao = 0.0;
+      ao += texture2D(tAO, vUv + vec2(texel.x, texel.y)).r; ao += texture2D(tAO, vUv + vec2(-texel.x, texel.y)).r;
+      ao += texture2D(tAO, vUv + vec2(texel.x, -texel.y)).r; ao += texture2D(tAO, vUv + vec2(-texel.x, -texel.y)).r;
+      col *= mix(1.0, ao * 0.25, 0.8 * (1.0 - smoothstep(60.0, 180.0, dist)));
+    }
+    // exponential height fog, integrated along the ray (falloff 1/140 m above fogBase)
+    float b = 1.0 / 140.0, h0 = camPos.y - fogBase, h1 = wp.y - fogBase, dh = h1 - h0;
+    float hf = abs(dh) > 0.1 ? (exp(-b * max(h0, -60.0)) - exp(-b * max(h1, -60.0))) / (b * dh) : exp(-b * max(h0, -60.0));
+    // thinner at combat range (≤ 445 m stays readable), full haze toward the horizon
+    float amt = 1.0 - exp(-uFogDensity * dist * hf * (0.55 + 0.45 * smoothstep(250.0, 1600.0, dist)));
+    vec3 fogCol = skyBase(normalize(vec3(rd.x, max(rd.y, 0.0) * 0.6 + 0.01, rd.z)));
+    col = mix(col, fogCol, clamp(amt, 0.0, 1.0));
+  }
+  col *= exposure;
+  col = aces(col);
+  // gentle warm grade and a touch of saturation
+  float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
+  col = mix(vec3(l), col, 1.08);
+  col *= vec3(1.02, 1.0, 0.97);
+  float vg = smoothstep(0.95, 0.3, length(cc * vec2(1.25, 1.0)));
+  col *= mix(1.0, vg, vignette + sniper * 0.35);
+  gl_FragColor = vec4(toSRGB(clamp(col, 0.0, 1.0)), 1.0);
+}`;
+
 export class Post {
-  constructor(renderer, quality) {
-    this.renderer = renderer;
-    this.quality = quality;
-    this.size = new THREE.Vector2(1, 1);
-    this.depth = new THREE.DepthTexture(1, 1);
-    this.depth.type = THREE.UnsignedIntType;
-    this.sceneRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: quality.msaa, depthTexture: this.depth });
-    this.rtA = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false });
-    this.rtB = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false });
-    this.cocRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false });
-    this.cocMat = new THREE.ShaderMaterial({
-      uniforms: {
-        tDepth: { value: this.depth }, projInv: { value: new THREE.Matrix4() }, viewInv: { value: new THREE.Matrix4() },
-        boardHalf: { value: new THREE.Vector2(11.9, 8.6) }, tiltStrength: { value: 0.55 }, mode: { value: 0 }, focus: { value: 5 },
-      },
-      vertexShader: VERT, fragmentShader: COC_FRAG, depthTest: false, depthWrite: false,
+  constructor(renderer, quality, skyU) {
+    this.renderer = renderer; this.q = quality;
+    const depth = new THREE.DepthTexture(1, 1, THREE.FloatType);
+    this.sceneRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthTexture: depth, samples: 0 });
+    this.aoRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.UnsignedByteType, depthBuffer: false });
+    this.ldrRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.UnsignedByteType, depthBuffer: false });
+    this.aoMat = new THREE.ShaderMaterial({
+      uniforms: { tDepth: { value: depth }, projInv: { value: new THREE.Matrix4() }, proj: { value: new THREE.Matrix4() }, texel: { value: new THREE.Vector2() }, radius: { value: 1.2 } },
+      vertexShader: VERT, fragmentShader: AO_FRAG, depthTest: false, depthWrite: false,
     });
-    this.dofMat = new THREE.ShaderMaterial({
-      uniforms: {
-        tColor: { value: null }, tCoc: { value: this.cocRT.texture }, dir: { value: new THREE.Vector2(1, 0) },
-        texel: { value: new THREE.Vector2() }, maxRadius: { value: 7 },
-      },
-      vertexShader: VERT, fragmentShader: DOF_FRAG, depthTest: false, depthWrite: false,
+    this.compMat = new THREE.ShaderMaterial({
+      uniforms: { ...skyU, tColor: { value: null }, tDepth: { value: depth }, tAO: { value: this.aoRT.texture },
+        projInv: { value: new THREE.Matrix4() }, viewInv: { value: new THREE.Matrix4() }, camPos: { value: new THREE.Vector3() }, texel: { value: new THREE.Vector2() },
+        exposure: { value: 1 }, vignette: { value: 0.28 }, sniper: { value: 0 }, aoOn: { value: 0 }, fogBase: { value: 0 } },
+      vertexShader: VERT, fragmentShader: COMP_FRAG, depthTest: false, depthWrite: false,
     });
-    this.finalMat = new THREE.ShaderMaterial({
-      uniforms: {
-        tColor: { value: null }, time: { value: 0 }, exposure: { value: 0.88 }, vignette: { value: 0.55 },
-        grain: { value: 0.022 }, aberration: { value: 1.2 }, flash: { value: 0 }, texel: { value: new THREE.Vector2() },
-      },
-      vertexShader: VERT, fragmentShader: FINAL_FRAG, depthTest: false, depthWrite: false,
-    });
-    this.quad = new FullScreenQuad(this.dofMat);
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.34, 0.5, 1.45); // only real highlights bloom (flashes, fire, the window)
+    this.fxaaMat = new THREE.ShaderMaterial({ ...FXAAShader, uniforms: THREE.UniformsUtils.clone(FXAAShader.uniforms), depthTest: false, depthWrite: false });
+    this.quad = new FullScreenQuad(this.compMat);
+    this.bloom = null; this.smaa = null;
+    this.setQuality(quality);
+  }
+
+  setQuality(q) {
+    this.q = q;
+    if (q.bloom && !this.bloom) { this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.28, 0.55, 1.6); if (this.w) this.bloom.setSize(this.w, this.h); }
+    if (q.aa === 'smaa' && !this.smaa) { this.smaa = new SMAAPass(); this.smaa.renderToScreen = true; if (this.w) this.smaa.setSize(this.w, this.h); }
+    this.compMat.uniforms.aoOn.value = q.ao ? 1 : 0;
   }
 
   setSize(w, h) {
-    this.size.set(w, h);
-    for (const rt of [this.sceneRT, this.rtA, this.rtB, this.cocRT]) rt.setSize(w, h);
-    this.bloom.setSize(w, h);
-    this.dofMat.uniforms.texel.value.set(1 / w, 1 / h);
-    this.finalMat.uniforms.texel.value.set(1 / w, 1 / h);
-    this.dofMat.uniforms.maxRadius.value = 7 * Math.max(0.6, h / 1080) * (this.quality.dof ? 1 : 0);
+    this.w = w; this.h = h;
+    this.sceneRT.setSize(w, h); this.ldrRT.setSize(w, h);
+    this.aoRT.setSize(Math.max(1, w >> 1), Math.max(1, h >> 1));
+    if (this.bloom) this.bloom.setSize(w, h);
+    if (this.smaa) this.smaa.setSize(w, h);
+    this.compMat.uniforms.texel.value.set(2 / w, 2 / h);
+    this.aoMat.uniforms.texel.value.set(2 / w, 2 / h);
+    this.fxaaMat.uniforms.resolution.value.set(1 / w, 1 / h);
   }
 
-  render(scene, camera, time) {
-    const r = this.renderer;
+  render(scene, camera, { sniper = false, exposure = 1, fogBase = 0 } = {}) {
+    const r = this.renderer, q = this.q;
     r.setRenderTarget(this.sceneRT);
     r.render(scene, camera);
-    let src = this.sceneRT;
-    if (this.quality.dof) {
-      const cu = this.cocMat.uniforms;
-      cu.projInv.value.copy(camera.projectionMatrixInverse);
-      cu.viewInv.value.copy(camera.matrixWorld);
-      this.quad.material = this.cocMat;
-      r.setRenderTarget(this.cocRT); this.quad.render(r);
-      const u = this.dofMat.uniforms;
-      this.quad.material = this.dofMat;
-      u.tColor.value = this.sceneRT.texture; u.dir.value.set(1, 0);
-      r.setRenderTarget(this.rtA); this.quad.render(r);
-      u.tColor.value = this.rtA.texture; u.dir.value.set(0, 1);
-      r.setRenderTarget(this.rtB); this.quad.render(r);
-      src = this.rtB;
+    if (q.ao) {
+      const u = this.aoMat.uniforms;
+      u.projInv.value.copy(camera.projectionMatrixInverse); u.proj.value.copy(camera.projectionMatrix);
+      this.quad.material = this.aoMat; r.setRenderTarget(this.aoRT); this.quad.render(r);
     }
-    if (this.quality.bloom) this.bloom.render(r, null, src, 0, false);
-    this.finalMat.uniforms.tColor.value = src.texture;
-    this.finalMat.uniforms.time.value = time % 100;
-    this.quad.material = this.finalMat;
-    r.setRenderTarget(null);
-    this.quad.render(r);
+    if (q.bloom && this.bloom) this.bloom.render(r, null, this.sceneRT, 0, false);
+    const u = this.compMat.uniforms;
+    u.tColor.value = this.sceneRT.texture;
+    u.projInv.value.copy(camera.projectionMatrixInverse); u.viewInv.value.copy(camera.matrixWorld); u.camPos.value.copy(camera.position);
+    u.sniper.value = sniper ? 1 : 0; u.exposure.value = exposure; u.fogBase.value = fogBase;
+    this.quad.material = this.compMat;
+    r.setRenderTarget(this.ldrRT); this.quad.render(r);
+    if (q.aa === 'smaa' && this.smaa) { this.smaa.render(r, null, this.ldrRT); }
+    else if (q.aa === 'fxaa') { this.fxaaMat.uniforms.tDiffuse.value = this.ldrRT.texture; this.quad.material = this.fxaaMat; r.setRenderTarget(null); this.quad.render(r); }
+    else { this.fxaaMat.uniforms.tDiffuse.value = this.ldrRT.texture; this.quad.material = this.fxaaMat; r.setRenderTarget(null); this.quad.render(r); }
+  }
+
+  dispose() {
+    for (const t of [this.sceneRT, this.aoRT, this.ldrRT]) t.dispose();
+    if (this.bloom) this.bloom.dispose(); if (this.smaa) this.smaa.dispose();
   }
 }

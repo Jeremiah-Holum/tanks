@@ -1,0 +1,514 @@
+// Steel Front tank roster: USA, Germany, USSR, tiers I–VII. See docs/DESIGN.md "Tank definitions".
+// Historical approximations balanced like World of Tanks (tier matters more than history).
+//
+// Each def below lists what is specific to the vehicle; `finish()` at the bottom fills the rest
+// (price and research XP by tier, camo and view by class and size, terrain resistance, gun
+// dispersion factors, shell sets, mantlet and track defaults). The armour parameters (hull,
+// turret) are interpreted by src/sim/armor.js, and the 3D models are built from the same solids.
+// Angles `a` are degrees from vertical. Hull W is the body width between the tracks; the upper
+// hull (sponsons) spans W + 2·track.w. Turret z is the ring position along the hull (+ forward).
+
+export const NATIONS = {
+  usa:     { id: 'usa',     label: 'U.S.A.',  paint: '#5b5b3c', marking: 'star' },
+  germany: { id: 'germany', label: 'Germany', paint: '#8f8660', marking: 'cross' },
+  ussr:    { id: 'ussr',    label: 'U.S.S.R.', paint: '#4c5a3a', marking: 'redstar' },
+};
+export const CLASSES = {
+  light:  { label: 'Light tank',     short: 'LT', icon: '◆' },
+  medium: { label: 'Medium tank',    short: 'MT', icon: '◈' },
+  heavy:  { label: 'Heavy tank',     short: 'HT', icon: '■' },
+  td:     { label: 'Tank destroyer', short: 'TD', icon: '▼' },
+};
+export const TIER_ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
+
+// ------------------------------------------------------------------ gun helpers
+// gun(name, calibre mm, barrel length m, AP pen, damage, muzzle velocity m/s, reload s,
+//     dispersion m@100m, aim time s, opts) — shells[0] AP, [1] APCR (or HEAT), [2] HE.
+// opts: apcr, heat (premium HEAT pen instead of APCR), xp, brake, dep, elev, ammo, clip:[n, s],
+//       dMove, dTurret, dShot, arc (gun arc for casemates, overrides the turret's).
+function gun(name, cal, len, pen, dmg, v, reload, disp, aim, o = {}) {
+  const prem = o.heat
+    ? { type: 'HEAT', pen: o.heat, dmg, v: Math.round(v * 0.8), gold: true }
+    : { type: 'APCR', pen: o.apcr ?? Math.round(pen * 1.3), dmg, v: Math.round(v * 1.25), gold: true };
+  return base(name, cal, len, reload, disp, aim, o, [
+    { type: 'AP', pen, dmg, v },
+    prem,
+    { type: 'HE', pen: Math.round(cal / 2), dmg: Math.round(dmg * (cal >= 75 ? 1.45 : 1.33)), v: Math.round(v * 0.85), splash: +(0.5 + cal / 40).toFixed(2) },
+  ]);
+}
+// Low-velocity howitzer ("derp"): shells[0] HEAT, [1] premium HEAT, [2] HE (the big one).
+function how(name, cal, len, heat, heDmg, v, reload, disp, aim, o = {}) {
+  return base(name, cal, len, reload, disp, aim, o, [
+    { type: 'HEAT', pen: heat, dmg: Math.round(heDmg * 0.8), v },
+    { type: 'HEAT', pen: Math.round(heat * 1.2), dmg: Math.round(heDmg * 0.8), v, gold: true },
+    { type: 'HE', pen: Math.round(cal / 2), dmg: heDmg, v, splash: +(0.8 + cal / 35).toFixed(2) },
+  ]);
+}
+// Owner feedback: every gun was too sprayey. Base dispersion is scaled for all guns (movement/traverse
+// bloom multiplies it, so everything tightens in proportion).
+const SPREAD = 0.6; // 40% tighter than the original numbers
+function base(name, cal, len, reload, disp, aim, o, shells) {
+  name = o.name ?? name; reload = o.reload ?? reload; disp = (o.disp ?? disp) * SPREAD; aim = o.aim ?? aim; len = o.len ?? len;
+  const g = { name, cal, len, muzzleBrake: !!o.brake, xp: o.xp ?? 0, reload, aim, disp,
+    dMove: o.dMove, dHull: o.dHull, dTurret: o.dTurret, dShot: o.dShot ?? (o.clip ? 1.08 : cal >= 85 ? 4.5 : cal >= 50 ? 4 : 3), // magazine guns bloom a little per round so bursts stay tight
+    dep: o.dep, elev: o.elev, ammo: o.ammo ?? (cal <= 20 ? 200 : cal <= 40 ? 120 : cal <= 50 ? 90 : cal <= 60 ? 80 : cal <= 76 ? 70 : cal <= 90 ? 50 : cal <= 105 ? 40 : 30),
+    shells };
+  if (o.clip) g.clip = { n: o.clip[0], t: o.clip[1] }; // magazine: n rounds o.clip[1] s apart, then `reload`
+  if (o.arc) g.arc = o.arc;
+  return g;
+}
+
+// Common guns (a fresh object per use, since `xp` differs per tank).
+const G = {
+  us37a:  (o) => gun('37 mm Gun M5', 37, 1.96, 48, 40, 792, 2.0, 0.46, 1.7, o),
+  us37b:  (o) => gun('37 mm Gun M6', 37, 1.98, 56, 40, 800, 1.7, 0.42, 1.6, o),
+  us75:   (o) => gun('75 mm Gun M3', 75, 3.0, 92, 110, 619, 3.4, 0.43, 2.1, { apcr: 127, ...o }),
+  us75h:  (o) => how('75 mm Howitzer M1A1', 75, 1.2, 75, 175, 381, 3.8, 0.58, 2.3, o),
+  us76:   (o) => gun('76 mm Gun M1A1', 76, 4.2, 128, 115, 792, 3.5, 0.40, 2.1, { apcr: 177, ...o }),
+  us76b:  (o) => gun('76 mm Gun M1A2', 76, 4.2, 128, 115, 792, 2.7, 0.37, 1.9, { apcr: 177, brake: true, ...o }),
+  us3in:  (o) => gun('3-inch Gun M7', 76, 3.8, 108, 115, 792, 3.4, 0.40, 2.0, o),
+  us90:   (o) => gun('90 mm Gun M3', 90, 4.77, 160, 240, 853, 7.0, 0.38, 2.3, { apcr: 243, brake: true, ...o }),
+  de20:   (o) => gun('2 cm KwK 30 L/55', 20, 1.1, 23, 11, 780, 4.0, 0.40, 1.8, { apcr: 46, clip: [10, 0.22], ...o }),
+  de20b:  (o) => gun('2 cm KwK 38 L/55', 20, 1.1, 23, 11, 780, 3.4, 0.36, 1.7, { apcr: 46, clip: [10, 0.15], ...o }),
+  de37:   (o) => gun('3.7 cm KwK 36 L/46.5', 37, 1.72, 48, 40, 745, 1.9, 0.45, 1.7, o),
+  de50:   (o) => gun('5 cm KwK 38 L/42', 50, 2.1, 70, 70, 685, 2.6, 0.42, 1.9, o),
+  de50l:  (o) => gun('5 cm KwK 39 L/60', 50, 3.0, 86, 70, 835, 2.3, 0.38, 1.7, { apcr: 130, ...o }),
+  de75s:  (o) => gun('7.5 cm KwK 40 L/43', 75, 3.2, 110, 110, 740, 3.7, 0.39, 2.1, { apcr: 158, ...o }),
+  de75l:  (o) => gun('7.5 cm KwK 40 L/48', 75, 3.6, 125, 110, 790, 3.4, 0.36, 2.0, { apcr: 158, brake: true, ...o }),
+  de75x:  (o) => gun('7.5 cm KwK 42 L/70', 75, 5.25, 150, 135, 925, 3.9, 0.35, 2.3, { apcr: 194, brake: true, ...o }),
+  de88:   (o) => gun('8.8 cm KwK 36 L/56', 88, 4.93, 145, 220, 810, 6.5, 0.38, 2.3, { apcr: 171, brake: true, ...o }),
+  de88l:  (o) => gun('8.8 cm KwK 43 L/71', 88, 6.25, 203, 240, 1000, 7.4, 0.34, 2.3, { apcr: 237, brake: true, ...o }),
+  de105h: (o) => how('10.5 cm StuH 42 L/28', 105, 2.94, 104, 410, 470, 9.5, 0.55, 2.4, { brake: true, ...o }),
+  su45:   (o) => gun('45 mm 20K', 45, 2.07, 51, 47, 757, 2.2, 0.46, 1.9, { apcr: 88, ...o }),
+  su45b:  (o) => gun('45 mm VT-42', 45, 3.1, 58, 47, 870, 1.8, 0.43, 1.7, { apcr: 98, ...o }),
+  su57:   (o) => gun('57 mm ZiS-4', 57, 4.16, 112, 85, 990, 2.4, 0.35, 1.8, { apcr: 189, ...o }),
+  su76s:  (o) => gun('76 mm L-10', 76, 2.0, 66, 110, 555, 3.6, 0.46, 2.3, { apcr: 92, ...o }),
+  su76:   (o) => gun('76 mm F-34', 76, 3.1, 86, 115, 662, 3.3, 0.43, 2.3, { apcr: 102, ...o }),
+  su76z:  (o) => gun('76 mm ZiS-3', 76, 3.2, 75, 110, 680, 3.6, 0.42, 2.1, { apcr: 102, ...o }),
+  su85:   (o) => gun('85 mm D-5T', 85, 4.4, 120, 180, 792, 5.0, 0.42, 2.5, { apcr: 161, ...o }),
+  su85b:  (o) => gun('85 mm ZiS-S-53', 85, 4.65, 144, 180, 792, 4.6, 0.38, 2.3, { apcr: 194, ...o }),
+  su100:  (o) => gun('100 mm D-10S', 100, 5.6, 175, 250, 895, 7.8, 0.37, 2.2, { apcr: 235, ...o }),
+  su122:  (o) => gun('122 mm D-25T', 122, 5.2, 175, 390, 800, 11.0, 0.46, 3.4, { apcr: 217, brake: true, ...o }),
+  su122h: (o) => how('122 mm U-11', 122, 2.8, 140, 450, 515, 11.5, 0.58, 3.0, o),
+};
+
+// ------------------------------------------------------------------ the roster
+const LIST = [
+  // ============================== U.S.A.
+  { id: 'usa_t1', name: 'T1 Cunningham', short: 'T1', nation: 'usa', tier: 1, cls: 'light', parents: [],
+    hp: 110, mass: 8.4, power: 132, speed: 32, trav: [42, 48], crew: ['commander', 'gunner', 'driver', 'radioman'],
+    guns: [gun('37 mm Gun M1924', 37, 1.4, 34, 36, 400, 1.9, 0.52, 1.7), gun('37 mm Semiautomatic Gun T3', 37, 1.85, 41, 36, 500, 1.6, 0.48, 1.6, { xp: 60 })],
+    hull: { sponson: false, L: 3.9, W: 1.5, H: 0.95, clr: 0.35, track: { w: 0.32, h: 0.75, wheels: 4, wheelR: 0.2, style: 'leaf' },
+      upper: { t: 16, a: 45, frac: 0.5 }, lower: { t: 16, a: 35 }, side: { t: 13 }, rear: { t: 10, a: 10 }, roof: 8, floor: 6 },
+    turret: { shape: 'box', z: -0.1, L: 1.3, W: 1.2, H: 0.7, ringR: 0.5, chamfer: 0.25,
+      front: { t: 16, a: 10 }, side: { t: 13, a: 8 }, rear: { t: 13, a: 5 }, roof: 8 } },
+  { id: 'usa_m2lt', name: 'M2 Light Tank', short: 'M2 LT', nation: 'usa', tier: 2, cls: 'light', parents: ['usa_t1'],
+    hp: 160, mass: 9.5, power: 250, speed: 58, trav: [46, 46], crew: ['commander', 'gunner', 'driver', 'radioman'],
+    guns: [G.us37a(), G.us37b({ xp: 180 })],
+    hull: { sponson: false, L: 4.4, W: 1.6, H: 1.15, clr: 0.4, track: { w: 0.33, h: 0.8, wheels: 4, wheelR: 0.3, style: 'vvss' },
+      upper: { t: 25, a: 35, frac: 0.5 }, lower: { t: 25, a: 30 }, side: { t: 16 }, rear: { t: 13, a: 10 }, roof: 10, floor: 8 },
+    turret: { shape: 'box', z: 0.05, L: 1.4, W: 1.35, H: 0.75, ringR: 0.55, chamfer: 0.25,
+      front: { t: 25, a: 10 }, side: { t: 16, a: 10 }, rear: { t: 16, a: 5 }, roof: 10 } },
+  { id: 'usa_t18', name: 'T18', short: 'T18', nation: 'usa', tier: 2, cls: 'td', parents: ['usa_t1'],
+    hp: 150, mass: 13.5, power: 250, speed: 38, trav: [36, 20], crew: ['commander', 'gunner', 'driver', 'loader'],
+    guns: [G.us75h({ dep: -10, elev: 20 }), gun('57 mm Gun M1', 57, 2.85, 75, 75, 853, 2.3, 0.37, 1.7, { xp: 200 })],
+    hull: { L: 4.6, W: 1.6, H: 0.95, clr: 0.4, track: { w: 0.35, h: 0.8, wheels: 4, wheelR: 0.3, style: 'vvss' },
+      upper: { t: 51, a: 45, frac: 0.5 }, lower: { t: 51, a: 30 }, side: { t: 25 }, rear: { t: 25, a: 15 }, roof: 13, floor: 10 },
+    turret: { shape: 'casemate', z: 0.3, L: 2.2, W: 1.7, H: 0.85, gunY: 0.4, traverse: [-12, 12],
+      front: { t: 51, a: 35 }, side: { t: 25, a: 10 }, rear: { t: 13, a: 10 }, roof: 13, mantlet: { t: 51, w: 0.45, h: 0.35, d: 0.12 } } },
+  { id: 'usa_m3stuart', name: 'M3 Stuart', short: 'Stuart', nation: 'usa', tier: 3, cls: 'light', parents: ['usa_m2lt'],
+    hp: 230, mass: 12.9, power: 262, speed: 58, trav: [48, 44], crew: ['commander', 'gunner', 'driver', 'radioman'],
+    guns: [G.us37a({ reload: 1.8 }), G.us37b({ xp: 420 })],
+    hull: { L: 4.53, W: 1.62, H: 1.25, clr: 0.42, track: { w: 0.3, h: 0.82, wheels: 4, wheelR: 0.3, style: 'vvss' },
+      upper: { t: 25, a: 48, frac: 0.5 }, lower: { t: 38, a: 20 }, side: { t: 25 }, rear: { t: 25, a: 20 }, roof: 10, floor: 10 },
+    turret: { shape: 'box', z: 0.1, L: 1.45, W: 1.4, H: 0.72, ringR: 0.55, chamfer: 0.25,
+      front: { t: 38, a: 10 }, side: { t: 25, a: 8 }, rear: { t: 25, a: 5 }, roof: 13 },
+    look: { cupola: false, stowage: true } },
+  { id: 'usa_m2med', name: 'M2 Medium Tank', short: 'M2 MT', nation: 'usa', tier: 3, cls: 'medium', parents: ['usa_m2lt'],
+    hp: 280, mass: 18.7, power: 400, speed: 42, trav: [40, 40],
+    guns: [gun('37 mm Gun M3', 37, 1.96, 48, 45, 792, 1.9, 0.45, 1.9), G.us37b({ reload: 1.7, xp: 400 })],
+    hull: { sponson: false, L: 5.4, W: 1.95, H: 1.55, clr: 0.45, track: { w: 0.38, h: 0.95, wheels: 6, wheelR: 0.3, style: 'vvss' },
+      upper: { t: 32, a: 45, frac: 0.45 }, lower: { t: 32, a: 25 }, side: { t: 25 }, rear: { t: 25, a: 10 }, roof: 13, floor: 10 },
+    turret: { shape: 'box', z: 0.2, L: 1.3, W: 1.3, H: 0.75, ringR: 0.55, chamfer: 0.35,
+      front: { t: 32, a: 10 }, side: { t: 32, a: 10 }, rear: { t: 32, a: 5 }, roof: 13 } },
+  { id: 'usa_m3lee', name: 'M3 Lee', short: 'Lee', nation: 'usa', tier: 4, cls: 'medium', parents: ['usa_m2med'],
+    hp: 340, mass: 27.2, power: 400, speed: 39, trav: [36, 34], crew: ['commander', 'gunner', 'driver', 'radioman', 'loader'],
+    guns: [gun('75 mm Gun M2', 75, 2.35, 76, 110, 588, 3.5, 0.46, 2.3), G.us75({ reload: 3.3, xp: 1100 })],
+    hull: { L: 5.64, W: 1.88, H: 1.95, clr: 0.43, track: { w: 0.42, h: 0.95, wheels: 6, wheelR: 0.3, style: 'vvss' },
+      upper: { t: 51, a: 55, frac: 0.4 }, lower: { t: 51, a: 25 }, side: { t: 38 }, rear: { t: 38, a: 10 }, roof: 13, floor: 13 },
+    turret: { shape: 'cast', z: -0.1, L: 1.5, W: 1.5, H: 0.75, ringR: 0.6, chamfer: 0.4,
+      front: { t: 51, a: 20 }, side: { t: 51, a: 5 }, rear: { t: 51, a: 5 }, roof: 22 },
+    look: { cupola: true, hullGun: true } },
+  { id: 'usa_t40', name: 'T40', short: 'T40', nation: 'usa', tier: 4, cls: 'td', parents: ['usa_t18'],
+    hp: 310, mass: 26.5, power: 400, speed: 38, trav: [34, 24], crew: ['commander', 'gunner', 'driver', 'loader'],
+    guns: [G.us75({ reload: 3.2, disp: 0.39 }), G.us76({ reload: 3.3, disp: 0.37, aim: 1.9, xp: 1300 })],
+    hull: { L: 5.64, W: 1.88, H: 1.35, clr: 0.43, track: { w: 0.42, h: 0.95, wheels: 6, wheelR: 0.3, style: 'vvss' },
+      upper: { t: 51, a: 55, frac: 0.45 }, lower: { t: 51, a: 25 }, side: { t: 38 }, rear: { t: 25, a: 10 }, roof: 13, floor: 13 },
+    turret: { shape: 'casemate', z: 0.0, L: 2.6, W: 2.2, H: 0.95, gunY: 0.45, traverse: [-12, 12],
+      front: { t: 51, a: 35 }, side: { t: 25, a: 15 }, rear: { t: 25, a: 10 }, roof: 13, mantlet: { t: 64, w: 0.6, h: 0.45, d: 0.15 } } },
+  { id: 'usa_m4', name: 'M4 Sherman', short: 'M4', nation: 'usa', tier: 5, cls: 'medium', parents: ['usa_m3lee'],
+    hp: 480, mass: 30.3, power: 400, speed: 48, trav: [42, 42],
+    guns: [G.us75(), G.us76({ xp: 3200 })],
+    hull: { L: 5.84, W: 1.8, H: 1.45, clr: 0.43, engine: 'rear', ammo: 'hull',
+      track: { w: 0.42, h: 0.98, wheels: 6, wheelR: 0.3, style: 'vvss' },
+      upper: { t: 51, a: 56, frac: 0.5 }, lower: { t: 51, a: 45 }, side: { t: 38 }, rear: { t: 38, a: 10 }, roof: 19, floor: 13 },
+    turret: { shape: 'cast', z: 0.2, zOff: -0.05, L: 1.9, W: 1.75, H: 0.85, ringR: 0.85, chamfer: 0.4, gunY: 0.42,
+      front: { t: 76, a: 25 }, side: { t: 51, a: 5 }, rear: { t: 51, a: 5 }, roof: 25, mantlet: { t: 89, w: 0.8, h: 0.45, d: 0.18 } },
+    look: { cupola: true, stowage: true, exhausts: 'rear' } },
+  { id: 'usa_t1hvy', name: 'T1 Heavy Tank', short: 'T1 Hvy', nation: 'usa', tier: 5, cls: 'heavy', parents: ['usa_m3lee'],
+    hp: 700, mass: 57, power: 825, speed: 35, trav: [26, 28], crew: ['commander', 'gunner', 'driver', 'radioman', 'loader'],
+    guns: [G.us75({ reload: 3.1 }), G.us76({ reload: 3.2, xp: 3500 })],
+    hull: { L: 7.5, W: 1.95, H: 1.95, clr: 0.5, track: { w: 0.6, h: 1.05, wheels: 8, wheelR: 0.3, style: 'hvss' },
+      upper: { t: 76, a: 35, frac: 0.55 }, lower: { t: 70, a: 30 }, side: { t: 70, tUpper: 50 }, rear: { t: 44, a: 15 }, roof: 25, floor: 25 },
+    turret: { shape: 'cast', z: 0.4, L: 2.3, W: 2.1, H: 1.0, ringR: 0.95, chamfer: 0.4,
+      front: { t: 83, a: 10 }, side: { t: 76, a: 5 }, rear: { t: 76, a: 5 }, roof: 25, mantlet: { t: 102, w: 1.0, h: 0.5, d: 0.2 } },
+    look: { cupola: true } },
+  { id: 'usa_m10', name: 'M10 Wolverine', short: 'M10', nation: 'usa', tier: 5, cls: 'td', parents: ['usa_t40'],
+    hp: 460, mass: 29.9, power: 410, speed: 48, trav: [36, 18], crew: ['commander', 'gunner', 'driver', 'radioman', 'loader'],
+    guns: [G.us3in(), G.us76({ reload: 2.9, disp: 0.36, aim: 1.9, xp: 3400 })],
+    hull: { L: 5.97, W: 2.1, H: 1.45, clr: 0.43, track: { w: 0.45, h: 1.1, wheels: 6, wheelR: 0.3, style: 'vvss' },
+      upper: { t: 38, a: 55, frac: 0.55 }, lower: { t: 51, a: 55 }, side: { t: 25, tUpper: 19, a: 38 }, rear: { t: 19, a: 25 }, roof: 10, floor: 10 },
+    turret: { shape: 'open', z: -0.1, L: 2.0, W: 1.8, H: 0.7, ringR: 0.8,
+      front: { t: 57, a: 45 }, side: { t: 25, a: 20 }, rear: { t: 25, a: 0 }, roof: 0, mantlet: { t: 57, w: 0.6, h: 0.4, d: 0.15 } } },
+  { id: 'usa_m4a3e8', name: 'M4A3E8 Sherman', short: 'Easy 8', nation: 'usa', tier: 6, cls: 'medium', parents: ['usa_m4'],
+    hp: 790, mass: 33.6, power: 500, speed: 48, trav: [44, 42],
+    guns: [G.us76({ reload: 3.0 }), G.us76b({ xp: 8000 })],
+    hull: { L: 6.27, W: 1.85, H: 1.45, clr: 0.43, ammo: 'floor', track: { w: 0.58, h: 0.98, wheels: 6, wheelR: 0.3, style: 'hvss' },
+      upper: { t: 64, a: 47, frac: 0.5 }, lower: { t: 51, a: 45 }, side: { t: 38 }, rear: { t: 38, a: 10 }, roof: 19, floor: 13 },
+    turret: { shape: 'cast', z: 0.15, zOff: -0.1, L: 2.3, W: 1.85, H: 0.85, ringR: 0.88, chamfer: 0.4, gunY: 0.42,
+      front: { t: 76, a: 30 }, side: { t: 64, a: 5 }, rear: { t: 64, a: 0 }, roof: 25, mantlet: { t: 89, w: 0.85, h: 0.45, d: 0.2 } },
+    look: { cupola: true, stowage: true } },
+  { id: 'usa_m6', name: 'M6', short: 'M6', nation: 'usa', tier: 6, cls: 'heavy', parents: ['usa_t1hvy'],
+    hp: 1000, mass: 57.4, power: 825, speed: 35, trav: [26, 26], crew: ['commander', 'gunner', 'driver', 'radioman', 'loader'],
+    guns: [G.us76({ reload: 3.1 }), G.us90({ reload: 7.2, xp: 9500 })],
+    hull: { L: 7.5, W: 1.95, H: 2.05, clr: 0.5, track: { w: 0.6, h: 1.1, wheels: 8, wheelR: 0.32, style: 'hvss' },
+      upper: { t: 101, a: 30, frac: 0.55 }, lower: { t: 83, a: 30 }, side: { t: 70, tUpper: 70 }, rear: { t: 44, a: 15 }, roof: 25, floor: 25 },
+    turret: { shape: 'cast', z: 0.5, zOff: -0.1, L: 2.6, W: 2.3, H: 1.05, ringR: 1.0, chamfer: 0.35,
+      front: { t: 102, a: 10 }, side: { t: 83, a: 5 }, rear: { t: 83, a: 5 }, roof: 25, mantlet: { t: 102, w: 1.0, h: 0.5, d: 0.2 } },
+    look: { cupola: true } },
+  { id: 'usa_m36', name: 'M36 Jackson', short: 'Jackson', nation: 'usa', tier: 6, cls: 'td', parents: ['usa_m10'],
+    hp: 700, mass: 28.6, power: 410, speed: 48, trav: [36, 20], crew: ['commander', 'gunner', 'driver', 'radioman', 'loader'],
+    guns: [G.us76({ reload: 2.8, disp: 0.35, aim: 1.9 }), G.us90({ reload: 6.6, disp: 0.34, aim: 2.0, xp: 9000 })],
+    hull: { L: 5.97, W: 2.1, H: 1.45, clr: 0.43, track: { w: 0.45, h: 1.1, wheels: 6, wheelR: 0.3, style: 'vvss' },
+      upper: { t: 38, a: 55, frac: 0.55 }, lower: { t: 51, a: 55 }, side: { t: 25, tUpper: 19, a: 38 }, rear: { t: 19, a: 25 }, roof: 10, floor: 10 },
+    turret: { shape: 'open', z: -0.1, zOff: -0.1, L: 2.3, W: 1.85, H: 0.8, ringR: 0.85, chamfer: 0.35,
+      front: { t: 76, a: 40 }, side: { t: 25, a: 20 }, rear: { t: 25, a: 0 }, roof: 0, mantlet: { t: 76, w: 0.7, h: 0.45, d: 0.2 } } },
+  { id: 'usa_t29', name: 'T29', short: 'T29', nation: 'usa', tier: 7, cls: 'heavy', parents: ['usa_m6'],
+    hp: 1350, mass: 64, power: 770, speed: 35, trav: [24, 24], crew: ['commander', 'gunner', 'driver', 'radioman', 'loader'],
+    guns: [G.us90({ reload: 7.5, disp: 0.37 }), gun('105 mm Gun T5E1', 105, 6.8, 198, 320, 945, 10.5, 0.38, 2.3, { apcr: 245, xp: 16000 })],
+    hull: { L: 7.6, W: 2.5, H: 1.55, clr: 0.48, track: { w: 0.65, h: 1.05, wheels: 8, wheelR: 0.33, style: 'torsion' },
+      upper: { t: 102, a: 54, frac: 0.55 }, lower: { t: 76, a: 53 }, side: { t: 76, tUpper: 76 }, rear: { t: 51, a: 30 }, roof: 38, floor: 25 },
+    turret: { shape: 'cast', z: -0.1, zOff: -0.2, L: 3.5, W: 3.1, H: 1.2, ringR: 1.2, chamfer: 0.3, gunY: 0.52,
+      front: { t: 203, a: 10 }, side: { t: 127, a: 10 }, rear: { t: 102, a: 0 }, roof: 38, mantlet: { t: 279, w: 1.4, h: 0.7, d: 0.3 } },
+    look: { cupola: true, stowage: true } },
+  { id: 'usa_t20', name: 'T20', short: 'T20', nation: 'usa', tier: 7, cls: 'medium', parents: ['usa_m4a3e8'],
+    hp: 1100, mass: 33.5, power: 560, speed: 56, trav: [46, 44],
+    guns: [G.us76b({ reload: 2.5 }), G.us90({ name: '90 mm Gun T7', reload: 6.3, disp: 0.37, aim: 2.2, xp: 15000 })],
+    hull: { L: 6.1, W: 1.9, H: 1.05, clr: 0.42, track: { w: 0.55, h: 0.9, wheels: 6, wheelR: 0.33, style: 'torsion' },
+      upper: { t: 64, a: 47, frac: 0.55 }, lower: { t: 64, a: 53 }, side: { t: 38 }, rear: { t: 38, a: 20 }, roof: 19, floor: 13 },
+    turret: { shape: 'cast', z: 0.2, zOff: -0.15, L: 2.5, W: 1.9, H: 0.72, ringR: 0.85, chamfer: 0.35, gunY: 0.36,
+      front: { t: 76, a: 30 }, side: { t: 64, a: 10 }, rear: { t: 64, a: 5 }, roof: 25, mantlet: { t: 89, w: 0.8, h: 0.42, d: 0.2 } },
+    look: { cupola: true } },
+  { id: 'usa_t25', name: 'T25 AT', short: 'T25 AT', nation: 'usa', tier: 7, cls: 'td', parents: ['usa_m36'],
+    hp: 1050, mass: 38, power: 500, speed: 40, trav: [30, 22], crew: ['commander', 'gunner', 'driver', 'loader'],
+    guns: [G.us90({ reload: 6.3, disp: 0.35, aim: 2.0 }), gun('90 mm Gun T15E2', 90, 6.2, 203, 240, 975, 6.8, 0.33, 2.0, { apcr: 258, brake: true, xp: 15000 })],
+    hull: { L: 6.1, W: 1.95, H: 1.0, clr: 0.42, track: { w: 0.55, h: 0.88, wheels: 6, wheelR: 0.33, style: 'torsion' },
+      upper: { t: 88, a: 48, frac: 0.6 }, lower: { t: 64, a: 53 }, side: { t: 50 }, rear: { t: 38, a: 15 }, roof: 25, floor: 13 },
+    turret: { shape: 'casemate', z: -0.2, L: 3.3, W: 2.8, H: 0.72, gunY: 0.36, traverse: [-10, 10],
+      front: { t: 102, a: 30 }, side: { t: 50, a: 10 }, rear: { t: 38, a: 5 }, roof: 25, mantlet: { t: 114, w: 0.75, h: 0.5, d: 0.22 } } },
+
+  // ============================== Germany
+  { id: 'ger_ltraktor', name: 'Leichttraktor', short: 'L.Tr.', nation: 'germany', tier: 1, cls: 'light', parents: [],
+    hp: 120, mass: 8.7, power: 100, speed: 40, trav: [40, 44], crew: ['commander', 'gunner', 'driver'],
+    guns: [G.de20({ reload: 3.6 }), G.de37({ xp: 60 })],
+    hull: { sponson: false, L: 4.2, W: 1.55, H: 1.0, clr: 0.35, engine: 'front', track: { w: 0.3, h: 0.7, wheels: 6, wheelR: 0.2, style: 'leaf' },
+      upper: { t: 14, a: 50, frac: 0.5 }, lower: { t: 14, a: 30 }, side: { t: 14 }, rear: { t: 14, a: 15 }, roof: 8, floor: 8 },
+    turret: { shape: 'box', z: -0.85, L: 1.2, W: 1.2, H: 0.7, ringR: 0.5, chamfer: 0.3,
+      front: { t: 14, a: 15 }, side: { t: 14, a: 10 }, rear: { t: 14, a: 5 }, roof: 8 } },
+  { id: 'ger_pz2', name: 'Pz.Kpfw. II', short: 'Pz. II', nation: 'germany', tier: 2, cls: 'light', parents: ['ger_ltraktor'],
+    hp: 175, mass: 9.5, power: 140, speed: 42, trav: [44, 45], crew: ['commander', 'driver', 'radioman'],
+    guns: [G.de20(), G.de20b({ xp: 150 })],
+    hull: { sponson: false, L: 4.8, W: 1.6, H: 1.1, clr: 0.35, track: { w: 0.3, h: 0.75, wheels: 5, wheelR: 0.28, style: 'leaf' },
+      upper: { t: 30, a: 20, frac: 0.55 }, lower: { t: 35, a: 45 }, side: { t: 15, tUpper: 20 }, rear: { t: 15, a: 10 }, roof: 10, floor: 5 },
+    turret: { shape: 'box', z: 0.15, L: 1.4, W: 1.3, H: 0.6, ringR: 0.55, chamfer: 0.2,
+      front: { t: 30, a: 10 }, side: { t: 15, a: 22 }, rear: { t: 15, a: 20 }, roof: 10 },
+    look: { cupola: true } },
+  { id: 'ger_pzjg1', name: 'Panzerjäger I', short: 'Pz.Jg. I', nation: 'germany', tier: 2, cls: 'td', parents: ['ger_ltraktor'],
+    hp: 150, mass: 6.4, power: 100, speed: 40, trav: [40, 30], crew: ['commander', 'driver', 'loader'],
+    guns: [G.de37({ reload: 1.8, disp: 0.4 }), gun('4.7 cm PaK(t)', 47, 2.05, 67, 70, 775, 2.5, 0.38, 1.7, { xp: 200 })],
+    hull: { sponson: false, L: 4.1, W: 1.4, H: 1.0, clr: 0.3, track: { w: 0.28, h: 0.7, wheels: 5, wheelR: 0.25, style: 'leaf' },
+      upper: { t: 13, a: 22, frac: 0.5 }, lower: { t: 13, a: 60 }, side: { t: 13 }, rear: { t: 13, a: 10 }, roof: 8, floor: 5 },
+    turret: { shape: 'casemate', open: true, z: 0.1, L: 1.4, W: 1.35, H: 0.9, gunY: 0.5, traverse: [-17, 17],
+      front: { t: 14, a: 30 }, side: { t: 14, a: 15 }, rear: { t: 0, a: 0 }, roof: 0, mantlet: { t: 14, w: 0.4, h: 0.3, d: 0.1 } } },
+  { id: 'ger_pz38t', name: 'Pz.Kpfw. 38 (t)', short: 'Pz. 38t', nation: 'germany', tier: 3, cls: 'light', parents: ['ger_pz2'],
+    hp: 250, mass: 9.8, power: 125, speed: 42, trav: [40, 40], crew: ['commander', 'gunner', 'driver', 'radioman'],
+    guns: [gun('3.7 cm KwK 34 (t)', 37, 1.47, 45, 40, 675, 1.8, 0.45, 1.8), gun('3.7 cm KwK 38 (t)', 37, 1.75, 58, 40, 750, 1.6, 0.42, 1.6, { xp: 450 })],
+    hull: { sponson: false, L: 4.6, W: 1.55, H: 1.2, clr: 0.4, track: { w: 0.29, h: 0.78, wheels: 4, wheelR: 0.38, style: 'leaf' },
+      upper: { t: 25, a: 17, frac: 0.55 }, lower: { t: 25, a: 30 }, side: { t: 15 }, rear: { t: 15, a: 10 }, roof: 10, floor: 8 },
+    turret: { shape: 'box', z: 0.2, L: 1.4, W: 1.4, H: 0.7, ringR: 0.55, chamfer: 0.15,
+      front: { t: 25, a: 10 }, side: { t: 15, a: 10 }, rear: { t: 15, a: 5 }, roof: 10 },
+    look: { cupola: true } },
+  { id: 'ger_pz3', name: 'Pz.Kpfw. III Ausf. J', short: 'Pz. III', nation: 'germany', tier: 4, cls: 'medium', parents: ['ger_pz38t'],
+    hp: 350, mass: 21.5, power: 300, speed: 40, trav: [40, 40],
+    guns: [G.de50(), G.de50l({ xp: 1200 })],
+    hull: { L: 5.52, W: 1.9, H: 1.4, clr: 0.38, track: { w: 0.38, h: 0.8, wheels: 6, wheelR: 0.26, style: 'torsion' },
+      upper: { t: 50, a: 9, frac: 0.45 }, lower: { t: 50, a: 21 }, side: { t: 30 }, rear: { t: 30, a: 10 }, roof: 17, floor: 16 },
+    turret: { shape: 'box', z: 0.1, zOff: -0.1, L: 1.9, W: 1.75, H: 0.8, ringR: 0.8, chamfer: 0.15,
+      front: { t: 50, a: 15 }, side: { t: 30, a: 25 }, rear: { t: 30, a: 15 }, roof: 10, mantlet: { t: 50, w: 0.9, h: 0.45, d: 0.15 } },
+    look: { cupola: true, skirts: false } },
+  { id: 'ger_marder2', name: 'Marder II', short: 'Marder', nation: 'germany', tier: 3, cls: 'td', parents: ['ger_pzjg1'],
+    hp: 240, mass: 10.8, power: 140, speed: 40, trav: [38, 24], crew: ['commander', 'gunner', 'driver', 'loader'],
+    guns: [G.de50({ reload: 2.3, disp: 0.36 }), gun('7.5 cm PaK 40', 75, 3.45, 110, 110, 792, 3.8, 0.35, 2.0, { apcr: 158, brake: true, xp: 520 })],
+    hull: { L: 4.8, W: 1.6, H: 1.05, clr: 0.35, track: { w: 0.3, h: 0.75, wheels: 5, wheelR: 0.28, style: 'leaf' },
+      upper: { t: 35, a: 20, frac: 0.5 }, lower: { t: 35, a: 45 }, side: { t: 15 }, rear: { t: 15, a: 10 }, roof: 10, floor: 5 },
+    turret: { shape: 'casemate', open: true, z: -0.3, L: 2.0, W: 1.9, H: 1.0, gunY: 0.55, traverse: [-30, 30],
+      front: { t: 20, a: 30 }, side: { t: 10, a: 15 }, rear: { t: 0, a: 0 }, roof: 0, mantlet: { t: 20, w: 0.5, h: 0.4, d: 0.12 } } },
+  { id: 'ger_hetzer', name: 'Hetzer', short: 'Hetzer', nation: 'germany', tier: 4, cls: 'td', parents: ['ger_marder2'],
+    hp: 340, mass: 15.8, power: 160, speed: 42, trav: [36, 24], crew: ['commander', 'gunner', 'driver', 'loader'],
+    guns: [gun('7.5 cm PaK 39 L/48', 75, 3.6, 110, 110, 750, 3.5, 0.36, 2.0, { apcr: 158 }), G.de105h({ xp: 1500 })],
+    hull: { L: 4.87, W: 1.9, H: 0.95, clr: 0.38, track: { w: 0.35, h: 0.75, wheels: 4, wheelR: 0.38, style: 'leaf' },
+      upper: { t: 60, a: 60, frac: 0.6 }, lower: { t: 60, a: 40 }, side: { t: 20, tUpper: 20, a: 40 }, rear: { t: 20, a: 15 }, roof: 8, floor: 10 },
+    turret: { shape: 'casemate', z: -0.35, L: 2.3, W: 1.6, H: 0.55, gunY: 0.3, traverse: [-10, 10],
+      front: { t: 60, a: 60 }, side: { t: 20, a: 30 }, rear: { t: 8, a: 15 }, roof: 8, mantlet: { t: 60, w: 0.45, h: 0.35, d: 0.18 } } },
+  { id: 'ger_pz4h', name: 'Pz.Kpfw. IV Ausf. H', short: 'Pz. IV H', nation: 'germany', tier: 5, cls: 'medium', parents: ['ger_pz3'],
+    hp: 500, mass: 25.7, power: 300, speed: 40, trav: [40, 30],
+    guns: [G.de75s(), G.de75l({ xp: 3400 })],
+    hull: { L: 5.89, W: 1.85, H: 1.35, clr: 0.4, track: { w: 0.4, h: 0.82, wheels: 8, wheelR: 0.23, style: 'leaf' },
+      upper: { t: 80, a: 10, frac: 0.5 }, lower: { t: 80, a: 14 }, side: { t: 30 }, rear: { t: 20, a: 10 }, roof: 12, floor: 10 },
+    turret: { shape: 'box', z: 0.2, zOff: -0.15, L: 2.1, W: 1.8, H: 0.75, ringR: 0.8, chamfer: 0.1,
+      front: { t: 50, a: 10 }, side: { t: 30, a: 25 }, rear: { t: 30, a: 15 }, roof: 16, mantlet: { t: 50, w: 0.7, h: 0.4, d: 0.15 } },
+    look: { cupola: true, skirts: true } },
+  { id: 'ger_stug3', name: 'StuG III Ausf. G', short: 'StuG III', nation: 'germany', tier: 5, cls: 'td', parents: ['ger_hetzer'],
+    hp: 470, mass: 23.9, power: 300, speed: 40, trav: [38, 26], crew: ['commander', 'gunner', 'driver', 'loader'],
+    guns: [gun('7.5 cm StuK 40 L/43', 75, 3.2, 110, 110, 740, 3.5, 0.36, 2.0, { apcr: 158 }), gun('7.5 cm StuK 40 L/48', 75, 3.6, 125, 110, 790, 3.2, 0.34, 1.8, { apcr: 158, brake: true, xp: 3600 })],
+    hull: { L: 5.4, W: 1.9, H: 1.2, clr: 0.38, track: { w: 0.38, h: 0.8, wheels: 6, wheelR: 0.26, style: 'torsion' },
+      upper: { t: 80, a: 52, frac: 0.35 }, lower: { t: 80, a: 21 }, side: { t: 30 }, rear: { t: 30, a: 10 }, roof: 17, floor: 16 },
+    turret: { shape: 'casemate', z: 0.1, L: 3.1, W: 2.4, H: 0.72, gunY: 0.38, traverse: [-10, 10],
+      front: { t: 80, a: 10 }, side: { t: 30, a: 11 }, rear: { t: 30, a: 10 }, roof: 10, mantlet: { t: 80, w: 0.6, h: 0.5, d: 0.3 } },
+    look: { skirts: true } },
+  { id: 'ger_vk3001h', name: 'VK 30.01 (H)', short: 'VK 30.01', nation: 'germany', tier: 5, cls: 'heavy', parents: ['ger_pz3'],
+    hp: 650, mass: 33, power: 300, speed: 35, trav: [30, 30],
+    guns: [G.de75s({ reload: 3.5 }), G.de105h({ reload: 9.0, xp: 3600 })],
+    hull: { L: 5.8, W: 1.9, H: 1.35, clr: 0.45, track: { w: 0.5, h: 0.95, wheels: 7, wheelR: 0.35, style: 'interleaved' },
+      upper: { t: 60, a: 10, frac: 0.5 }, lower: { t: 60, a: 20 }, side: { t: 50 }, rear: { t: 50, a: 10 }, roof: 25, floor: 20 },
+    turret: { shape: 'box', z: 0.2, L: 2.0, W: 1.85, H: 0.85, ringR: 0.8, chamfer: 0.1,
+      front: { t: 60, a: 10 }, side: { t: 50, a: 10 }, rear: { t: 50, a: 5 }, roof: 25, mantlet: { t: 80, w: 0.8, h: 0.45, d: 0.15 } },
+    look: { cupola: true } },
+  { id: 'ger_vk3601h', name: 'VK 36.01 (H)', short: 'VK 36.01', nation: 'germany', tier: 6, cls: 'heavy', parents: ['ger_vk3001h'],
+    hp: 950, mass: 40, power: 550, speed: 40, trav: [28, 28],
+    guns: [G.de75l({ reload: 3.3 }), G.de88({ reload: 6.3, xp: 9000 })],
+    hull: { L: 6.0, W: 1.95, H: 1.4, clr: 0.45, track: { w: 0.6, h: 1.05, wheels: 7, wheelR: 0.38, style: 'interleaved' },
+      upper: { t: 100, a: 10, frac: 0.5 }, lower: { t: 100, a: 20 }, side: { t: 60, tUpper: 80 }, rear: { t: 60, a: 10 }, roof: 25, floor: 20 },
+    turret: { shape: 'box', z: 0.2, zOff: -0.05, L: 2.3, W: 2.0, H: 0.9, ringR: 0.9, chamfer: 0.1,
+      front: { t: 100, a: 10 }, side: { t: 80, a: 5 }, rear: { t: 80, a: 5 }, roof: 25, mantlet: { t: 100, w: 1.0, h: 0.55, d: 0.2 } },
+    look: { cupola: true } },
+  { id: 'ger_jpz4', name: 'Jagdpanzer IV', short: 'JPz IV', nation: 'germany', tier: 6, cls: 'td', parents: ['ger_stug3'],
+    hp: 700, mass: 25.8, power: 400, speed: 38, trav: [36, 24], crew: ['commander', 'gunner', 'driver', 'loader'],
+    guns: [G.de75l({ name: '7.5 cm PaK 39 L/48', reload: 3.1, disp: 0.34, aim: 1.8 }), gun('7.5 cm PaK 42 L/70', 75, 5.25, 150, 135, 925, 3.6, 0.33, 2.0, { apcr: 194, xp: 9000 })],
+    hull: { L: 5.92, W: 1.85, H: 1.0, clr: 0.4, track: { w: 0.4, h: 0.8, wheels: 8, wheelR: 0.23, style: 'leaf' },
+      upper: { t: 60, a: 50, frac: 0.6 }, lower: { t: 50, a: 55 }, side: { t: 30 }, rear: { t: 20, a: 10 }, roof: 20, floor: 10 },
+    turret: { shape: 'casemate', z: -0.2, L: 3.2, W: 2.5, H: 0.55, gunY: 0.28, traverse: [-10, 10],
+      front: { t: 60, a: 50 }, side: { t: 40, a: 30 }, rear: { t: 20, a: 10 }, roof: 20, mantlet: { t: 80, w: 0.5, h: 0.35, d: 0.2 } },
+    look: { skirts: true } },
+  { id: 'ger_tiger', name: 'Tiger I', short: 'Tiger', nation: 'germany', tier: 7, cls: 'heavy', parents: ['ger_vk3601h'],
+    hp: 1500, mass: 57, power: 700, speed: 40, trav: [23, 22],
+    guns: [G.de88(), G.de88l({ xp: 16000 })],
+    hull: { L: 6.32, W: 2.0, H: 1.5, clr: 0.47, track: { w: 0.72, h: 1.1, wheels: 8, wheelR: 0.4, style: 'interleaved' },
+      upper: { t: 100, a: 10, frac: 0.55 }, lower: { t: 100, a: 25 }, side: { t: 80 }, rear: { t: 80, a: 9 }, roof: 25, floor: 25 },
+    turret: { shape: 'box', z: 0.05, L: 2.7, W: 2.35, H: 0.95, ringR: 0.95, chamfer: 0.12, gunY: 0.45,
+      front: { t: 100, a: 10 }, side: { t: 80, a: 0 }, rear: { t: 80, a: 0 }, roof: 25, mantlet: { t: 120, w: 1.6, h: 0.75, d: 0.25 } },
+    look: { cupola: true, stowage: true } },
+  { id: 'ger_panther', name: 'Panther', short: 'Panther', nation: 'germany', tier: 7, cls: 'medium', parents: ['ger_pz4h'],
+    hp: 1300, mass: 44.8, power: 700, speed: 46, trav: [30, 32],
+    guns: [G.de75x(), gun('7.5 cm KwK 45 L/100', 75, 7.5, 175, 135, 1100, 3.9, 0.33, 2.1, { apcr: 226, brake: true, xp: 15000 })],
+    hull: { L: 6.87, W: 1.9, H: 1.4, clr: 0.56, track: { w: 0.66, h: 1.2, wheels: 8, wheelR: 0.43, style: 'interleaved' },
+      upper: { t: 80, a: 55, frac: 0.65 }, lower: { t: 60, a: 55 }, side: { t: 40, tUpper: 40, a: 40 }, rear: { t: 40, a: 30 }, roof: 16, floor: 16 },
+    turret: { shape: 'box', z: 0.1, zOff: -0.1, L: 2.6, W: 1.95, H: 0.95, ringR: 0.85, chamfer: 0.12, gunY: 0.42,
+      front: { t: 100, a: 12 }, side: { t: 45, a: 25 }, rear: { t: 45, a: 25 }, roof: 16, mantlet: { t: 110, w: 1.2, h: 0.5, d: 0.2 } },
+    look: { cupola: true, skirts: true } },
+  { id: 'ger_jagdpanther', name: 'Jagdpanther', short: 'JPanther', nation: 'germany', tier: 7, cls: 'td', parents: ['ger_jpz4'],
+    hp: 1100, mass: 45.5, power: 700, speed: 46, trav: [30, 24], crew: ['commander', 'gunner', 'driver', 'radioman', 'loader'],
+    guns: [G.de88({ name: '8.8 cm PaK 43 L/56', reload: 6.0, disp: 0.34, aim: 2.0 }), G.de88l({ name: '8.8 cm PaK 43/3 L/71', reload: 6.6, disp: 0.32, aim: 2.0, xp: 15000 })],
+    hull: { L: 6.87, W: 1.9, H: 1.3, clr: 0.56, track: { w: 0.66, h: 1.2, wheels: 8, wheelR: 0.43, style: 'interleaved' },
+      upper: { t: 80, a: 55, frac: 0.65 }, lower: { t: 60, a: 55 }, side: { t: 40, tUpper: 50, a: 30 }, rear: { t: 40, a: 35 }, roof: 25, floor: 16 },
+    turret: { shape: 'casemate', z: -0.2, L: 3.6, W: 1.95, H: 0.85, gunY: 0.35, traverse: [-11, 11],
+      front: { t: 80, a: 55 }, side: { t: 50, a: 30 }, rear: { t: 40, a: 35 }, roof: 25, mantlet: { t: 100, w: 0.6, h: 0.5, d: 0.3 } },
+    look: { skirts: true } },
+
+  // ============================== U.S.S.R.
+  { id: 'ussr_ms1', name: 'MS-1', short: 'MS-1', nation: 'ussr', tier: 1, cls: 'light', parents: [],
+    hp: 110, mass: 5.5, power: 50, speed: 31, trav: [42, 48], crew: ['commander', 'driver'],
+    guns: [gun('37 mm Hotchkiss', 37, 0.8, 30, 36, 390, 1.9, 0.52, 1.8), G.su45({ reload: 2.3, xp: 60 })],
+    hull: { sponson: false, L: 3.6, W: 1.15, H: 0.85, clr: 0.35, track: { w: 0.3, h: 0.82, wheels: 6, wheelR: 0.2, style: 'leaf' },
+      upper: { t: 16, a: 40, frac: 0.5 }, lower: { t: 16, a: 35 }, side: { t: 16 }, rear: { t: 16, a: 5 }, roof: 8, floor: 8 },
+    turret: { shape: 'box', z: -0.05, L: 1.0, W: 0.95, H: 0.62, ringR: 0.42, chamfer: 0.4,
+      front: { t: 16, a: 10 }, side: { t: 16, a: 10 }, rear: { t: 16, a: 5 }, roof: 8 } },
+  { id: 'ussr_t26', name: 'T-26', short: 'T-26', nation: 'ussr', tier: 2, cls: 'light', parents: ['ussr_ms1'],
+    hp: 170, mass: 9.4, power: 91, speed: 32, trav: [42, 44], crew: ['commander', 'gunner', 'driver'],
+    guns: [G.su45({ len: 2.07 }), G.su45({ reload: 1.9, xp: 150 })],
+    hull: { sponson: false, L: 4.62, W: 1.5, H: 0.92, clr: 0.38, track: { w: 0.32, h: 0.84, wheels: 8, wheelR: 0.2, style: 'leaf' },
+      upper: { t: 15, a: 25, frac: 0.5 }, lower: { t: 15, a: 40 }, side: { t: 15 }, rear: { t: 15, a: 10 }, roof: 10, floor: 6 },
+    turret: { shape: 'cast', z: -0.1, zOff: 0.05, L: 1.45, W: 1.4, H: 0.64, ringR: 0.58, chamfer: 0.45,
+      front: { t: 15, a: 0 }, side: { t: 15, a: 0 }, rear: { t: 15, a: 0 }, roof: 10 } },
+  { id: 'ussr_at1', name: 'AT-1', short: 'AT-1', nation: 'ussr', tier: 2, cls: 'td', parents: ['ussr_ms1'],
+    hp: 140, mass: 9.6, power: 91, speed: 30, trav: [36, 24], crew: ['commander', 'gunner', 'driver'],
+    guns: [G.su45({ reload: 2.0, disp: 0.4 }), gun('76 mm PS-3', 76, 1.25, 70, 110, 381, 3.5, 0.45, 2.1, { apcr: 90, xp: 200 })],
+    hull: { sponson: false, L: 4.62, W: 1.5, H: 0.92, clr: 0.38, track: { w: 0.32, h: 0.84, wheels: 8, wheelR: 0.2, style: 'leaf' },
+      upper: { t: 15, a: 25, frac: 0.5 }, lower: { t: 15, a: 40 }, side: { t: 15 }, rear: { t: 15, a: 10 }, roof: 10, floor: 6 },
+    turret: { shape: 'casemate', z: -0.3, L: 1.9, W: 1.55, H: 0.95, gunY: 0.42, traverse: [-10, 10],
+      front: { t: 15, a: 20 }, side: { t: 15, a: 10 }, rear: { t: 6, a: 5 }, roof: 6, mantlet: { t: 20, w: 0.4, h: 0.3, d: 0.1 } } },
+  { id: 'ussr_bt7', name: 'BT-7', short: 'BT-7', nation: 'ussr', tier: 3, cls: 'light', parents: ['ussr_t26'],
+    hp: 250, mass: 13.8, power: 400, speed: 62, trav: [48, 44], crew: ['commander', 'gunner', 'driver'],
+    guns: [G.su45({ reload: 1.9 }), G.su45b({ xp: 450 })],
+    hull: { sponson: false, L: 5.66, W: 1.6, H: 1.02, clr: 0.4, track: { w: 0.34, h: 0.98, wheels: 4, wheelR: 0.41, style: 'christie' },
+      upper: { t: 20, a: 18, frac: 0.55 }, lower: { t: 20, a: 60 }, side: { t: 13 }, rear: { t: 13, a: 20 }, roof: 10, floor: 6 },
+    turret: { shape: 'cast', z: 0.55, L: 1.7, W: 1.55, H: 0.66, ringR: 0.65, chamfer: 0.45,
+      front: { t: 20, a: 20 }, side: { t: 15, a: 20 }, rear: { t: 15, a: 20 }, roof: 10 } },
+  { id: 'ussr_su76', name: 'SU-76M', short: 'SU-76', nation: 'ussr', tier: 3, cls: 'td', parents: ['ussr_at1'],
+    hp: 250, mass: 11.2, power: 170, speed: 45, trav: [38, 24], crew: ['commander', 'gunner', 'driver', 'loader'],
+    guns: [G.su76z({ disp: 0.4 }), gun('57 mm ZiS-2', 57, 4.16, 98, 85, 990, 2.4, 0.35, 1.8, { apcr: 150, xp: 520 })],
+    hull: { L: 5.0, W: 1.7, H: 1.0, clr: 0.3, track: { w: 0.3, h: 0.72, wheels: 6, wheelR: 0.3, style: 'torsion' },
+      upper: { t: 25, a: 60, frac: 0.6 }, lower: { t: 35, a: 30 }, side: { t: 15 }, rear: { t: 15, a: 10 }, roof: 7, floor: 7 },
+    turret: { shape: 'casemate', open: true, z: -0.6, L: 2.2, W: 2.0, H: 1.0, gunY: 0.55, traverse: [-15, 15],
+      front: { t: 25, a: 25 }, side: { t: 15, a: 10 }, rear: { t: 10, a: 0 }, roof: 0, mantlet: { t: 25, w: 0.45, h: 0.35, d: 0.12 } } },
+  { id: 'ussr_t28', name: 'T-28', short: 'T-28', nation: 'ussr', tier: 4, cls: 'medium', parents: ['ussr_bt7'],
+    hp: 360, mass: 28, power: 500, speed: 42, trav: [36, 36], crew: ['commander', 'gunner', 'driver', 'radioman', 'loader'],
+    guns: [G.su76s(), G.su57({ reload: 2.6, xp: 1200 })],
+    hull: { sponson: false, L: 7.44, W: 2.1, H: 1.4, clr: 0.5, track: { w: 0.4, h: 1.0, wheels: 12, wheelR: 0.22, style: 'leaf' },
+      upper: { t: 30, a: 25, frac: 0.45 }, lower: { t: 30, a: 50 }, side: { t: 20 }, rear: { t: 20, a: 10 }, roof: 15, floor: 15 },
+    turret: { shape: 'box', z: -0.2, L: 1.9, W: 1.8, H: 0.85, ringR: 0.8, chamfer: 0.4,
+      front: { t: 20, a: 10 }, side: { t: 20, a: 10 }, rear: { t: 20, a: 5 }, roof: 15 },
+    look: { miniTurrets: 2 } },
+  { id: 'ussr_t34', name: 'T-34', short: 'T-34', nation: 'ussr', tier: 5, cls: 'medium', parents: ['ussr_t28'],
+    hp: 470, mass: 30, power: 500, speed: 54, trav: [44, 44], crew: ['commander', 'gunner', 'driver', 'radioman'],
+    guns: [G.su76(), G.su57({ reload: 2.2, xp: 3500 })],
+    hull: { L: 5.92, W: 2.0, H: 1.2, clr: 0.4, track: { w: 0.5, h: 0.93, wheels: 5, wheelR: 0.41, style: 'christie' },
+      upper: { t: 45, a: 60, frac: 0.6 }, lower: { t: 45, a: 53 }, side: { t: 45, tUpper: 40, a: 40 }, rear: { t: 40, a: 47 }, roof: 20, floor: 15 },
+    turret: { shape: 'cast', z: 0.45, L: 1.9, W: 1.75, H: 0.75, ringR: 0.72, chamfer: 0.35,
+      front: { t: 52, a: 30 }, side: { t: 52, a: 30 }, rear: { t: 52, a: 30 }, roof: 20, mantlet: { t: 60, w: 0.6, h: 0.35, d: 0.15 } } },
+  { id: 'ussr_kv1', name: 'KV-1', short: 'KV-1', nation: 'ussr', tier: 5, cls: 'heavy', parents: ['ussr_t28'],
+    hp: 640, mass: 47, power: 600, speed: 34, trav: [26, 25], crew: ['commander', 'gunner', 'driver', 'radioman', 'loader'],
+    guns: [gun('76 mm F-32', 76, 2.4, 86, 115, 612, 3.3, 0.44, 2.3, { apcr: 102 }), G.su122h({ xp: 3600 })],
+    hull: { L: 6.75, W: 2.1, H: 1.45, clr: 0.45, ammo: 'floor', track: { w: 0.7, h: 1.0, wheels: 6, wheelR: 0.3, style: 'torsion' },
+      upper: { t: 75, a: 25, frac: 0.55 }, lower: { t: 75, a: 30 }, side: { t: 75 }, rear: { t: 60, a: 35 }, roof: 30, floor: 30 },
+    turret: { shape: 'box', z: 0.15, zOff: -0.1, L: 2.4, W: 2.0, H: 0.95, ringR: 0.8, chamfer: 0.15,
+      front: { t: 75, a: 15 }, side: { t: 75, a: 15 }, rear: { t: 75, a: 10 }, roof: 40, mantlet: { t: 90, w: 0.8, h: 0.5, d: 0.2 } } },
+  { id: 'ussr_su85', name: 'SU-85', short: 'SU-85', nation: 'ussr', tier: 5, cls: 'td', parents: ['ussr_su85b'],
+    hp: 460, mass: 29.6, power: 500, speed: 55, trav: [40, 24], crew: ['commander', 'gunner', 'driver', 'loader'],
+    guns: [gun('76 mm S-54', 76, 4.1, 110, 115, 780, 3.2, 0.37, 1.9, { apcr: 145 }), G.su85({ name: '85 mm D-5S', reload: 5.0, disp: 0.37, aim: 2.2, xp: 3600 })],
+    hull: { L: 5.92, W: 2.0, H: 1.2, clr: 0.4, track: { w: 0.5, h: 0.93, wheels: 5, wheelR: 0.41, style: 'christie' },
+      upper: { t: 45, a: 50, frac: 0.6 }, lower: { t: 45, a: 53 }, side: { t: 45, tUpper: 45, a: 20 }, rear: { t: 40, a: 47 }, roof: 20, floor: 15 },
+    turret: { shape: 'casemate', z: 0.1, L: 2.6, W: 1.9, H: 0.65, gunY: 0.3, traverse: [-8, 8],
+      front: { t: 45, a: 50 }, side: { t: 45, a: 20 }, rear: { t: 45, a: 10 }, roof: 20, mantlet: { t: 60, w: 0.5, h: 0.4, d: 0.2 } } },
+  { id: 'ussr_t3485', name: 'T-34-85', short: 'T-34-85', nation: 'ussr', tier: 6, cls: 'medium', parents: ['ussr_t34'],
+    hp: 800, mass: 32, power: 520, speed: 54, trav: [44, 44], crew: ['commander', 'gunner', 'driver', 'radioman', 'loader'],
+    guns: [G.su85(), G.su85b({ xp: 9000 })],
+    hull: { L: 6.1, W: 2.0, H: 1.2, clr: 0.4, track: { w: 0.5, h: 0.93, wheels: 5, wheelR: 0.41, style: 'christie' },
+      upper: { t: 45, a: 60, frac: 0.6 }, lower: { t: 45, a: 53 }, side: { t: 45, tUpper: 45, a: 40 }, rear: { t: 45, a: 47 }, roof: 20, floor: 20 },
+    turret: { shape: 'cast', z: 0.3, zOff: -0.1, L: 2.4, W: 1.85, H: 0.85, ringR: 0.8, chamfer: 0.3,
+      front: { t: 90, a: 20 }, side: { t: 75, a: 20 }, rear: { t: 52, a: 10 }, roof: 20, mantlet: { t: 90, w: 0.8, h: 0.45, d: 0.2 } },
+    look: { cupola: true } },
+  { id: 'ussr_kv1s', name: 'KV-1S', short: 'KV-1S', nation: 'ussr', tier: 6, cls: 'heavy', parents: ['ussr_kv1'],
+    hp: 980, mass: 42.5, power: 600, speed: 43, trav: [30, 30], crew: ['commander', 'gunner', 'driver', 'loader'],
+    guns: [G.su85({ reload: 4.8 }), G.su122({ reload: 11.5, xp: 9500 })],
+    hull: { L: 6.75, W: 2.1, H: 1.45, clr: 0.45, ammo: 'floor', track: { w: 0.7, h: 1.0, wheels: 6, wheelR: 0.3, style: 'torsion' },
+      upper: { t: 75, a: 25, frac: 0.55 }, lower: { t: 60, a: 30 }, side: { t: 60 }, rear: { t: 60, a: 35 }, roof: 30, floor: 30 },
+    turret: { shape: 'cast', z: 0.1, zOff: -0.1, L: 2.4, W: 2.0, H: 0.9, ringR: 0.8, chamfer: 0.3,
+      front: { t: 82, a: 15 }, side: { t: 82, a: 15 }, rear: { t: 82, a: 5 }, roof: 30, mantlet: { t: 100, w: 0.8, h: 0.5, d: 0.2 } },
+    look: { cupola: true } },
+  { id: 'ussr_su100', name: 'SU-100', short: 'SU-100', nation: 'ussr', tier: 6, cls: 'td', parents: ['ussr_su85'],
+    hp: 720, mass: 31.6, power: 500, speed: 50, trav: [38, 22], crew: ['commander', 'gunner', 'driver', 'loader'],
+    guns: [G.su85({ name: '85 mm D-5S', reload: 4.7, disp: 0.36, aim: 2.1 }), G.su100({ xp: 9000 })],
+    hull: { L: 6.1, W: 2.0, H: 1.2, clr: 0.4, track: { w: 0.5, h: 0.93, wheels: 5, wheelR: 0.41, style: 'christie' },
+      upper: { t: 75, a: 50, frac: 0.6 }, lower: { t: 45, a: 53 }, side: { t: 45, tUpper: 45, a: 20 }, rear: { t: 40, a: 47 }, roof: 20, floor: 15 },
+    turret: { shape: 'casemate', z: 0.2, L: 2.6, W: 1.9, H: 0.65, gunY: 0.3, traverse: [-8, 8],
+      front: { t: 75, a: 50 }, side: { t: 45, a: 20 }, rear: { t: 45, a: 10 }, roof: 20, mantlet: { t: 110, w: 0.55, h: 0.45, d: 0.25 } },
+    look: { cupola: true } },
+  { id: 'ussr_is', name: 'IS', short: 'IS', nation: 'ussr', tier: 7, cls: 'heavy', parents: ['ussr_kv1s'],
+    hp: 1230, mass: 46, power: 520, speed: 37, trav: [26, 24], crew: ['commander', 'gunner', 'driver', 'loader'],
+    guns: [G.su100({ name: '100 mm D-10T', reload: 8.3 }), G.su122({ xp: 16000 })],
+    hull: { L: 6.77, W: 2.1, H: 1.45, clr: 0.45, ammo: 'floor', track: { w: 0.65, h: 1.0, wheels: 6, wheelR: 0.33, style: 'torsion' },
+      upper: { t: 120, a: 30, frac: 0.6 }, lower: { t: 100, a: 30 }, side: { t: 90, tUpper: 90, a: 15 }, rear: { t: 60, a: 45 }, roof: 30, floor: 20 },
+    turret: { shape: 'cast', z: 0.1, zOff: -0.1, L: 2.5, W: 2.1, H: 0.95, ringR: 0.9, chamfer: 0.35,
+      front: { t: 100, a: 10 }, side: { t: 90, a: 20 }, rear: { t: 90, a: 20 }, roof: 30, mantlet: { t: 100, w: 1.0, h: 0.55, d: 0.25 } },
+    look: { cupola: true } },
+  { id: 'ussr_t43', name: 'T-43', short: 'T-43', nation: 'ussr', tier: 7, cls: 'medium', parents: ['ussr_t3485'],
+    hp: 1150, mass: 34, power: 520, speed: 50, trav: [42, 44], crew: ['commander', 'gunner', 'driver', 'radioman', 'loader'],
+    guns: [G.su85b({ reload: 4.4 }), gun('85 mm D-5T-85BM', 85, 5.3, 161, 180, 1050, 4.0, 0.35, 2.2, { apcr: 217, xp: 15000 })],
+    hull: { L: 6.1, W: 2.0, H: 1.2, clr: 0.4, track: { w: 0.5, h: 0.93, wheels: 5, wheelR: 0.41, style: 'torsion' },
+      upper: { t: 75, a: 60, frac: 0.6 }, lower: { t: 75, a: 53 }, side: { t: 75, tUpper: 60, a: 40 }, rear: { t: 60, a: 47 }, roof: 20, floor: 20 },
+    turret: { shape: 'cast', z: 0.3, zOff: -0.1, L: 2.4, W: 1.85, H: 0.85, ringR: 0.8, chamfer: 0.3,
+      front: { t: 90, a: 20 }, side: { t: 75, a: 20 }, rear: { t: 60, a: 10 }, roof: 20, mantlet: { t: 100, w: 0.8, h: 0.45, d: 0.2 } },
+    look: { cupola: true } },
+  { id: 'ussr_su85b', name: 'SU-85B', short: 'SU-85B', nation: 'ussr', tier: 4, cls: 'td', parents: ['ussr_su76'],
+    hp: 330, mass: 20, power: 280, speed: 45, trav: [38, 24], crew: ['commander', 'gunner', 'driver', 'loader'],
+    guns: [G.su76z({ reload: 3.2, disp: 0.38 }), gun('76 mm S-54', 76, 4.1, 110, 115, 780, 3.1, 0.36, 1.9, { apcr: 145, xp: 1400 })],
+    hull: { L: 5.3, W: 1.9, H: 1.05, clr: 0.4, track: { w: 0.35, h: 0.78, wheels: 6, wheelR: 0.3, style: 'torsion' },
+      upper: { t: 35, a: 50, frac: 0.6 }, lower: { t: 35, a: 30 }, side: { t: 25 }, rear: { t: 15, a: 10 }, roof: 10, floor: 10 },
+    turret: { shape: 'casemate', z: -0.4, L: 2.3, W: 2.2, H: 0.8, gunY: 0.4, traverse: [-12, 12],
+      front: { t: 45, a: 40 }, side: { t: 25, a: 15 }, rear: { t: 15, a: 5 }, roof: 10, mantlet: { t: 50, w: 0.45, h: 0.35, d: 0.15 } } },
+  { id: 'ussr_su152', name: 'SU-152', short: 'SU-152', nation: 'ussr', tier: 7, cls: 'td', parents: ['ussr_su100'],
+    hp: 1050, mass: 45.5, power: 600, speed: 43, trav: [26, 18], crew: ['commander', 'gunner', 'driver', 'radioman', 'loader'],
+    guns: [G.su122({ name: '122 mm A-19S', reload: 11.0, disp: 0.42, aim: 2.8 }), gun('152 mm ML-20S', 152, 4.35, 135, 600, 600, 16.0, 0.50, 3.2, { heat: 250, brake: true, xp: 15000, ammo: 20 })],
+    hull: { L: 6.75, W: 2.1, H: 1.3, clr: 0.45, ammo: 'floor', track: { w: 0.7, h: 1.0, wheels: 6, wheelR: 0.3, style: 'torsion' },
+      upper: { t: 75, a: 30, frac: 0.55 }, lower: { t: 60, a: 30 }, side: { t: 60 }, rear: { t: 60, a: 35 }, roof: 20, floor: 30 },
+    turret: { shape: 'casemate', z: 0.4, L: 3.4, W: 2.8, H: 0.9, gunY: 0.42, traverse: [-12, 12],
+      front: { t: 75, a: 20 }, side: { t: 60, a: 15 }, rear: { t: 60, a: 5 }, roof: 20, mantlet: { t: 90, w: 0.7, h: 0.55, d: 0.3 } },
+    look: { cupola: true } },
+];
+
+// ------------------------------------------------------------------ defaults
+const PRICE = [0, 0, 3700, 38000, 135000, 360000, 915000, 1390000];
+const XP = [0, 0, 250, 1150, 3600, 11500, 26000, 49000];
+const DEP = { usa: -10, germany: -8, ussr: -5 };
+// Per class: camo still/moving, view base, terrain resistance, dispersion factors [dMove, dHull,
+// dTurret]. The contract's formula divides km/h and deg/s by 10, so these are ~5× the numbers
+// WoT lists: a medium at 40 km/h blooms ~×3.4, a turret swinging at 40°/s ~×2.2.
+const CLS = {
+  light:  { camo: [0.20, 0.20], view: 330, terrain: [0.8, 1.0, 1.8], d: [0.7, 0.7, 0.45] },
+  medium: { camo: [0.13, 0.10], view: 320, terrain: [0.9, 1.1, 2.0], d: [0.8, 0.8, 0.5] },
+  heavy:  { camo: [0.07, 0.035], view: 320, terrain: [1.1, 1.3, 2.3], d: [1.0, 1.0, 0.55] },
+  td:     { camo: [0.24, 0.14], view: 320, terrain: [1.0, 1.2, 2.1], d: [1.0, 1.0, 0.45] },
+};
+const VIEW_BONUS = { light: 40, medium: 20, heavy: 10, td: 0 };
+const r2 = (x) => Math.round(x * 100) / 100;
+
+function finish(d) {
+  const c = CLS[d.cls], h = d.hull, t = d.turret;
+  d.price ??= d.tier === 1 ? 0 : Math.round(PRICE[d.tier] * (d.cls === 'heavy' ? 1.05 : d.cls === 'light' ? 0.95 : 1) / 100) * 100;
+  d.xp ??= d.tier === 1 ? 0 : XP[d.tier];
+  d.reverse ??= Math.round(d.speed * (d.cls === 'light' ? 0.4 : 0.35));
+  [d.hullTraverse, d.turretTraverse] = d.trav; delete d.trav;
+  d.terrain ??= h.track.style === 'christie' ? c.terrain.map((x) => r2(x * 0.9)) : c.terrain.slice();
+  d.crew ??= ['commander', 'gunner', 'driver', 'radioman', 'loader'];
+  // Size scales camo: a 2.3 m tall tank is the reference.
+  const height = h.clr + h.H + t.H;
+  const sz = Math.min(1.35, Math.max(0.65, 2.3 / height));
+  const cal = Math.max(...d.guns.map((g) => g.cal));
+  d.camo ??= { still: r2(c.camo[0] * sz), moving: r2(c.camo[1] * sz), fire: r2(Math.min(0.6, Math.max(0.15, 0.62 - cal / 250))) };
+  d.view ??= Math.min(445, 320 + d.tier * 12 + VIEW_BONUS[d.cls]); // scouting matters: lights see furthest
+  // Guns: class dispersion factors and nation depression unless the gun says otherwise.
+  const gxp = Math.round(XP[Math.max(2, d.tier)] * 0.35 / 10) * 10;
+  d.guns.forEach((g, i) => {
+    g.dMove ??= c.d[0]; g.dHull ??= c.d[1]; g.dTurret ??= c.d[2];
+    g.dep ??= t.shape === 'casemate' ? DEP[d.nation] - 2 : DEP[d.nation];
+    g.elev ??= t.shape === 'casemate' ? 15 : 20;
+    if (i > 0 && !g.xp) g.xp = gxp;
+  });
+  // Armour defaults
+  h.engine ??= 'rear'; h.ammo ??= 'hull';
+  h.side.a ??= 0;
+  h.track.t ??= Math.round(10 + d.mass * 0.45);
+  h.track.len ??= 0.96;
+  t.roof ??= 10; t.traverse ??= null;
+  t.mantlet ??= { t: Math.round(t.front.t * 1.1), w: r2(0.3 + d.guns[0].cal * 0.005), h: r2(0.22 + d.guns[0].cal * 0.0025), d: 0.12 };
+  d.look = { cupola: !(t.shape === 'open' || t.open || d.tier === 1), skirts: false, stowage: false, exhausts: 'rear', number: true, ...d.look };
+  return d;
+}
+
+export const TANKS = {};
+for (const d of LIST) TANKS[d.id] = finish(d);
+// Research edges: { from, to, xp }. A tank can have several parents (any one unlocks it).
+export const TREE = LIST.flatMap((d) => d.parents.map((p) => ({ from: p, to: d.id, xp: d.xp })));
+export const STARTERS = LIST.filter((d) => d.tier === 1).map((d) => d.id);
+export const tanksOf = (nation) => LIST.filter((d) => d.nation === nation);

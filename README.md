@@ -1,76 +1,60 @@
-# Toy Tanks
+# Steel Front
 
-A Wii Play Tanks–style arena shooter in the browser, built with three.js and
-styled as a miniature: plastic toy tanks on a cork board of alphabet blocks.
-See `SPEC.md` for the design, `BACKLOG.md` for the work plan and `HANDOFF.md`
-for where development currently stands.
+A single-player, browser World of Tanks–style game: real WWII tanks (USA, Germany, USSR, tiers
+I–VII), 1 km outdoor battlefields, WoT aiming, armour and ballistics, 15 vs 15 random battles
+against bots, and a garage / tech tree / XP / credits progression loop. Desktop, mouse and
+keyboard, three.js, no server, no binary assets.
 
-## three.js
-
-three.js comes from npm, not from the host machine. The exact version is set
-in `package.json` / `package-lock.json` (three 0.185.1). `npm ci` installs
-that version, so the game renders the same on any machine. The code uses
-`three/examples/jsm` addons (`RoundedBoxGeometry`, `BufferGeometryUtils`),
-whose APIs change between three.js releases, so don't swap in another copy.
-
-## Setup
-
-Needs Node 18+ (developed on Node 22).
-
-```sh
-npm ci
+## Run
 ```
-
-## Run (development)
-
-The root `index.html` loads `src/` directly and uses an import map pointing at
-`./node_modules/three/`, so serve the **repo root** over HTTP after `npm ci`:
-
-```sh
-python3 -m http.server 8477
-# open http://127.0.0.1:8477/
+npm install
+python3 -m http.server 8477      # from the repo root
+open http://localhost:8477/
 ```
+Build a static bundle into `dist/` (three.js bundled, minified): `node tools/build.mjs`.
 
-Any static server works. Opening the file directly (`file://`) won't work
-because ES modules need HTTP.
-
-## Build (production)
-
-```sh
-node tools/build.mjs
-```
-
-This writes `dist/` with three files: `index.html`, `game.js` (the game plus
-three.js, bundled and minified by esbuild) and `ui.css`. `dist/` is fully
-self-contained, so you can copy it to any static web host. The host doesn't
-need Node or three.js.
-
-`deploy.sh` builds and copies `dist/` to `/var/www/toytanks/` on the original
-server. Change the paths in it for another host.
-
-## Tools
-
-| Command | What it does |
+## Controls
+| key | action |
 |---|---|
-| `node tools/rules-test.mjs` | Headless rules tests; exits non-zero on failure |
-| `node tools/sim.mjs [campaign\|ladder\|director\|teams\|perf\|all] [N]` | Headless balance and AI checks |
-| `node tools/verify.mjs [low\|medium\|high] [--shots dir]` | Plays the full UI flow in headless Chromium. Needs the repo served on port 8477 (`TT_PORT` overrides) |
-| `node tools/shot.mjs <query> <out.png> [w] [h] [js]` | Screenshot of the game |
-| `tools/lab.html` + `node tools/labshot.mjs` | Paused render lab for models, damage states and props |
-
-`verify.mjs`, `shot.mjs` and `labshot.mjs` need Playwright, which isn't in
-`package.json`. Install it with `npm i -D playwright`. Run **one** headless
-browser at a time: software rendering uses several GB of RAM per instance.
+| W A S D | drive |
+| Mouse | turn the camera; the turret follows the aim point |
+| LMB | fire |
+| RMB | click an enemy: lock the aim on it (again: release). Hold elsewhere: lock the gun (free look) |
+| Wheel | zoom the camera 6–30 m; past the closest zoom: sniper ×2 / ×4 / ×8 |
+| Shift | toggle sniper mode |
+| Space / X | brake (Space also skips the pre-battle countdown) |
+| 1 2 3 | shell type · R: reload with the selected shell |
+| 4 5 6 | repair kit, first aid kit, fire extinguisher |
+| Tab | score panel · M: minimap size · Esc: battle menu |
 
 ## Layout
+- `src/main.js` boot and the hangar → loading → battle → results flow.
+- `src/game/` battle session (fixed-step loop, bots, input, camera, aim), see `docs/notes/integration.md`.
+- `src/sim/` deterministic simulation (armour, ballistics, spotting, rules), `src/sim/map/` the maps,
+  `src/sim/ai/` the bots, `src/data/tanks.js` the roster.
+- `src/render/` battle renderer (terrain, props, sky, post, tank models, FX).
+- `src/meta/` profile, economy, matchmaker, results; `src/ui/` menus and the battle HUD (`hud.js`).
+- `src/audio.js` Web Audio synthesis and crew voice lines.
+- `docs/DESIGN.md` is the design contract; each part has notes in `docs/notes/`.
 
+## Custom sounds
+All audio is synthesised, but real recordings can replace the key sounds. Drop any of these into
+`assets/sfx/` (`.wav`, `.ogg` or `.mp3`; tried in that order, loaded once when audio unlocks, and copied
+into `dist/` by the build):
+- `cannon.*` — one gun report, used for every shot (pitched ~1.25× for 20–37 mm down to ~0.75× for 122–152 mm),
+  with the game's distance filtering, delay, panning, own-shot boost and ducking;
+- `explosion.*` — HE, destruction and ammo-rack blasts (pitched by size);
+- `engine.*` — a seamless engine loop recorded at about idle-to-mid rpm; its playback rate follows the rpm.
+A missing or undecodable file silently falls back to the synth. In dist/, rerun `node tools/build.mjs` after adding files
+(it copies them and writes the folder index the loader reads). Details: `docs/notes/audio.md`.
+
+## Tests
 ```
-index.html        dev entry (import map → node_modules/three)
-src/main.js       boot
-src/sim/          game rules, maps, AI, director (no three.js dependency)
-src/render/       three.js view, models, props, effects, post-processing
-src/ui.js, ui.css menus and HUD
-src/input.js      keyboard, mouse, gamepad
-src/audio.js      sound
-tools/            build, tests, sims, screenshot and verify scripts
+node tools/rules-test.mjs                      # sim rules
+node tools/maps-test.mjs                       # maps
+node tools/meta-test.mjs                       # economy, matchmaker
+node tools/battle-sim.mjs --n 2                # headless 15v15 bot battles
+tools/capped.sh -- node tools/verify.mjs low   # end-to-end with real input (headless Chromium)
+tools/capped.sh -- node tools/shot-game.mjs a='map=ashford&t=40'   # battle screenshot
 ```
+Browser tools must run through `tools/capped.sh` (one headless browser at a time).
