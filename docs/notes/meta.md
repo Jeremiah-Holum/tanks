@@ -28,11 +28,11 @@ const screens = new Screens(rootEl, {
 screens.showHangar(); screens.showTree(nation?); screens.showDetails(tankId?); screens.showRecord(); screens.showSettings();
 screens.showLoading(battle, mapMeta?);    // mapMeta optional (looked up from MAPS by battle.mapId)
 screens.setLoadingProgress(0..1, label?); screens.setLoadingMap(mapData);  // hill-shaded minimap with both bases
-screens.finishBattle(world, playerTankId, battle) → report   // summarize + apply + save + show results
+screens.finishBattle(world, playerTankIds, battle) → report  // summarize + apply + save + show results (ids: every tank driven)
 screens.showResults(report);              // applies the report to the profile if !report.applied
 screens.hideAll();                        // hides the menus and releases the hangar's WebGL context
 screens.profile / screens.settings / screens.save() / screens.toast(msg, 'info'|'warn'|'good')
-screens.startBattle()                     // what BATTLE! does: buildBattle(profile, selected, {size}) → onBattle
+screens.startBattle()                     // what BATTLE! does: buildBattle(profile, lineup, {size}) → onBattle(lineup[0], …)
 ```
 - The root gets `hidden` when `hideAll()` runs. The menus use `position: fixed; inset: 0; z-index: 10`
   on the root, so put the battle canvas under it.
@@ -73,6 +73,29 @@ screens.startBattle()                     // what BATTLE! does: buildBattle(prof
   Confederate, Invader, Defender, Kolobanov's, Pool's, Tough Nut and Spearhead (needs `world.firstKill`).
   Consumables used are read from `tank.consumables[i].used` (or `ready === false`), and shells used
   from `battle` entry ammo − `tank.ammo`.
+
+## Battle lineup (War Thunder style)
+- Profile: `lineupSlots` (starts at `LINEUP_START` = 2, max `LINEUP_MAX` = 5) and `lineup` = owned tank ids in
+  spawn order (1..slots, no duplicates). `fixLineup(p)` validates it (called by `newProfile`, `migrate`, `sell`);
+  old saves migrate to `[selected, next owned]`. `lineupOf(p)` = the validated copy. `selected` stays the tank
+  shown in the garage (loadout editing); the battle always uses the lineup (`lineup[0]` spawns first).
+- Economy: `SLOT_PRICES` 3rd 25,000 · 4th 60,000 · 5th 120,000 (≈1–3 battles of net income at the tier where a
+  player first owns that many tanks); `slotPrice/slotInfo/buySlot`, `setLineup` (owned only, no duplicates,
+  1..slots), `addToLineup/removeFromLineup/moveInLineup`. Buying a tank fills a free slot; selling removes it
+  (an emptied lineup refills with the selected tank).
+- Matchmaker: `buildBattle(profile, lineupIds | tankId, opts)`: the tier template is built around the
+  **highest-tier lineup tank**; the player spawns in `lineup[0]`; `battle.reserve[playerTeam]` = entries for the
+  other lineup tanks (own gun, ammo, consumables, crew). Bot teams are unchanged (still mirrored, 15 or 7).
+  `meta.lineup`, `meta.topTier`.
+- Results: `summarize(world, [ids driven], profile, battle)`: `report.tanks[]` = one breakdown per tank (its own
+  stats, XP, credits with its own repair/ammo/consumable bill, mastery, medals, killedBy); the top-level stats,
+  xp, credits, freeXp and medals are the sums (a single tank gives the old report shape plus `tanks: [one]`).
+  Participation counts per tank, so each respawn earns a little. `applyReport` gives each tank its XP, crew XP,
+  battle, win, damage, kills and mastery; the service record counts one battle with the summed stats; history
+  gets `tankIds`. The results screen shows a Vehicles table (per tank + total) when more than one tank was driven.
+- Garage: the carousel starts with the lineup (numbered slots, ◀ spawn earlier, ✕ remove, empty slots, a
+  "Buy slot" card with the price), then the other owned tanks (+ adds to the lineup). Under BATTLE!: tanks,
+  battle tier and the first spawn.
 
 ## Economy (live roster)
 Reward rates are **derived from the roster** (average research cost and price of tier t+1), so an
@@ -122,7 +145,7 @@ A tier-I potato (0 damage, dies, fires 20 shells) nets ≥ 0 credits every battl
 - **Settings** modal: Graphics / Controls / Audio / Game tabs, Defaults, Cancel, Apply, and a reset-progress confirm.
 
 ## Known gaps
-- No sell button in the UI yet (`economy.sell` exists).
+- No sell button in the UI yet (`economy.sell` exists; it also removes the tank from the lineup).
 - No platoon, gold or premium tanks (gold is always 0).
 - The hangar and each thumbnail build full LOD-0 models, and swiftshader takes about 20 s for the
   first hangar shot. That's fine on real GPUs.

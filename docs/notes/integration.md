@@ -63,6 +63,16 @@ Owner of `src/main.js`, `src/game/*`, `src/ui/hud.js`, `src/ui/hud.css`, `index.
   name < 100 m or under the crosshair), scaled with distance, overlaps stacked then faded.
 - Tab score panel (tier, class icon, vehicle, player, damage, kills; sorted by tier; unspotted dimmed).
 - Death: "Destroyed by X · tank · cause" banner, then spectating allies (LMB/RMB next/previous).
+- Lineup respawn: if `world.reserve[team]` has tanks left, the respawn panel (`hud.respawnPanel`) lists them and
+  counts down 5 s (`RESPAWN_DELAY`); 1–5 or a click picks one (the cursor is freed without opening the menu). At 0
+  `respawnTank(world, team, pick)` (sim, deterministic) adds a new tank with that entry's own loadout at the team's
+  spawn slot farthest from every tank (avoiding slots with a live enemy within 150 m); the wreck stays. The
+  session switches `this.player`, camera, aim, god mode and autopilot; `hud.setPlayer(t)` rebuilds the damage
+  panel and shell bar and adds a team-list row. `this.driven` = every tank driven → `onExit({ playerIds })` →
+  `finishBattle`. The sim treats a team with reserve left as alive (no "all destroyed" defeat while the player
+  can still respawn). Leaving forfeits the reserve (`forfeitReserve`). Bots never respawn. With no reserve left:
+  the old spectate flow. A respawned tank model is built at the respawn (~35 ms headless); shaders are shared,
+  so no compile. Test hook: `__sf.killPlayer()`; `__sf.state()` has `player.id/tankId`, `driven`, `reserve`, `respawn`.
 - Esc menu: Resume / Settings (the Screens settings dialog shown over the battle: the root gets
   `.sf-overlay`) / Leave battle. The sim pauses while the menu or settings are open. Losing pointer lock
   (browser Esc) opens the menu. Leaving = defeat with the tank destroyed (`deathCause 'left'`); leaving after death has no penalty: the rest of
@@ -111,7 +121,7 @@ F3 perf strip · Esc menu. Sensitivities and invert Y come from Settings.
   frame after spot events and in volleys, and every shader program compiled after loading (should be none).
 
 ## Verify results / perf (SwiftShader, 4 shared cores, 1024×576)
-- **verify low: 18/18 passed in 349 s**: hangar → pick tank → BATTLE! → loading → countdown (Space) → W drives
+- **verify low: 20/20 passed in ~115 s** (2026-09-26, Windows + system Chrome; new steps: garage lineup (2 slots + buy slot), `__sf.killPlayer()` → respawn panel → 1 → the second lineup tank, results with a 2-row Vehicles table). Earlier (18/18 in 349 s, Linux SwiftShader): hangar → pick tank → BATTLE! → loading → countdown (Space) → W drives
   (7.3 m) → mouse turns camera + turret → 4 shots → shells 3/1 → R reload → sniper ×4 → arcade zoom out → Tab →
   M → Esc/Resume → last 45 s at 4× → results (draw, 36 XP, 638 cr) → garage (no leftover battle nodes), zero
   console/page errors. Shots: `shots/verify/low/01…17-*.png`.

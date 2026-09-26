@@ -131,7 +131,10 @@ import { createBattle, stepBattle, DT } from './sim/battle.js'
 createBattle({
   map, seed, timeLimit: 900, mode: 'standard',
   teams: [[Entry ×N], [Entry ×N]],  // N ≤ 15 each
+  reserve: [[Entry], [Entry]],       // optional: the player's other lineup tanks (respawns, one life each)
 }) → world
+respawnTank(world, team, i) → Tank   // reserve[team][i] joins at the team's spawn area (a new id); the wreck stays.
+                                     // A team with reserve left is not beaten by "all destroyed". forfeitReserve(world, team).
 Entry = { def: TankDef, gun: 0, name, player: bool, bot: { skill: 0..1, role? } | null,
           ammo: [n,n,n], consumables: ['repair','medkit','extinguisher'], crewSkill: 0.5..1 }
 stepBattle(world, controls /* Map<tankId, Controls> */)
@@ -286,10 +289,13 @@ Spectate a teammate after death. Esc menu.
 - `src/meta/economy.js`: rewards (XP and credits from damage, assist, kills, spotting, capture and
   survival, ×1.5 on a win, 5% free XP), service costs (repair and ammo), research, buy and sell.
   Mastery badges (Mastery / I / II / III) come from base XP compared with per-tier thresholds.
-- `src/meta/matchmaker.js`: `buildBattle(profile, tankId, opts) → createBattle options`: 15v15 by
+  Battle lineup: `lineupSlots` (2..5, extra slots bought with credits) and `lineup` (owned ids, spawn order);
+  see docs/notes/meta.md "Battle lineup".
+- `src/meta/matchmaker.js`: `buildBattle(profile, lineupIds | tankId, opts) → createBattle options` (+ `reserve`: the
+  player's other lineup tanks; the tier comes from the highest-tier lineup tank): 15v15 by
   default (7v7 option), ±1 tier spread (up to +2 for the top of tier), mirrored class counts,
   bot skill spread, fun bot names, random map.
-- `src/meta/results.js`: `summarize(world, playerTankId, profile) → report`, then apply it.
+- `src/meta/results.js`: `summarize(world, playerTankIds, profile) → report` (per-tank `tanks[]` + totals), then apply it.
 - `src/ui/`: hangar (3D garage scene with the selected tank on a turntable, using
   `buildTankModel`; carousel of owned tanks; BATTLE! button; top bar with credits and XP),
   tech tree per nation (research and buy, with costs), tank details (stats, gun choice, an armour

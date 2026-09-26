@@ -15,6 +15,7 @@ Status: ☐ todo · ☑ done. The detail for each item lives in HANDOFF.md and d
 - ☑ QA pass: 4 majors fixed, no blockers found
 
 ## Next
+- ☑ Battle lineup (War Thunder style, owner request 2026-09-26): 2 slots, buy up to 5 (25k / 60k / 120k credits), respawn in the next lineup tank when destroyed (5 s pick), battle tier from the top lineup tank, per-tank rewards and a results breakdown
 - ◐ Real-GPU fps: owner home PC, medium = 60 fps vsync-locked (render 3.8 ms, audio 0.17 ms, 240 calls, 1.6 M tris); still to check high and a heavy fight. Audio listening pass: in progress with the owner
 - ☑ Audio CPU: 0.17 ms per frame measured on the owner PC (no problem)
 - ☐ Ultra-low graphics tier for integrated GPUs (owner plays on Intel iGPU)
