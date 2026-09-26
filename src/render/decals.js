@@ -117,18 +117,8 @@ function scarTex() {
 let _scarMat = null;
 const scarMat = () => _scarMat || (_scarMat = new THREE.MeshStandardMaterial({
   map: scarTex(), transparent: true, alphaTest: 0.08, depthWrite: false, roughness: 0.6, metalness: 0.4,
-  polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, side: THREE.DoubleSide,
+  polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
 }));
-// A throwaway scar mesh for BattleView.warmup (compiles the scar shader and uploads its texture at load).
-export function scarWarmMesh() {
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(12), 3));
-  g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(12), 3));
-  g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(8), 2));
-  g.setIndex([0, 1, 2, 0, 2, 3]); g.setDrawRange(0, 0);
-  const m = new THREE.Mesh(g, scarMat()); m.frustumCulled = false; m.name = 'scars-warm';
-  return m;
-}
 const SCAR_UV = { pen: [0, 0.5, 0.5, 1], nopen: [0.5, 0.5, 1, 1], ricochet: [0, 0, 1, 0.5] };
 const MAXS = 24;
 const _inv = new THREE.Matrix4(), _p = new THREE.Vector3(), _nv = new THREE.Vector3(), _t = new THREE.Vector3(), _b = new THREE.Vector3();
@@ -168,5 +158,6 @@ export class TankScars {
     // make the winding face outwards
     pos.needsUpdate = nor.needsUpdate = uv.needsUpdate = true;
     m.geometry.setDrawRange(0, Math.min(m.userData.n, MAXS) * 6);
+    m.material.side = THREE.DoubleSide;
   }
 }

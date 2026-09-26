@@ -45,8 +45,7 @@ export class BattleSession {
     this._ctl = new Map();
     this._ip = new Map();          // tank id → Float64Array [px,py,pz,pyaw, cx,cy,cz,cyaw]
     this._lockLost = false; this.reloads = 0; this._lastReload = 0;
-    this.hitchLog = P.get('debug') === 'hitch';
-    this.perfShow = !!settings.showFps || P.get('debug') === '1' || this.hitchLog || P.get('perf') === '1';   // F3 toggles
+    this.perfShow = !!settings.showFps || P.get('debug') === '1' || P.get('perf') === '1';   // F3 toggles
   }
 
   // ------------------------------------------------------------------ loading
@@ -83,10 +82,6 @@ export class BattleSession {
       }
       view.tanks.prewarm(world);
     }
-    // compile every tank / FX / scar shader variant now (spotting, first hit and first kill used to)
-    progress(0.86, 'Checking the guns…'); await nextFrame();
-    try { view.warmup?.(); } catch (e) { console.warn('warmup failed', e); }
-    try { this.audio?.prewarm?.(); } catch { /* optional */ }
     progress(0.87, 'Briefing the crews…'); await nextFrame();
     const botKind = P.get('bots') || 'ai';
     this.brains = new Map();
@@ -202,33 +197,7 @@ export class BattleSession {
     this.hud.update(this._hudState(dt));
     for (const e of this.events) this.hud.event(e, world);
     const h1 = performance.now();
-    const f1 = performance.now();
-    this._perf(rawDt, sim, ai, r1 - r0, h1 - a1, steps, f1 - f0, a1 - r1);
-    this._spike(f1 - f0, sim, ai, r1 - r0, h1 - a1, a1 - r1);
-  }
-
-  // Worst frame of the last 2 s (F3 strip) and, with ?debug=hitch, a console line for every frame
-  // over 25 ms of main-thread time with its per-subsystem split and the events of that frame.
-  _spike(cpu, sim, ai, render, hud, audio) {
-    const V = this.view._stats || {}, now = performance.now();
-    const fx = (V.ev || 0) + (V.fx || 0), tanks = V.tanks || 0, gl = Math.max(0, render - fx - tanks);
-    const progs = V.progs || 0, newProgs = this._progs != null ? progs - this._progs : 0;
-    this._progs = progs;
-    const W = this.perf.worst;
-    if (!W || cpu >= W.ms || now - W.at > 2000) {
-      const parts = { sim, ai, render: gl, tanks, fx, hud, audio, other: Math.max(0, cpu - sim - ai - render - hud - audio) };
-      let top = 'sim'; for (const k in parts) if (parts[k] > parts[top]) top = k;
-      this.perf.worst = { ms: cpu, at: now, top, parts, progs: newProgs };
-    }
-    if (cpu > (this.perf.maxCpu || 0) && this.phase !== 'countdown') this.perf.maxCpu = cpu;
-    if (this.hitchLog && cpu > 25 && this.phase !== 'countdown') {
-      const ev = {};
-      for (const e of this.events) ev[e.type] = (ev[e.type] || 0) + 1;
-      const f = (v) => +v.toFixed(1);
-      const rec = { t: +this.world.time.toFixed(2), ms: f(cpu), sim: f(sim), ai: f(ai), render: f(gl), tanks: f(tanks), fx: f(fx), hud: f(hud), audio: f(audio), newPrograms: newProgs, events: ev };
-      (this.hitches || (this.hitches = [])).push(rec); if (this.hitches.length > 200) this.hitches.shift();
-      console.log('[hitch]', JSON.stringify(rec));
-    }
+    this._perf(rawDt, sim, ai, r1 - r0, h1 - a1, steps, performance.now() - f0, a1 - r1);
   }
 
   _handleInput(dt) {

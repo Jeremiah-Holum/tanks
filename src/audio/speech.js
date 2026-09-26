@@ -49,10 +49,9 @@ export class Crew {
     this.q = this.q.filter((x) => now - x.at < 3).sort((a, b) => b.pr - a.pr).slice(0, 3);
     if (this.speaking && now - this.speaking.start > 4.5) this.speaking = null; // onend never came
     const top = this.q[0]; if (!top) return;
-    let cut = false;
     if (this.speaking) {
       if (top.pr < this.speaking.pr + 3) return;             // wait for the current line
-      cut = true;
+      try { s.cancel(); } catch (e) {}
     }
     if (now - (this.lastStart || 0) < 0.5 && !this.speaking) { setTimeout(() => this.pump(), 500); return; }
     this.q.shift();
@@ -66,10 +65,7 @@ export class Crew {
     u.onend = done; u.onerror = done;
     this.lastStart = now;
     this.A._squelch();
-    // speak()/cancel() can block the main thread for tens of ms on Windows (SAPI): run them when the
-    // browser is idle (between frames), never inside a game frame
-    const go = () => { try { if (cut) s.cancel(); s.speak(u); } catch (e) { if (this.speaking === cur) this.speaking = null; } };
-    if (typeof requestIdleCallback === 'function') requestIdleCallback(go, { timeout: 400 }); else setTimeout(go, 0);
+    try { s.speak(u); } catch (e) { this.speaking = null; }
   }
   cancel() { this.q = []; this.speaking = null; try { this.synth && this.synth.cancel(); } catch (e) {} }
 }

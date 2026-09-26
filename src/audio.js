@@ -5,15 +5,13 @@
 // Details, event→sound table and tests: docs/notes/audio.md.
 import { Kit, clamp } from './audio/core.js';
 import * as S from './audio/sfx.js';
-import { EnginePool, FirePool, prewarmEngines } from './audio/engine.js';
+import { EnginePool, FirePool } from './audio/engine.js';
 import { Music } from './audio/music.js';
 import { Crew, LINES } from './audio/speech.js';
 
 const SOUND = 343;          // m/s
 const MAX_DELAY = 0.6;      // cap on the speed-of-sound delay, s
-const MAX_ONESHOTS = 12;    // concurrent placed one-shots; a louder new one culls (fades) the quietest
-const COALESCE = 0.03;      // s: distant same-kind sounds this close together are merged into one
-const COALESCE_D = 60;      // m: only beyond this distance
+const MAX_ONESHOTS = 40;
 const OWN_SHOT = 1.8;      // the player's gun: driven into the limiter (loudest thing in the game)
 const SFX = 0.62;           // sfx bus level (headroom for stacked one-shots; the compressor + limiter do the rest)    // concurrent one-shot sounds before quiet ones are dropped
 const ROLE_LINE = { commander: 'commander', gunner: 'gunner', driver: 'driver', radioman: 'radioman', radio: 'radioman', loader: 'loader' };
@@ -29,7 +27,7 @@ export class Audio {
     this.listener = { pos: { x: 0, y: 0, z: 0 }, fwd: { x: 0, y: 0, z: 1 }, playerId: null };
     this.crew = new Crew(this);
     this.maxEngines = opts.maxEngines ?? 7;
-    this._act = []; this._cap = new Map(); this._raw = !!opts.raw;
+    this._ends = []; this._cap = new Map(); this._raw = !!opts.raw;
     // ?debug=audio: log every ui/event/say call plus loop gains and output band levels (window.__audioLog)
     this._dbg = opts.debug ?? (typeof location !== 'undefined' && /[?&]debug=audio\b/.test(location.search || ''));
     if (this._dbg) { this.log = []; if (typeof window !== 'undefined') window.__audioLog = this.log; }
@@ -52,12 +50,8 @@ export class Audio {
     } catch (e) { console.warn('audio unavailable', e); this.ctx = null; return false; }
     this.crew.init();
     this._loadSamples();
-    if (!this._warmT && typeof setTimeout !== 'undefined') this._warmT = setTimeout(() => this.prewarm(), 300);
     return true;
   }
-  // Precompute what would otherwise be built lazily on first use (engine cycle waves). Idempotent;
-  // BattleSession.load calls it too.
-  prewarm() { try { if (this.ctx) prewarmEngines(this); } catch (e) { console.warn('audio prewarm failed', e); } }
 
   _init(ctx, offline) {
     this.ctx = ctx; this.offline = offline;
@@ -123,33 +117,18 @@ export class Audio {
     const lp = clamp(20000 * Math.exp(-d / (220 * range)), 500, 20000) * (front < -0.3 ? 0.7 : 1);
     return { d, gain, lp, pan: clamp(side, -1, 1) * 0.85 * clamp(h / 4), wet: clamp(0.12 + d / 700, 0.12, 0.85), delay: Math.min(d / SOUND, MAX_DELAY) };
   }
-  // Drop finished one-shots from the active list (in place, no allocation). Returns the list.
-  _prune(now) {
-    const a = this._act; let w = 0;
-    for (let i = 0; i < a.length; i++) if (a[i].end > now) a[w++] = a[i];
-    a.length = w; return a;
-  }
   // Build a placement chain for one sound: in → lowpass → pan → sfx, with a field-reverb send.
   // Returns {node, t} or null if inaudible / over budget. o: _pos opts + gain, wet, minGain, noDelay, bus
   _place(p, o = {}) {
     const c = this.ctx, P = this._pos(p, o);
-    let gain = Math.max(P.gain, o.minGain || 0) * (o.gain ?? 1);
+    const gain = Math.max(P.gain, o.minGain || 0) * (o.gain ?? 1);
     if (gain < 0.004) return null;
-    const now = c.currentTime + 0.01, act = this._prune(now);
-    // a volley far away: fold this sound into one of the same kind started within 30 ms (power sum)
-    if (o.kind && P.d > COALESCE_D) {
-      for (const a of act) if (a.kind === o.kind && a.d > COALESCE_D && now - a.at < COALESCE && a.g) { a.gain = Math.min(1.5, Math.hypot(a.gain, gain)); a.g.gain.value = a.gain; return null; }
-    }
-    // voice cap: cull the quietest placed one-shot if this one is louder, else drop this one
-    if (act.length >= MAX_ONESHOTS) {
-      let q = -1; for (let i = 0; i < act.length; i++) if (act[i].g && (q < 0 || act[i].gain < act[q].gain)) q = i;
-      if (q < 0 || act[q].gain >= gain) return null;
-      try { act[q].g.gain.cancelScheduledValues(now); act[q].g.gain.setTargetAtTime(0, now, 0.015); } catch { /* */ }
-      act.splice(q, 1);
-    }
+    const now = c.currentTime + 0.01;
+    this._ends = this._ends.filter((e) => e > now);
+    if (this._ends.length >= MAX_ONESHOTS && gain < 0.25) return null;
+    this._ends.push(now + (o.len || 2));
     const t = now + (o.noDelay ? 0 : P.delay);
     const g = c.createGain(); g.gain.value = gain;
-    act.push({ end: now + (o.len || 2), gain, g, at: now, kind: o.kind || null, d: P.d });
     const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = o.lp ?? P.lp; lp.Q.value = 0.5;
     g.connect(lp);
     let head = lp;
@@ -165,7 +144,7 @@ export class Audio {
   }
   // Non-positional one-shot straight into a bus.
   _direct(bus, len = 2) {
-    const c = this.ctx, now = c.currentTime + 0.01; this._prune(now); this._act.push({ end: now + len, gain: Infinity, g: null, at: now, kind: null, d: 0 });
+    const c = this.ctx, now = c.currentTime + 0.01; this._ends = this._ends.filter((e) => e > now); this._ends.push(now + len);
     return { node: bus, t: now };
   }
 
@@ -205,7 +184,7 @@ export class Audio {
           S.cannon(K, g, p.t, cal, { player: true, brake });
           this._duckFor(p.t, 0.2, 0.15, 0.25);   // duck everything else hard for ~150 ms
         } else {
-          const p = this._place(ev.pos || tk?.pos, { ref: 15, roll: 0.45, range: 1.4, wet: 0.35 + 0.5 * k, len: 1 + 3 * k, gain: 0.55 + 0.45 * k, kind: 'shot' });
+          const p = this._place(ev.pos || tk?.pos, { ref: 15, roll: 0.45, range: 1.4, wet: 0.35 + 0.5 * k, len: 1 + 3 * k, gain: 0.55 + 0.45 * k });
           if (p) S.cannon(K, p.node, p.t, cal, { brake, far: clamp((p.P.d - 80) / 500) });
         }
         break;
@@ -214,7 +193,7 @@ export class Audio {
         // tank hits also raise a 'hit' event, which carries the sound; wrecks clang here
         if (ev.surface === 'tank') break;
         const sh = this._shell(world, ev.shell), owner = sh?.owner ?? ev.owner, cal = this._cal(world, ev, sh, owner), st = ev.shellType ?? sh?.type;
-        const p = this._place(ev.pos, { ref: 15, roll: 0.6, wet: 0.3, len: 1.5, kind: 'impact' });
+        const p = this._place(ev.pos, { ref: 15, roll: 0.6, wet: 0.3, len: 1.5 });
         if (!p) break;
         if (st === 'HE') S.explosion(K, p.node, p.t, 0.3 + 1.2 * S.size(cal), { gain: 0.8 });
         else S.impact(K, p.node, p.t, ev.surface, cal);
@@ -232,7 +211,7 @@ export class Audio {
         } else {
           // the shooter hears his own hit confirmed right away (no delay, floor on level)
           const mine = this._isPlayer(ev.shooter);
-          const p = this._place(pos, mine ? { ref: 10, roll: 0.6, minGain: 0.75, noDelay: true, lp: 12000, wet: 0.25, len: 1.5 } : { ref: 10, roll: 0.8, wet: 0.3, len: 1.5, kind: 'hit' });
+          const p = this._place(pos, mine ? { ref: 10, roll: 0.6, minGain: 0.75, noDelay: true, lp: 12000, wet: 0.25, len: 1.5 } : { ref: 10, roll: 0.8, wet: 0.3, len: 1.5 });
           if (!p) break;
           S.hitOutside(K, p.node, p.t, r, cal, { gain: mine ? 0.9 : 1 });
           if (st === 'HE' && r !== 'splash') S.explosion(K, p.node, p.t, 0.3 + S.size(cal), { gain: 0.6 });
@@ -449,7 +428,7 @@ export class Audio {
 
   // Stop all loops (leaving a battle).
   stopAll() { if (!this.ctx) return; this.engines.stopAll(); this.fires.stopAll(); this.crew.cancel(); }
-  stats() { return { ctx: this.ctx ? this.ctx.state : 'none', engines: this.ctx ? this.engines.active : 0, voices: this.ctx ? this.engines.voices.length : 0, oneshots: this._act.length, music: this.ctx ? this.mus.mode : null }; }
+  stats() { return { ctx: this.ctx ? this.ctx.state : 'none', engines: this.ctx ? this.engines.active : 0, voices: this.ctx ? this.engines.voices.length : 0, oneshots: this._ends.length, music: this.ctx ? this.mus.mode : null }; }
 
   // --- legacy shims for the old toy-game main.js until INTEGRATION replaces it ---
   play(kind) { this.ui({ uiBig: 'battleStart', banner: 'battleStart', win: 'research', lose: 'error' }[kind] || 'click'); }
