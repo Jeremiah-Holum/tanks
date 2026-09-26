@@ -4,7 +4,7 @@ import { rayArmor, rayModules, distToTank } from './tank.js';
 const DEG = Math.PI / 180;
 export const RICOCHET_DEG = 70;
 export const REPAIR_T = { trackL: 8, trackR: 8, engine: 14, gun: 10, turretRing: 10, fuel: 12, ammoRack: 12 };
-const TIER_DMG = [0, 40, 45, 55, 90, 115, 180, 240];
+const TIER_DMG = [0, 40, 45, 55, 90, 115, 180, 240, 280, 330, 380];
 const NORM = { AP: 5, APCR: 2, HEAT: 0, HE: 0 };
 
 // Penetration after distance falloff (AP −10 %, APCR −25 % from 100 m to 500 m).

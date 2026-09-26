@@ -49,7 +49,7 @@ console.log('Roster and research tree');
   for (const n of Object.keys(NATIONS)) {
     const list = all.filter((d) => d.nation === n);
     const tiers = new Set(list.map((d) => d.tier)), cls = new Set(list.map((d) => d.cls));
-    check(`${n}: ${list.length} tanks, tiers I–VII, all classes`, list.length >= 8 && [1, 2, 3, 4, 5, 6, 7].every((k) => tiers.has(k)) && cls.size === 4);
+    check(`${n}: ${list.length} tanks, tiers I–X, all classes`, list.length >= 12 && [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].every((k) => tiers.has(k)) && cls.size === 4);
     const vii = list.filter((d) => d.tier === 7).map((d) => d.cls);
     check(`${n}: tier VII in every line it runs (td, medium, heavy)`, ['td', 'medium', 'heavy'].every((c) => vii.includes(c)), vii.join(','));
   }
@@ -61,7 +61,7 @@ console.log('Roster and research tree');
   const badGun = all.filter((d) => !d.guns.length || d.guns.length > 2 || d.guns[0].xp !== 0 || d.guns.some((g) => g.shells.length !== 3 || g.shells.some((s) => !(s.pen > 0 && s.dmg > 0 && s.v > 0))));
   check('1–2 guns, stock gun free, 3 sane shells each', !badGun.length, badGun.map((d) => d.id).join(','));
   // WoT-ish balance: mean top-gun pen and hp rise with tier
-  const byTier = (f) => [1, 2, 3, 4, 5, 6, 7].map((k) => { const l = all.filter((d) => d.tier === k); return l.reduce((s, d) => s + f(d), 0) / l.length; });
+  const byTier = (f) => [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((k) => { const l = all.filter((d) => d.tier === k); return l.reduce((s, d) => s + f(d), 0) / l.length; });
   const pens = byTier((d) => d.guns[d.guns.length - 1].shells[0].pen), hps = byTier((d) => d.hp);
   check('pen and hp grow with tier', pens.every((p, i) => !i || p > pens[i - 1]) && hps.every((p, i) => !i || p > hps[i - 1]), 'pen ' + pens.map((p) => p.toFixed(0)).join(' ') + ' | hp ' + hps.map((p) => p.toFixed(0)).join(' '));
   check('camo, view and terrain filled for all', all.every((d) => d.camo && d.camo.still > 0 && d.view >= 250 && d.view <= 445 && d.terrain.length === 3));
@@ -219,6 +219,34 @@ console.log('Armour');
     const cup = penPreview(w7, a, turretToWorld(tg, cc[0], cc[1], cc[2], {}), tg.id);
     const fr = penPreview(w7, a, onTank(tg, 0.9, ap.turretPos[1] + 0.5, ap.turretPos[2] + tt.L / 2), tg.id);
     check('Tiger cupola is weaker than the turret front', cup && fr && cup.plate === 'cupola' && cup.eff < fr.eff, cup && fr && `cupola ${cup.plate} ${cup.eff} vs ${fr.plate} ${fr.eff}`);
+  }
+  // Post-war (tiers VIII–X): the domed / crowned turrets are strong but not invulnerable to a
+  // same-tier gun, the hulls are the weaker target.
+  {
+    const w = battle(['usa_m60'], ['ussr_t62a'], { entry: { gun: 1 } }); const [m60, t62] = w.tanks;
+    place(w, m60, 500, 400, 0); place(w, t62, 500, 500, 180);
+    const tt = t62.def.turret, h = t62.def.hull;
+    const tur = penPreview(w, m60, turretToWorld(t62, tt.W * 0.1, tt.H - 0.05, (tt.zOff || 0) + tt.L / 2, {}), t62.id);
+    const ufp = penPreview(w, m60, onTank(t62, 0.3, h.clr + h.H * 0.8, h.L / 2 - 0.3), t62.id);
+    check('T-62A turret front vs M60 105 mm AP (tier X): effective armour above the pen, chance < 40%', tur && tur.plate.startsWith('turret') && tur.eff > tur.pen && tur.chance < 0.4, tur && `${tur.plate} eff ${tur.eff} pen ${tur.pen} chance ${f1(tur.chance * 100)}%`);
+    check('T-62A: the upper glacis is the weaker target', ufp && tur && ufp.plate === 'hull.front.upper' && ufp.eff < tur.eff && ufp.chance > 0.5, ufp && `glacis eff ${ufp.eff}, ${f1(ufp.chance * 100)}%`);
+    let pens = 0; const n = 30;
+    for (let i = 0; i < n; i++) { t62.hp = t62.maxHp; t62.alive = true; if (hits(shoot(w, m60, onTank(t62, 0.2 + (i % 3) * 0.15, h.clr + h.H * 0.8, h.L / 2 - 0.3)), t62.id).some((e) => e.result === 'pen')) pens++; }
+    check('live fire: M60 pens the T-62A glacis (not invulnerable)', pens >= n * 0.6, `${pens}/${n} pens`);
+    const w2 = battle(['ger_tiger2'], ['ussr_is3'], { entry: { gun: 1 } }); const [k2, is3] = w2.tanks;
+    place(w2, k2, 500, 400, 0); place(w2, is3, 500, 500, 180);
+    const it = is3.def.turret, ih = is3.def.hull;
+    const itur = penPreview(w2, k2, turretToWorld(is3, it.W * 0.1, it.H - 0.05, (it.zOff || 0) + it.L / 2, {}), is3.id);
+    const ilfp = penPreview(w2, k2, onTank(is3, 0.3, ih.clr + 0.2, ih.L / 2 - 0.1), is3.id);
+    check('IS-3 dome vs Tiger II 10.5 cm (tier VIII): bounces head-on, the lower plate pens', itur && ilfp && itur.chance < 0.15 && ilfp.chance > 0.9, itur && ilfp && `dome ${itur.plate} ${itur.eff}/${itur.pen}, lower ${ilfp.eff}`);
+    // crowned turrets: the crown shrinks the roof, the cupola still sits on it, the solid stays closed
+    const bad = Object.values(TANKS).filter((d) => d.turret.crown).filter((d) => {
+      const a = buildArmor(d), c = a.cupola, tp = a.pieces.find((p) => p.name === 'turret');
+      const roof = solidFaces(tp.planes).find((f) => f.plane.plate === 'turret.roof');
+      const xs = roof ? roof.verts.map((v) => Math.abs(v[0])) : [0];
+      return !roof || !c || Math.abs(c.c[0]) + c.r > Math.max(...xs) + 0.12 || Math.max(...xs) >= d.turret.W / 2 - 0.05;
+    });
+    check('crowned turrets: smaller roof, cupola on it', !bad.length, bad.map((d) => d.id).join(' ') || Object.values(TANKS).filter((d) => d.turret.crown).length + ' tanks');
   }
   // Ammo rack pops, fire burns and is put out.
   {

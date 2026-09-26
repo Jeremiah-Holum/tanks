@@ -91,7 +91,7 @@ export function eyePos(t, out = {}) { return turretToWorld(t, 0, t.def.turret.H 
 
 // ------------------------------------------------------------------ creation
 export const MODULES = ['engine', 'ammoRack', 'fuel', 'gun', 'turretRing', 'trackL', 'trackR'];
-const TIER_DMG = [0, 40, 45, 55, 90, 115, 180, 240]; // typical same-tier shell damage (module hp scale)
+const TIER_DMG = [0, 40, 45, 55, 90, 115, 180, 240, 280, 330, 380]; // typical same-tier shell damage (module hp scale)
 const MOD_HP = { engine: 1.5, ammoRack: 1.7, fuel: 1.8, gun: 1.4, turretRing: 1.4, trackL: 1.0, trackR: 1.0 };
 
 export function createTank(id, team, entry, spawn) {

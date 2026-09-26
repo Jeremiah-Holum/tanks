@@ -69,7 +69,8 @@ function hullPieces(h) {
   ];
 }
 
-function turretPieces(t) {
+// Turret shell planes (walls, cheeks, roof, floor, crown) in the turret frame, without the mantlet.
+function turretShell(t) {
   const { L, W, H } = t;
   const zo = t.zOff || 0; // body centre relative to the ring, + forward
   const af = t.front.a * DEG, as = (t.side.a || 0) * DEG, ar = (t.rear.a || 0) * DEG;
@@ -101,6 +102,38 @@ function turretPieces(t) {
     cut(1, 1, fs, 'turret.cheek'); cut(-1, 1, fs, 'turret.cheek');
     cut(1, -1, rs, 'turret.side'); cut(-1, -1, rs, 'turret.side');
   }
+  // Crown (optional, turret.crown = { h, a, k }): a flatter band round the top of every wall, so
+  // a cast dome (T-54, IS-3) or a welded wedge turret (Leopard 1) gets a second slope near the
+  // roof. Each wall gets a plane through its line at height H − h, sloped a° from vertical (only
+  // where that is flatter than the wall), k × the wall's thickness (default 0.75), same plate name.
+  if (t.crown) {
+    const cr = t.crown, y0 = H - cr.h, b = cr.a * DEG, k = cr.k ?? 0.75;
+    for (const p of ps.slice()) {
+      const [nx, ny, nz] = p.n, lh = Math.hypot(nx, nz);
+      if (lh < 0.3 || !p.t) continue; // roof, floor, open top
+      if (b <= Math.atan2(ny, lh) + 2 * DEG) continue; // the wall is already that flat
+      const ux = nx / lh, uz = nz / lh, s0 = (p.d - ny * y0) / lh; // the wall's line at y0: u·(x, z) = s0
+      ps.push(plane(ux * Math.cos(b), Math.sin(b), uz * Math.cos(b), ux * s0, y0, uz * s0, Math.round(p.t * k), p.plate));
+    }
+  }
+  return ps;
+}
+
+// Section of the turret shell at height y: half width x (side walls), front and rear z. Used for
+// the gun pivot, the cupola and (renderer) roof details; sloped walls and the crown shrink it.
+export function turretSection(t, y, ps = turretShell(t)) {
+  let x = Infinity, zF = Infinity, zR = -Infinity;
+  for (const p of ps) {
+    const [nx, ny, nz] = p.n;
+    if (Math.abs(nz) < 1e-6 && nx > 0.3) x = Math.min(x, (p.d - ny * y) / nx);
+    else if (Math.abs(nx) < 1e-6 && nz > 0.3) zF = Math.min(zF, (p.d - ny * y) / nz);
+    else if (Math.abs(nx) < 1e-6 && nz < -0.3) zR = Math.max(zR, (p.d - ny * y) / nz);
+  }
+  return { x, zF, zR };
+}
+
+function turretPieces(t) {
+  const ps = turretShell(t);
   const m = t.mantlet;
   const pieces = [{ name: 'turret', frame: 'turret', planes: ps, kind: 'turret', fixed: t.shape === 'casemate' }];
   if (m && m.t > 0) {
@@ -121,9 +154,8 @@ function turretPieces(t) {
 function cupolaPiece(t, def) {
   const look = def.look || {};
   const side = look.cupola === 'right' ? -1 : look.cupola === 'center' ? 0 : look.cupola === 'left' ? 1 : def.nation === 'usa' ? -1 : 1;
-  const H = t.H, zo = t.zOff || 0;
-  const Wr = t.W - 2 * H * Math.tan((t.side.a || 0) * DEG);
-  const zF = zo + t.L / 2 - (H / 2) * Math.tan(t.front.a * DEG), zR = zo - t.L / 2 + (H / 2) * Math.tan((t.rear.a || 0) * DEG);
+  const H = t.H, sec = turretSection(t, H);
+  const Wr = 2 * sec.x, zF = sec.zF, zR = sec.zR;
   const r = Math.min(0.36, Math.max(0.24, Wr * 0.17)) + 0.03, hc = (def.nation === 'germany' ? 0.24 : 0.18) + 0.02;
   const cx = side * Math.max(0, Wr / 2 - r - 0.05), cz = zR + (zF - zR) * 0.3;
   const tt = Math.max(Math.round((t.roof || 10) * 2), Math.round(t.side.t * 0.6));
@@ -138,10 +170,7 @@ function cupolaPiece(t, def) {
 }
 
 // z of the turret front face at height y (the gun sits there)
-function frontZAt(t, y) {
-  const af = t.front.a * DEG;
-  return (t.zOff || 0) + t.L / 2 - (y - t.H / 2) * Math.tan(af);
-}
+function frontZAt(t, y) { return turretSection(t, y).zF; }
 function gunPivotY(t) { return t.gunY ?? t.H * 0.48; }
 
 function box(cx, cy, cz, hx, hy, hz, t, plate) {
