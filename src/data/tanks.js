@@ -47,7 +47,7 @@ function how(name, cal, len, heat, heDmg, v, reload, disp, aim, o = {}) {
 function base(name, cal, len, reload, disp, aim, o, shells) {
   name = o.name ?? name; reload = o.reload ?? reload; disp = o.disp ?? disp; aim = o.aim ?? aim; len = o.len ?? len;
   const g = { name, cal, len, muzzleBrake: !!o.brake, xp: o.xp ?? 0, reload, aim, disp,
-    dMove: o.dMove, dHull: o.dHull, dTurret: o.dTurret, dShot: o.dShot ?? (cal >= 85 ? 4.5 : cal >= 50 ? 4 : 3),
+    dMove: o.dMove, dHull: o.dHull, dTurret: o.dTurret, dShot: o.dShot ?? (o.clip ? 1.15 : cal >= 85 ? 4.5 : cal >= 50 ? 4 : 3), // magazine guns bloom a little per round so bursts stay tight
     dep: o.dep, elev: o.elev, ammo: o.ammo ?? (cal <= 20 ? 200 : cal <= 40 ? 120 : cal <= 50 ? 90 : cal <= 60 ? 80 : cal <= 76 ? 70 : cal <= 90 ? 50 : cal <= 105 ? 40 : 30),
     shells };
   if (o.clip) g.clip = { n: o.clip[0], t: o.clip[1] }; // magazine: n rounds o.clip[1] s apart, then `reload`
