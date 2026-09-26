@@ -249,5 +249,73 @@ function simulate(line, seed) {
   for (let t = 1; t <= MAX_TIER; t++) log(`  ${ROMAN[t].padEnd(4)} ${String(Math.round(eco.expectedXp(t))).padStart(6)} ${String(Math.round(eco.expectedNetCredits(t))).padStart(8)}   ${eco.masteryThresholds(t).slice(1).join('/')}`);
 }
 
+// ---------------------------------------------------------------- 8. battle lineup (slots, respawns, per-tank rewards)
+{
+  const p = newProfile('Tester');
+  const own = ownedIds(p);
+  ok(p.lineupSlots === 2 && p.lineup.length === 2 && p.lineup[0] === p.selected && p.lineup.every((id) => own.includes(id)), 'new profile: 2 slots, lineup = selected + next owned');
+  const old = JSON.parse(JSON.stringify(p)); delete old.lineup; delete old.lineupSlots; old.selected = own[2];
+  const m = migrate(old);
+  ok(m.lineupSlots === 2 && m.lineup[0] === own[2] && m.lineup.length === 2 && new Set(m.lineup).size === 2, 'old save migrates to [selected, next owned]');
+  ok(!eco.setLineup(p, [own[0], own[0]]).ok && !eco.setLineup(p, own).ok && !eco.setLineup(p, []).ok, 'setLineup rejects duplicates, too many tanks, empty');
+  const unowned = TANK_LIST.find((d) => !own.includes(d.id)).id;
+  ok(eco.setLineup(p, [own[0], unowned]).reason === 'not owned', 'setLineup rejects tanks you do not own');
+  ok(eco.setLineup(p, [own[1], own[0]]).ok && p.lineup.join() === [own[1], own[0]].join(), 'setLineup sets the spawn order');
+  ok(eco.moveInLineup(p, own[0], -1).ok && p.lineup[0] === own[0], 'moveInLineup reorders');
+  ok(eco.addToLineup(p, own[2]).reason === 'slots', 'lineup is full at 2 slots');
+  p.credits = 24999;
+  ok(eco.slotPrice(p) === 25000 && eco.buySlot(p).reason === 'credits', '3rd slot costs 25,000');
+  p.credits = 25000 + 60000 + 120000 + 7;
+  ok(eco.buySlot(p).ok && p.lineupSlots === 3 && eco.slotPrice(p) === 60000, 'buy 3rd slot, 4th costs 60,000');
+  ok(eco.buySlot(p).ok && eco.slotPrice(p) === 120000 && eco.buySlot(p).ok && p.lineupSlots === 5 && p.credits === 7, 'slots 4 and 5 (120,000), credits spent');
+  ok(eco.slotPrice(p) === null && eco.buySlot(p).reason === 'max', 'max 5 slots');
+  ok(eco.addToLineup(p, own[2]).ok && p.lineup.length === 3, 'add a tank to a bought slot');
+  ok(eco.removeFromLineup(p, own[1]).ok && !p.lineup.includes(own[1]), 'remove a tank from the lineup');
+  // selling removes the tank from the lineup; buying fills a free slot
+  const child = childrenOf(own[0])[0];
+  p.researched.push(child.id); p.credits = child.price;
+  ok(eco.buy(p, child.id).ok && p.lineup.includes(child.id), 'a bought tank fills a free lineup slot');
+  ok(eco.sell(p, child.id).ok && !p.lineup.includes(child.id) && p.lineup.length >= 1, 'selling removes the tank from the lineup');
+  const p2 = newProfile('T2'); p2.lineup = [p2.lineup[0]];
+  eco.sell(p2, p2.lineup[0]);
+  ok(p2.lineup.length >= 1 && p2.lineup.every((id) => p2.tanks[id].owned), 'selling the only lineup tank refills the lineup');
+
+  // matchmaker: tier from the highest lineup tank, reserve = the other lineup tanks
+  const q = newProfile('Tester');
+  const t5 = TANK_LIST.find((d) => d.tier === 5);
+  q.tanks[t5.id] = { ...q.tanks[q.selected], owned: true, gun: 0, guns: [0], ammo: defaultAmmo(t5, 0) };
+  eco.setLineup(q, [q.selected, t5.id]);
+  let okTier = true;
+  for (let s = 1; s <= 30; s++) { const b = buildBattle(q, q.lineup, { seed: s }); if (b.meta.tiers[1] < 5 || b.meta.tiers[0] < 3 || b.meta.topTier !== 5) okTier = false; }
+  ok(okTier, 'battle tier comes from the highest-tier lineup tank');
+  const b = buildBattle(q, q.lineup, { seed: 4 });
+  const pe = b.teams[b.meta.playerTeam].find((e) => e.player);
+  ok(pe.def.id === q.lineup[0] && b.reserve[b.meta.playerTeam].length === 1 && b.reserve[b.meta.playerTeam][0].def.id === t5.id && !b.reserve[1 - b.meta.playerTeam].length,
+    'spawn in the first lineup tank, the rest in reserve');
+  ok(b.teams.every((tm) => tm.length === 15 && tm.filter((e) => e.player).length <= 1), 'teams stay 15v15 with one player entry');
+
+  // per-tank rewards: two tanks driven, each with its own stats
+  const rng = makeRng(5);
+  const w = fakeWorld(b, { won: true, survived: false, stats: { dmg: 120, shots: 4, hits: 3, pens: 2, kills: 1 } }, rng);
+  const first = w.tanks.find((t) => t.player);
+  const e2 = b.reserve[b.meta.playerTeam][0];
+  const second = { id: 99, team: first.team, def: e2.def, gunDef: e2.def.guns[0], name: first.name, player: true, alive: true, hp: Math.round(e2.def.hp * 0.5), maxHp: e2.def.hp,
+    ammo: e2.ammo.slice(), consumables: e2.consumables.map((k) => ({ kind: k, ready: true, cd: 0 })),
+    stats: { dmg: 900, assist: 0, blocked: 0, kills: 2, shots: 6, hits: 5, pens: 5, received: 400, spotted: 1, capture: 0, defended: 0 } };
+  second.ammo[0] -= 6;
+  w.tanks.push(second);
+  const r = summarize(w, [first.id, second.id], q, b);
+  ok(r.tanks.length === 2 && r.tanks[0].tankId === q.lineup[0] && r.tanks[1].tankId === t5.id, 'report has a per-tank breakdown');
+  ok(r.stats.dmg === r.tanks[0].stats.dmg + r.tanks[1].stats.dmg && r.stats.kills === 3 && r.stats.shots === 10, 'stats add up over the tanks');
+  ok(r.xp.total === r.tanks[0].xp.total + r.tanks[1].xp.total && r.credits.net === r.tanks[0].credits.net + r.tanks[1].credits.net, 'XP and credits add up over the tanks');
+  ok(r.tanks[1].credits.ammo === 6 * eco.shellPrice(t5, 0, 0) && r.tanks[1].credits.repair === eco.repairCost(t5, 0.5), 'each tank pays its own ammo and repairs');
+  ok(r.survived && !r.tanks[0].survived && r.size === 15, 'survival from the last tank; team size unchanged');
+  const x0 = q.tanks[q.lineup[0]].xp, x1 = q.tanks[t5.id].xp, cr0 = q.credits;
+  applyReport(q, r);
+  ok(q.tanks[q.lineup[0]].xp === x0 + r.tanks[0].xp.total && q.tanks[t5.id].xp === x1 + r.tanks[1].xp.total, 'each tank gets its own XP');
+  ok(q.tanks[q.lineup[0]].battles === 1 && q.tanks[t5.id].battles === 1 && q.stats.battles === 1 && q.stats.dmg === r.stats.dmg, 'per-tank battle counts; service record counts one battle');
+  ok(q.credits === Math.max(0, cr0 + r.credits.net) && q.history[0].tankIds.length === 2, 'credits and history');
+}
+
 console.log(`\nmeta-test: ${passes} passed, ${fails} failed`);
 process.exit(fails ? 1 : 0);

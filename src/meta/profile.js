@@ -5,6 +5,7 @@ import { TANKS, starters } from './roster.js';
 
 export const STORAGE_KEY = 'steelfront.v1';
 export const START_CREDITS = 20000;
+export const LINEUP_START = 2, LINEUP_MAX = 5;   // battle lineup slots (extra slots are bought: economy.slotPrice)
 export const HISTORY_MAX = 40;
 export const CONSUMABLES = ['repair', 'medkit', 'extinguisher'];
 
@@ -52,12 +53,14 @@ export function newProfile(name) {
     v: 1, name: name || 'Commander_' + (1000 + Math.floor(Math.random() * 9000)), created: Date.now(),
     credits: START_CREDITS, freeXp: 0, gold: 0, tanks: {}, researched: [], selected: null,
     settings: structuredClone(DEFAULT_SETTINGS), stats: newStats(), history: [], lastWinDay: null, battleSeq: 0,
+    lineupSlots: LINEUP_START, lineup: null,
   };
   for (const d of starters()) {
     p.tanks[d.id] = newTankState(d, true);
     p.researched.push(d.id);
   }
   p.selected = starters()[0]?.id || Object.keys(TANKS)[0];
+  fixLineup(p);
   return p;
 }
 
@@ -65,7 +68,9 @@ export function newProfile(name) {
 export function migrate(p) {
   const base = newProfile(p && p.name);
   if (!p || typeof p !== 'object' || p.v !== 1) return base;
+  const oldSave = !Array.isArray(p.lineup);   // saves from before the lineup: [selected, next owned]
   for (const k of Object.keys(base)) if (p[k] === undefined) p[k] = base[k];
+  if (oldSave) p.lineup = null;
   p.settings = { ...structuredClone(DEFAULT_SETTINGS), ...p.settings, volumes: { ...DEFAULT_SETTINGS.volumes, ...(p.settings?.volumes || {}) } };
   p.stats = { ...newStats(), ...p.stats };
   for (const id of Object.keys(p.tanks)) {
@@ -84,6 +89,7 @@ export function migrate(p) {
     if (!p.tanks[d.id]) p.tanks[d.id] = newTankState(d, true);
   }
   if (!TANKS[p.selected] || !p.tanks[p.selected]?.owned) p.selected = ownedIds(p)[0];
+  fixLineup(p);
   return p;
 }
 
@@ -125,3 +131,23 @@ export function rankOf(p) {
   const next = RANKS[r + 1];
   return { index: r, name: RANKS[r][1], next: next ? next[1] : null, progress: next ? (score - RANKS[r][0]) / (next[0] - RANKS[r][0]) : 1 };
 }
+
+// ------------------------------------------------------------------ battle lineup
+// p.lineup: owned tank ids in spawn order (1..p.lineupSlots entries, no duplicates). Old saves get
+// [selected, next owned tank]. Always leaves at least one tank in the lineup.
+export function fixLineup(p) {
+  p.lineupSlots = Math.max(LINEUP_START, Math.min(LINEUP_MAX, Math.round(+p.lineupSlots || LINEUP_START)));
+  const owned = ownedIds(p);
+  const had = Array.isArray(p.lineup);
+  const seen = new Set();
+  p.lineup = (had ? p.lineup : []).filter((id) => owned.includes(id) && !seen.has(id) && seen.add(id)).slice(0, p.lineupSlots);
+  if (!had || !p.lineup.length) {
+    // migration / emptied lineup: the selected tank first, then the next owned tanks
+    const first = owned.includes(p.selected) ? p.selected : owned[0];
+    if (first) p.lineup = [first];
+    for (const id of owned) if (p.lineup.length < Math.min(LINEUP_START, p.lineupSlots) && !p.lineup.includes(id)) p.lineup.push(id);
+  }
+  return p.lineup;
+}
+// The lineup to take into battle (validated).
+export const lineupOf = (p) => fixLineup(p).slice();

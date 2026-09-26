@@ -9,6 +9,14 @@
 // }
 import { TANKS, TANK_LIST, MAPS, MAX_TIER, CLASS_LABEL } from './roster.js';
 import { defaultAmmo, crewSkill, tankState, CONSUMABLES } from './profile.js';
+
+// The player's battle Entry for one owned tank (its own gun, ammo, consumables and crew).
+export function playerEntry(profile, tankId) {
+  const def = TANKS[tankId], ts = profile ? tankState(profile, tankId) : null;
+  return { def, gun: ts?.gun ?? 0, name: profile?.name || 'Player', player: true, bot: null,
+    ammo: (ts?.ammo || defaultAmmo(def, ts?.gun ?? 0)).slice(), consumables: (ts?.consumables || CONSUMABLES).slice(),
+    crewSkill: profile ? +crewSkill(profile, tankId).toFixed(2) : 0.75 };
+}
 import { pickNames } from './names.js';
 import { makeRng } from './rng.js';
 
@@ -82,9 +90,15 @@ function botEntry(rng, def, name, skill) {
     consumables: CONSUMABLES.slice(), crewSkill: +(0.55 + 0.42 * skill).toFixed(2) };
 }
 
+// tankId: the tank to spawn in first, or the whole lineup (array, spawn order; also opts.lineup).
+// The battle tier comes from the highest-tier lineup tank; the other lineup tanks become
+// battle.reserve[playerTeam] (respawns, one life each).
 export function buildBattle(profile, tankId, opts = {}) {
+  const lineup = (opts.lineup || (Array.isArray(tankId) ? tankId : [tankId])).filter((id, i, a) => TANKS[id] && a.indexOf(id) === i);
+  if (!lineup.length) throw new Error('buildBattle: unknown tank ' + tankId);
+  tankId = lineup[0];
   const def = TANKS[tankId];
-  if (!def) throw new Error('buildBattle: unknown tank ' + tankId);
+  const top = lineup.reduce((a, id) => (TANKS[id].tier > TANKS[a].tier ? id : a), lineup[0]), topDef = TANKS[top];
   const size = opts.size === 7 ? 7 : 15;
   const seed = (opts.seed ?? Math.floor(Math.random() * 2 ** 31)) >>> 0;
   const rng = makeRng(seed);
@@ -93,26 +107,23 @@ export function buildBattle(profile, tankId, opts = {}) {
   const pool = MAPS.length > 1 ? MAPS.filter((m) => m.id !== last) : MAPS;
   const map = (opts.mapId && MAPS.find((m) => m.id === opts.mapId)) || rng.pick(pool);
 
-  const { tiers, template } = tierSlots(rng, def.tier, size);
-  const playerIdx = tiers.indexOf(def.tier);
-  const classes = classesFor(rng, tiers, playerIdx, def.cls, size);
+  const { tiers, template } = tierSlots(rng, topDef.tier, size);
+  const playerIdx = tiers.indexOf(topDef.tier);
+  const classes = classesFor(rng, tiers, playerIdx, def.tier === topDef.tier ? def.cls : topDef.cls, size);
   const playerTeam = opts.playerTeam ?? rng.int(2);
   const names = pickNames(rng, size * 2 - 1, [profile?.name]);
   // mirrored skills: team B gets team A's skills shuffled with a little noise
   const skillsA = tiers.map(() => skillRoll(rng));
   const skillsB = rng.shuffle(skillsA.map((s) => Math.max(0.05, Math.min(0.98, s + (rng() - 0.5) * 0.08))));
-  const ts = profile ? tankState(profile, tankId) : null;
 
   const teams = [[], []];
   let ni = 0;
   for (let team = 0; team < 2; team++) {
-    const used = new Set([tankId]);
+    const used = new Set(lineup);
     const skills = team === playerTeam ? skillsA : skillsB;
     for (let i = 0; i < tiers.length; i++) {
       if (team === playerTeam && i === playerIdx) {
-        teams[team].push({ def, gun: ts?.gun ?? 0, name: profile?.name || 'Player', player: true, bot: null,
-          ammo: (ts?.ammo || defaultAmmo(def, ts?.gun ?? 0)).slice(), consumables: (ts?.consumables || CONSUMABLES).slice(),
-          crewSkill: profile ? +crewSkill(profile, tankId).toFixed(2) : 0.75 });
+        teams[team].push(playerEntry(profile, tankId));
         continue;
       }
       const d = pickDef(rng, tiers[i], classes[i], used);
@@ -125,9 +136,10 @@ export function buildBattle(profile, tankId, opts = {}) {
   const avgSkill = teams.map((tm) => +(tm.filter((e) => e.bot).reduce((a, e) => a + e.bot.skill, 0) / Math.max(1, tm.filter((e) => e.bot).length)).toFixed(3));
   return {
     mapId: map.id, map: null, seed, timeLimit: opts.timeLimit ?? 900, mode: opts.mode || 'standard', teams,
+    reserve: [0, 1].map((t) => (t === playerTeam ? lineup.slice(1).map((id) => playerEntry(profile, id)) : [])),
     meta: { mapId: map.id, mapName: map.name, blurb: map.blurb, theme: map.theme, size, template,
       tiers: [Math.min(...tiers), Math.max(...tiers)], playerTeam, playerIndex: teams[playerTeam].findIndex((e) => e.player),
-      avgSkill, tankId, modeLabel: size === 7 ? 'Skirmish 7v7' : 'Standard Battle' },
+      avgSkill, tankId, lineup, topTier: topDef.tier, modeLabel: size === 7 ? 'Skirmish 7v7' : 'Standard Battle' },
   };
 }
 

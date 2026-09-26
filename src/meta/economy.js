@@ -7,7 +7,7 @@
 // That keeps progression at "tier V in ~30 battles, tier VII in ~100" whatever the exact numbers
 // in src/data/tanks.js are. See docs/notes/meta.md for the resulting tables.
 import { TANKS, TANK_LIST, MAX_TIER } from './roster.js';
-import { tankState, defaultAmmo, isResearched, isOwned, ownedIds, CONSUMABLES } from './profile.js';
+import { tankState, defaultAmmo, isResearched, isOwned, ownedIds, CONSUMABLES, fixLineup, LINEUP_MAX } from './profile.js';
 
 export const TARGET_BATTLES = [0, 1.5, 4, 8, 14, 26, 38, 45]; // battles at tier t to unlock tier t+1
 export const AVG_PERF = 1.93;          // performance units an average player earns (see perfUnits)
@@ -169,6 +169,8 @@ export function buy(p, id, { select = true } = {}) {
   ts.owned = true; ts.bought = Date.now();
   ts.ammo = defaultAmmo(TANKS[id], ts.gun || 0);
   if (select) p.selected = id;
+  // a new tank fills a free lineup slot
+  if (Array.isArray(p.lineup) && p.lineup.length < (p.lineupSlots || 2) && !p.lineup.includes(id)) p.lineup.push(id);
   return { ok: true };
 }
 export const sellValue = (id) => Math.round((TANKS[id].price || 0) * SELL_FACTOR);
@@ -179,6 +181,8 @@ export function sell(p, id) {
   p.credits += v;
   p.tanks[id].owned = false;
   if (p.selected === id) p.selected = ownedIds(p)[0];
+  if (Array.isArray(p.lineup)) p.lineup = p.lineup.filter((x) => x !== id);
+  fixLineup(p);   // an emptied lineup refills with the selected tank
   return { ok: true, credits: v };
 }
 
@@ -231,3 +235,48 @@ export function isElite(p, id) {
 
 tune();
 export const _rates = { XPT, CRT };
+
+// ------------------------------------------------------------------ battle lineup
+// Two slots to start; more are bought with credits (escalating, max LINEUP_MAX). Each lineup tank
+// is one life in battle (respawn). Prices sit at roughly 1–3 battles of net income at the tier
+// where a player first owns 3, 4, 5 tanks (tier III–V: 18k–38k net per battle).
+export const SLOT_PRICES = { 3: 25000, 4: 60000, 5: 120000 };
+// Price of the next slot (null at the maximum).
+export const slotPrice = (p) => (p.lineupSlots >= LINEUP_MAX ? null : SLOT_PRICES[p.lineupSlots + 1] ?? null);
+export function slotInfo(p) {
+  const cost = slotPrice(p);
+  if (cost == null) return { ok: false, reason: 'max', slots: p.lineupSlots };
+  return { ok: p.credits >= cost, reason: p.credits >= cost ? null : 'credits', cost, missing: Math.max(0, cost - p.credits), slots: p.lineupSlots };
+}
+export function buySlot(p) {
+  const r = slotInfo(p);
+  if (!r.ok) return r;
+  p.credits -= r.cost; p.lineupSlots++;
+  return { ok: true, cost: r.cost, slots: p.lineupSlots };
+}
+// Replace the lineup: owned tanks only, no duplicates, 1..lineupSlots tanks.
+export function setLineup(p, ids) {
+  if (!Array.isArray(ids) || !ids.length) return { ok: false, reason: 'empty' };
+  if (ids.length > p.lineupSlots) return { ok: false, reason: 'slots' };
+  if (new Set(ids).size !== ids.length) return { ok: false, reason: 'duplicate' };
+  if (ids.some((id) => !isOwned(p, id))) return { ok: false, reason: 'not owned' };
+  p.lineup = ids.slice();
+  return { ok: true };
+}
+export function addToLineup(p, id) {
+  fixLineup(p);
+  if (p.lineup.includes(id)) return { ok: false, reason: 'in lineup' };
+  return setLineup(p, [...p.lineup, id]);
+}
+export function removeFromLineup(p, id) {
+  fixLineup(p);
+  if (!p.lineup.includes(id)) return { ok: false, reason: 'not in lineup' };
+  return setLineup(p, p.lineup.filter((x) => x !== id));
+}
+// Move a lineup tank by d places (−1 = earlier in the spawn order).
+export function moveInLineup(p, id, d) {
+  const l = fixLineup(p).slice(), i = l.indexOf(id), j = i + d;
+  if (i < 0 || j < 0 || j >= l.length) return { ok: false, reason: 'range' };
+  [l[i], l[j]] = [l[j], l[i]];
+  return setLineup(p, l);
+}

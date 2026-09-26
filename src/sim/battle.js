@@ -22,11 +22,14 @@ export function makeRng(seed) {
   };
 }
 
-export function createBattle({ map, seed = 1, timeLimit = 900, mode = 'standard', teams }) {
+// reserve (optional): [[Entry], [Entry]]: the player's remaining lineup tanks. A team with reserve
+// entries is not defeated while its last tank is dead; respawnTank() brings one in.
+export function createBattle({ map, seed = 1, timeLimit = 900, mode = 'standard', teams, reserve = null }) {
   const world = {
     time: 0, step: 0, map, tanks: [], shells: [], events: [], result: null, mode,
     bases: (map.bases || []).map((b) => ({ team: b.team, x: b.x, z: b.z, r: b.r || 45, points: 0, cappers: [], contrib: {}, idle: 0 })),
     timeLimit, seed, rng: makeRng(seed), byId: {}, visible: [new Set(), new Set()], nextShell: 1, _rams: new Map(),
+    reserve: [0, 1].map((t) => (reserve && reserve[t] ? reserve[t].slice() : [])), nextTank: 1,
   };
   let id = 1;
   teams.forEach((list, team) => list.forEach((entry, i) => {
@@ -37,8 +40,39 @@ export function createBattle({ map, seed = 1, timeLimit = 900, mode = 'standard'
     world.tanks.push(t); world.byId[t.id] = t;
     world.visible[team].add(t.id);
   }));
+  world.nextTank = id;
   return world;
 }
+
+// Respawn: take reserve[team][index] into the battle as a new tank at the team's spawn area.
+// The spawn point is the map spawn slot farthest from every tank (live or wreck), avoiding
+// slots with a live enemy within 150 m. Deterministic. Returns the tank (or null).
+export function respawnTank(world, team, index = 0) {
+  const list = world.reserve[team];
+  if (world.result || !list || !list[index]) return null;
+  const entry = list.splice(index, 1)[0];
+  const map = world.map, spawns = (map.spawns && map.spawns[team] && map.spawns[team].length) ? map.spawns[team] : [{ x: map.size / 2, z: map.size / 2, yaw: 0 }];
+  let best = spawns[0], bestS = -Infinity;
+  for (const sp of spawns) {
+    let near = Infinity, enemy = false;
+    for (const o of world.tanks) {
+      const d = Math.hypot(o.pos.x - sp.x, o.pos.z - sp.z);
+      if (d < near) near = d;
+      if (o.alive && o.team !== team && d < 150) enemy = true;
+    }
+    const s = Math.min(near, 60) - (enemy ? 1000 : 0);
+    if (s > bestS) { bestS = s; best = sp; }
+  }
+  const t = createTank(world.nextTank++, team, entry, best);
+  settle(map, t);
+  world.tanks.push(t); world.byId[t.id] = t;
+  world.visible[team].add(t.id);
+  t.spawnedAt = world.time;
+  world.events.push({ type: 'respawn', tank: t.id, team });
+  return t;
+}
+// Give up the remaining respawns (the player left the battle).
+export function forfeitReserve(world, team) { if (world.reserve[team]) world.reserve[team].length = 0; }
 
 // One fixed step. controls: Map<tankId, Controls> (missing = idle).
 export function stepBattle(world, controls) {
@@ -90,6 +124,8 @@ function rules(world, dt) {
   }
   const alive = [0, 0];
   for (const t of world.tanks) if (t.alive) alive[t.team]++;
+  // a team whose tanks are all destroyed but still has a respawn waiting is not beaten yet
+  for (let k = 0; k < 2; k++) if (!alive[k] && world.reserve && world.reserve[k].length) alive[k] = 1;
   if (!alive[0] || !alive[1]) return finish(world, !alive[0] && !alive[1] ? -1 : alive[0] ? 0 : 1, 'destroyed');
   if (world.time >= world.timeLimit) return finish(world, -1, 'time');
 }

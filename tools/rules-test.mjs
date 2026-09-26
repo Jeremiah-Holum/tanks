@@ -8,7 +8,8 @@ import { createBattle, stepBattle, DT, aimSolution, predictImpact, penPreview, m
 import { fire } from '../src/sim/gunnery.js';
 import { rayArmor, gunPivot } from '../src/sim/tank.js';
 import { settle } from '../src/sim/move.js';
-import { startFire, useConsumable, plateEff } from '../src/sim/damage.js';
+import { startFire, useConsumable, plateEff, kill } from '../src/sim/damage.js';
+import { respawnTank } from '../src/sim/battle.js';
 import { testMap, simpleBot } from '../src/sim/testmap.js';
 import { existsSync } from 'fs';
 
@@ -513,6 +514,33 @@ console.log('Review regressions');
   const bonus = { light: 40, medium: 20, heavy: 10, td: 0 };
   const badV = Object.values(TANKS).filter((d) => d.view !== Math.min(445, 320 + 12 * d.tier + bonus[d.cls]));
   check('view by class: 320 + 12·tier + light 40 / medium 20 / heavy 10 / TD 0', !badV.length, badV.map((d) => d.id).join(' ') || `BT-7 ${TANKS.ussr_bt7.view}, SU-76M ${TANKS.ussr_su76.view}`);
+}
+
+// ------------------------------------------------------------------ lineup respawn
+{
+  const mk = (seed) => {
+    const map = testMap();
+    const w = createBattle({ map, seed, teams: [[{ def: TANKS[STARTERS[0]], player: true }, { def: TANKS[STARTERS[1]] }], [{ def: TANKS[STARTERS[2]] }]],
+      reserve: [[{ def: TANKS[STARTERS[1]], player: true, ammo: [5, 0, 0] }], []] });
+    return w;
+  };
+  const w = mk(5);
+  const [p, ally, foe] = w.tanks;
+  kill(w, p, foe.id, 'shot'); kill(w, ally, foe.id, 'shot');
+  run(w, 1);
+  check('lineup: a team with a respawn left is not defeated', !w.result && w.reserve[0].length === 1);
+  const n0 = w.tanks.length;
+  const t = respawnTank(w, 0, 0);
+  const gap = t ? Math.min(...w.tanks.filter((o) => o !== t).map((o) => Math.hypot(o.pos.x - t.pos.x, o.pos.z - t.pos.z))) : 0;
+  check('lineup: respawn adds a new player tank with its own loadout, away from other tanks',
+    t && t.alive && t.player && t.team === 0 && w.tanks.length === n0 + 1 && w.byId[t.id] === t && !w.reserve[0].length && t.ammo[0] === 5 && gap > 8 && Number.isFinite(t.pos.y),
+    t && `id ${t.id}, gap ${f1(gap)} m`);
+  kill(w, t, foe.id, 'shot'); run(w, 1);
+  check('lineup: no respawns left → the team is defeated', w.result && w.result.winner === 1);
+  const a = mk(9), b = mk(9);
+  for (const x of [a, b]) { kill(x, x.tanks[0], x.tanks[2].id, 'shot'); run(x, 2); respawnTank(x, 0, 0); run(x, 3); }
+  const sig = (x) => x.tanks.map((q) => `${q.id}:${q.pos.x.toFixed(4)},${q.pos.z.toFixed(4)},${q.hp}`).join('|');
+  check('lineup: respawn is deterministic', sig(a) === sig(b));
 }
 
 // ------------------------------------------------------------------ real maps
