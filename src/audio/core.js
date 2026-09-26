@@ -65,6 +65,7 @@ export class Kit {
     this.fieldIR = fieldIR(ctx, 3.6, R);
     this.roomIR = roomIR(ctx, 0.45, R);
     this.curves = {};
+    this.samples = {};   // optional recordings (cannon, explosion, engine) loaded by Audio._loadSamples
   }
   // tanh saturation curve, cached by drive
   curve(k) {
@@ -104,6 +105,11 @@ export class Kit {
     else f.connect(g);
     g.connect(out);
     return g;
+  }
+  // A recorded one-shot (assets/sfx/*, see Audio._loadSamples) at a playback rate.
+  sample(out, t, buf, o = {}) {
+    const s = this.ctx.createBufferSource(), g = this.ctx.createGain(); s.buffer = buf; s.playbackRate.value = o.rate ?? 1; g.gain.value = o.gain ?? 1;
+    s.connect(g); g.connect(out); s.start(t); return g;
   }
   // Muzzle-blast N-wave: instant rise (1 sample) to +1, linear fall through zero to the negative
   // phase over `ms`, a slower recovery, with a little broadband roughness. Cached per ms. Played raw

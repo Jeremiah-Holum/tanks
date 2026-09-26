@@ -37,6 +37,17 @@ Build a static bundle into `dist/` (three.js bundled, minified): `node tools/bui
 - `src/audio.js` Web Audio synthesis and crew voice lines.
 - `docs/DESIGN.md` is the design contract; each part has notes in `docs/notes/`.
 
+## Custom sounds
+All audio is synthesised, but real recordings can replace the key sounds. Drop any of these into
+`assets/sfx/` (`.wav`, `.ogg` or `.mp3`; tried in that order, loaded once when audio unlocks, and copied
+into `dist/` by the build):
+- `cannon.*` — one gun report, used for every shot (pitched ~1.25× for 20–37 mm down to ~0.75× for 122–152 mm),
+  with the game's distance filtering, delay, panning, own-shot boost and ducking;
+- `explosion.*` — HE, destruction and ammo-rack blasts (pitched by size);
+- `engine.*` — a seamless engine loop recorded at about idle-to-mid rpm; its playback rate follows the rpm.
+A missing or undecodable file silently falls back to the synth. In dist/, rerun `node tools/build.mjs` after adding files
+(it copies them and writes the folder index the loader reads). Details: `docs/notes/audio.md`.
+
 ## Tests
 ```
 node tools/rules-test.mjs                      # sim rules

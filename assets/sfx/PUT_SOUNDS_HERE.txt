@@ -1,0 +1,1 @@
+Optional recordings: cannon, explosion, engine (.wav, .ogg or .mp3). See README "Custom sounds".

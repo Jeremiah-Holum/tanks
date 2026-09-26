@@ -163,6 +163,38 @@ of peak; bark = share of 0–120 ms energy in 150–900 Hz; "small" = the same a
 Spectrograms: shots/audio/before-report-* and after-report-*. The "≥ 50 % below 120 Hz" check became ≥ 20 %;
 new checks: ttp < 2 ms and crest ≥ 4, bark ≥ 25 %, small-speaker calibre ordering. All 20 pass.
 
+## Cannon rework 3 (owner: the "loud bang" was a "pep", a pop with no weight)
+Middle ground (current `S.cannon`): keep the instant N-wave crack (on own shots ×1.0, world shots ×1.5–1.7),
+bark lengthened to 150–250 ms, and a heavy driven low-mid BOOM under it: a shape-6 saturated saw 150→75 Hz
+plus driven brown noise lowpassed at 260 Hz, holding 0.12–0.25 s and gone by ~0.55–1.1 s, plus a 75→42 Hz sub.
+Echo: 2 slaps plus a 1–1.5 s tail at 50 % of the first version's thunder. The body now reaches the
+limiter ceiling with the crack, so the crack is ≈ 1× the body's peak (brief: ≤ 2×).
+| | rms 0–300 ms pep → now | crest 0–50 ms | rise to 50 % | bark share |
+|---|---|---|---|---|
+| own 88 mm | 0.134 → 0.424 (×3.2) | 4.8 → 2.3 | 0.23 ms | 0.31 → 0.20 |
+| own 122 mm | 0.153 → 0.418 | 4.4 → 2.3 | 0.23 ms | 0.27 → 0.22 |
+| 88 mm @50 m | 0.039 → 0.178 | 5.1 → 2.4 | 0.02 ms | 0.29 → 0.20 |
+| 152 mm @50 m | 0.052 → 0.213 | 4.2 → 2.3 | 0.02 ms | 0.28 → 0.22 |
+Length to −40 dB: 88 mm @50 m 2.98 → 3.30 s. Own shots now sit on the limiter, so own 122 ≈ own 88 in level;
+world shots keep the calibre ordering (sub level and small-speaker body both checked).
+Checks changed: the onset check is now "rise to 50 % of peak < 1 ms, to 90 % < 6 ms, crest ≥ 2" (the body
+shares the ceiling with the crack); bark ≥ 15 %. Spectrograms: shots/audio/before-weight-* / after-weight-*.
+
+## Custom samples (assets/sfx/)
+`Audio.unlock()` calls `_loadSamples()`: for `cannon`, `explosion` and `engine` it fetches
+`assets/sfx/<name>.wav|.ogg|.mp3` (first that loads), decodes once and stores it in `kit.samples`.
+Missing or undecodable files are ignored (checked: a junk explosion.wav is silently skipped). Then:
+- cannon: `S.cannon` plays the sample instead of the synth (`Kit.sample`) at rate 1.3 − 0.55·size
+  (≈1.25 at 20–37 mm → ≈0.75 at 122–152 mm), gain ∝ calibre, through the same placement (distance
+  lowpass, delay, pan) or, for own shots, the ×1.8 front bus + duck + gunner's-seat clanks; the synth
+  crack stays on top below 45 mm;
+- explosion: `S.explosion` plays it at rate 1.3 − 0.5·(size/3);
+- engine: each engine voice adds a looping source (rate 0.7 + 0.9·rpm, gain ∝ load) and mutes the synth
+  exhaust and gravel (rumble, mechanics and tracks stay).
+To avoid 404s for absent files, the loader first reads the folder listing `assets/sfx/` (python
+http.server's listing in dev; `tools/build.mjs` copies `assets/` into `dist/` and writes a matching
+`dist/assets/sfx/index.html`) and only fetches names it lists. `assets/sfx/PUT_SOUNDS_HERE.txt` keeps the folder in the repo. README "Custom sounds" explains it for the owner.
+
 ## Known gaps
 - No shell fly-by whizz for shells in flight (needs per-frame shell positions; only near-miss impacts snap).
 - Tracks don't vary by ground type (could use `groundAt` under the tank; needs the map in `engine()`).

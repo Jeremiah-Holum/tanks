@@ -105,8 +105,9 @@ const CHECKS = [
   ['cannons (≥75 mm): real low end (≥ 20 % of energy below 120 Hz)', (M) => ['shot75_50m', 'shot88_50m', 'shot122_50m', 'shot152_50m', 'shot88_own', 'shot122_own'].filter((n) => M[n] && M[n].subF < 0.2).map((n) => `${n} ${M[n].subF}`)],
   ['mouse-only traverse adds nothing above 2 kHz (≤ idle + 1 dB)', (M) => (M.traverse_td && M.idle_player && M.traverse_td.hi > M.idle_player.hi + 1) ? [`${M.traverse_td.hi} vs ${M.idle_player.hi}`] : []],
   ['engines: no narrow peaks above 2 kHz (prominence < 10 dB)', (M) => Object.entries(M).filter(([n, m]) => /^engine_|idle_player|traverse/.test(n) && m.pk >= 10).map(([n, m]) => `${n} ${m.pk}dB@${m.pkHz}`)],
-  ['gun report: sharp onset (time to peak < 2 ms) and crest factor ≥ 4 in the first 50 ms (≥ 30 mm)', (M) => Object.entries(M).filter(([n, m]) => m.gun && !/20_|600m/.test(n) && (m.gun.ttp >= 2 || m.gun.crest < 4)).map(([n, m]) => `${n} ttp ${m.gun.ttp} crest ${m.gun.crest}`)],
-  ['gun bark: ≥ 25 % of the first 120 ms in 150–900 Hz (≥ 30 mm, near)', (M) => Object.entries(M).filter(([n, m]) => m.gun && !/20_|600m/.test(n) && m.gun.bark < 0.25).map(([n, m]) => `${n} ${m.gun.bark}`)],
+  // the heavy body sits at the limiter ceiling with the crack, so onset sharpness = rise to 50 % of the peak
+  ['gun report: instant onset (rise to 50 % of peak < 1 ms, to 90 % < 6 ms), crest ≥ 2 in the first 50 ms (≥ 30 mm)', (M) => Object.entries(M).filter(([n, m]) => m.gun && !/20_|600m/.test(n) && (m.gun.rise >= 1 || m.gun.ttp >= 6 || m.gun.crest < 2)).map(([n, m]) => `${n} rise ${m.gun.rise} ttp ${m.gun.ttp} crest ${m.gun.crest}`)],
+  ['gun bark: ≥ 15 % of the first 120 ms in 150–900 Hz (≥ 30 mm, near)', (M) => Object.entries(M).filter(([n, m]) => m.gun && !/20_|600m/.test(n) && m.gun.bark < 0.15).map(([n, m]) => `${n} ${m.gun.bark}`)],
   ['small speaker (HP 150 Hz): calibre ordering in body (rms 0–120 ms) 37 < 75 < 88 < 122 < 152', (M) => { const k = ['shot37_50m', 'shot75_50m', 'shot88_50m', 'shot122_50m', 'shot152_50m'].filter((n) => M[n]); for (let i = 1; i < k.length; i++) if (!(M[k[i]].gun.sRms120 > M[k[i - 1]].gun.sRms120)) return [k.map((n) => M[n].gun.sRms120).join(' ')]; return []; }],
   ['own 122 louder than 122 at 50 m', (M) => (M.shot122_own && M.shot122_50m && M.shot122_own.rms <= M.shot122_50m.rms) ? ['not louder'] : []],
   ['600 m shot delayed by the capped speed of sound (≈0.6 s)', (M) => (M.shot88_600m && Math.abs(M.shot88_600m.onset - 0.61) > 0.06) ? [`onset ${M.shot88_600m.onset}`] : []],
@@ -193,11 +194,13 @@ try {
         const rep = (x) => { let pk = 0; for (let i = 0; i < x.length; i++) pk = Math.max(pk, Math.abs(x[i])); let o = 0; while (o < x.length && Math.abs(x[o]) < pk * 0.05) o++;
           const w50 = Math.round(0.05 * SR), w120 = Math.round(0.12 * SR); let p50 = 0, ip = o, e50 = 0; for (let i = o; i < Math.min(x.length, o + w50); i++) { const v = Math.abs(x[i]); e50 += v * v; if (v > p50) { p50 = v; ip = i; } }
           let i9 = o; while (i9 < ip && Math.abs(x[i9]) < 0.9 * p50) i9++;   // time to 90 % of the peak (a limiter plateau doesn't count as a slow rise)
-          return { o, crest: p50 / Math.sqrt(e50 / w50 + 1e-12), ttp: (i9 - o) / SR * 1000, p50, w120 }; };
+          let i5 = o; while (i5 < ip && Math.abs(x[i5]) < 0.5 * p50) i5++;
+          return { o, crest: p50 / Math.sqrt(e50 / w50 + 1e-12), ttp: (i9 - o) / SR * 1000, rise: (i5 - o) / SR * 1000, p50, w120 }; };
         const r0 = rep(mono), bark = bq(bq(bq(bq(mono, 'hp', 150), 'hp', 150), 'lp', 900), 'lp', 900); let eb = 0, et = 0;
         for (let i = r0.o; i < Math.min(n, r0.o + r0.w120); i++) { et += mono[i] * mono[i]; eb += bark[i] * bark[i]; }
         const small = bq(bq(mono, 'hp', 150), 'hp', 150), rs = rep(small); let es = 0; for (let i = rs.o; i < Math.min(n, rs.o + rs.w120); i++) es += small[i] * small[i];
-        gun = { crest: +r0.crest.toFixed(1), ttp: +r0.ttp.toFixed(2), bark: +(eb / (et || 1)).toFixed(2), sPeak: +rs.p50.toFixed(3), sCrest: +rs.crest.toFixed(1), sRms120: +Math.sqrt(es / r0.w120).toFixed(4) };
+        let e3 = 0; const w3 = Math.round(0.3 * SR); for (let i = r0.o; i < Math.min(n, r0.o + w3); i++) e3 += mono[i] * mono[i];
+        gun = { rms300: +Math.sqrt(e3 / w3).toFixed(4), crest: +r0.crest.toFixed(1), ttp: +r0.ttp.toFixed(2), rise: +r0.rise.toFixed(2), bark: +(eb / (et || 1)).toFixed(2), sPeak: +rs.p50.toFixed(3), sCrest: +rs.crest.toFixed(1), sRms120: +Math.sqrt(es / r0.w120).toFixed(4) };
       }
       for (const ch of [cut(raw, 0), cut(raw, 1)]) for (let i = 0; i < n; i++) { const v = Math.abs(ch[i]); if (v > rawPeak) rawPeak = v; }
       // envelope in 10 ms windows → onset (first > -40 dB re peak) and length (last > -40 dB)
@@ -238,7 +241,7 @@ try {
     if (res.png) { mkdirSync(pngDir, { recursive: true }); writeFileSync(join(pngDir, name + '.png'), Buffer.from(res.png, 'base64')); delete res.png; }
     if (res.wav) { mkdirSync(wavDir, { recursive: true }); writeFileSync(join(wavDir, name + '.wav'), wav(Buffer.from(res.wav, 'base64'))); delete res.wav; }
     M[name] = res;
-    console.log(name.padEnd(14), `peak ${res.peak.toFixed(3)} raw ${res.raw.toFixed(3)} rms ${res.rms.toFixed(4)} clip ${res.clip} onset ${res.onset.toFixed(2)}s len ${res.len.toFixed(2)}s low ${res.low.toFixed(2)} zcr ${String(res.zcr).padStart(5)} pan ${res.pan.toFixed(2)} sub<120 ${res.sub}dB (${res.subF.toFixed(2)}) hi>2k ${res.hi}dB ×rt ${res.speed.toFixed(0)}` + (res.gun ? ` | crest ${res.gun.crest} ttp ${res.gun.ttp}ms bark ${res.gun.bark} small: pk ${res.gun.sPeak} crest ${res.gun.sCrest} rms120 ${res.gun.sRms120}` : '') + (sc.engine ? ` pk>2k ${res.pk}dB@${res.pkHz} pm ${res.pm}` : '') + ((sc.engine || /music|amb/.test(name)) ? ` seg ${res.seg}` : ''));
+    console.log(name.padEnd(14), `peak ${res.peak.toFixed(3)} raw ${res.raw.toFixed(3)} rms ${res.rms.toFixed(4)} clip ${res.clip} onset ${res.onset.toFixed(2)}s len ${res.len.toFixed(2)}s low ${res.low.toFixed(2)} zcr ${String(res.zcr).padStart(5)} pan ${res.pan.toFixed(2)} sub<120 ${res.sub}dB (${res.subF.toFixed(2)}) hi>2k ${res.hi}dB ×rt ${res.speed.toFixed(0)}` + (res.gun ? ` | rms300 ${res.gun.rms300} crest ${res.gun.crest} ttp ${res.gun.ttp}ms rise50 ${res.gun.rise}ms bark ${res.gun.bark} small: pk ${res.gun.sPeak} crest ${res.gun.sCrest} rms120 ${res.gun.sRms120}` : '') + (sc.engine ? ` pk>2k ${res.pk}dB@${res.pkHz} pm ${res.pm}` : '') + ((sc.engine || /music|amb/.test(name)) ? ` seg ${res.seg}` : ''));
   }
   console.log('');
   for (const [label, f] of CHECKS) { const bad = f(M); if (bad.length) failed++; console.log((bad.length ? 'FAIL ' : 'ok   ') + label + (bad.length ? ': ' + bad.join('; ') : '')); }

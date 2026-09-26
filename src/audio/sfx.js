@@ -7,59 +7,71 @@ import { clamp } from './core.js';
 // Calibre → 0..1 "size" (15 mm → 0, 135 mm → 1; 152 mm → 1.14, allowed to overshoot a little).
 export const size = (cal) => clamp(((cal || 75) - 15) / 120, 0, 1.2);
 
-// Cannon: a gun is identified by its REPORT, so the layers in order of importance are:
-// 1. muzzle-blast N-wave (instant rise, 2–8 ms slap, negative phase): the single loudest, sharpest moment;
-// 2. the bark: saturated 150–900 Hz body for 40–120 ms (what small speakers and earbuds actually play);
-// 3. the boom: 60–120 Hz under the bark, decaying in 0.3–0.6 s (+ a little true sub for big guns);
-// 4. one or two quiet slapback reflections (0.15–0.6 s) and almost no rolling tail: a short, loud bang.
-// No attack ramps or filter sweeps in the first 20 ms. o.far (0..1): distant shots lose the slap and
-// most of the bark's top and are mostly boom + echoes. o.player adds recoil + breech clank + case.
+// Cannon. A gun is its REPORT, with weight behind it:
+// 1. muzzle-blast N-wave crack (`Kit.nwave`: 1-sample rise, 2–8 ms): sharp onset, but on the player's own
+//    gun no more than ~2× the body's peak;
+// 2. the bark: driven 150–900 Hz body, 150–250 ms (what laptop speakers actually play);
+// 3. the BOOM: a strongly driven 60–250 Hz body that holds ~0.25 s and decays over ~1 s, plus true sub;
+// 4. two slapback reflections and a short 1–1.5 s tail.
+// o.far (0..1): distant shots lose the crack and most of the bark. o.player: recoil + breech + case.
+// With a recorded `assets/sfx/cannon.*` (K.samples.cannon) the sample replaces the synth body.
 export function cannon(K, out, t, cal, o = {}) {
   const k = size(cal), m = Math.min(1, k), g = o.gain ?? 1, brake = !!o.brake, far = clamp(o.far ?? 0), near = 1 - far;
-  // 1. N-wave: small guns a short sharp crack, big guns a longer slap
-  K.nwave(out, t, 2 + 6 * m, g * (1.6 + 0.2 * m) * (0.25 + 0.75 * near));
-  K.noise(out, t, { type: 'highpass', f: 1200, q: 0.5, dur: 0.008 + 0.006 * m, gain: g * 0.35 * near, attack: 0.0002, drive: 3 });
-  if (cal < 30) { // autocannon: crack + a short bark, no tail to speak of
-    K.noise(out, t, { type: 'bandpass', f: 900, q: 0.7, dur: 0.05, gain: g * 0.55, attack: 0.0003, drive: 6 });
-    K.tone(out, t, { f: 160, f1: 90, fdur: 0.04, dur: 0.12, gain: g * 0.2, attack: 0.0005, shape: 3 });
+  if (K.samples?.cannon) { cannonSample(K, out, t, cal, o); return; }
+  // 1. crack
+  K.nwave(out, t, 2 + 6 * m, g * (o.player ? 1.0 : 1.5 + 0.2 * m) * (0.25 + 0.75 * near));
+  K.noise(out, t, { type: 'highpass', f: 1200, q: 0.5, dur: 0.008 + 0.006 * m, gain: g * 0.3 * near, attack: 0.0002, drive: 3 });
+  if (cal < 30) { // autocannon: crack + a short bark
+    K.noise(out, t, { type: 'bandpass', f: 900, q: 0.7, dur: 0.07, gain: g * 0.55, attack: 0.0003, drive: 6 });
+    K.tone(out, t, { f: 160, f1: 90, fdur: 0.04, dur: 0.15, gain: g * 0.2, attack: 0.0005, shape: 3 });
     K.noise(out, t + 0.12, { type: 'lowpass', f: 700, dur: 0.12, gain: g * 0.08, attack: 0.001 });
     return;
   }
-  // 2. bark: distorted mid body; deeper centre and longer for bigger guns
-  const bd = 0.045 + 0.08 * m, bf = 520 - 260 * m;
-  K.noise(out, t, { type: 'bandpass', f: bf, q: 0.6, dur: bd, gain: g * (1.1 + 0.6 * m) * (0.5 + 0.5 * near), attack: 0.0003, drive: 7 });
-  K.noise(out, t, { type: 'lowpass', f: 900 - 500 * far, q: 0.7, dur: bd * 1.3, gain: g * 0.55, attack: 0.0003, drive: 4 });
-  K.tone(out, t, { type: 'sawtooth', f: 170 - 60 * m, f1: 95 - 35 * m, fdur: bd, dur: bd * 1.2, gain: g * 0.25, attack: 0.0005, shape: 4 });
-  if (brake) K.noise(out, t + 0.002, { type: 'bandpass', f: 700 - 200 * m, q: 0.9, dur: 0.06 + 0.06 * m, gain: g * 0.4, attack: 0.0003, drive: 5 });
-  // 3. boom: 60–120 Hz, plus some true sub for the big ones
-  K.tone(out, t, { f: 125 - 45 * m, f1: 70 - 20 * m, fdur: 0.06 + 0.1 * m, dur: 0.25 + 0.2 * m, gain: g * (0.16 + 0.2 * m), attack: 0.0008, shape: 2.5 });
-  if (k > 0.3) K.tone(out, t, { f: 60 - 15 * m, f1: 38, fdur: 0.15, dur: 0.3 + 0.25 * m, gain: g * 0.14 * m, attack: 0.002, shape: 1.5 });
-  // 4. discrete slapback reflections (darker, later, quieter), then a short rolling tail at ~40 %
-  const ne = 1 + Math.round(m);   // one or two quiet slaps
-  for (let i = 0; i < ne; i++) {
-    const at = t + 0.15 + 0.2 * i + 0.25 * m * i + 0.05 * K.R() + 0.25 * far, a = g * (0.14 + 0.06 * m) * Math.pow(0.5, i) * (1 + 0.8 * far);
-    K.noise(out, at, { type: 'bandpass', f: bf * (0.8 - 0.1 * i), q: 0.7, dur: bd * 1.4, gain: a, attack: 0.002, drive: 3 });
-    K.noise(out, at, { type: 'lowpass', f: 1400 - 300 * i, q: 0.5, dur: 0.02, gain: a * 0.4, attack: 0.0008 });
-    K.tone(out, at, { f: 90 - 25 * m, f1: 55, dur: 0.2 + 0.2 * m, gain: a * 0.5, attack: 0.003 });
+  // 2. bark: 150–250 ms, deeper and longer for bigger guns
+  const bd = 0.15 + 0.1 * m, bf = 520 - 260 * m;
+  K.noise(out, t, { type: 'bandpass', f: bf, q: 0.6, dur: bd, hold: 0.03, gain: g * (0.9 + 0.6 * m) * (0.5 + 0.5 * near), attack: 0.0003, drive: 7 });
+  K.noise(out, t, { type: 'lowpass', f: 900 - 500 * far, q: 0.7, dur: bd * 1.2, gain: g * 0.45, attack: 0.0003, drive: 4 });
+  if (brake) K.noise(out, t + 0.002, { type: 'bandpass', f: 700 - 200 * m, q: 0.9, dur: 0.1 + 0.08 * m, gain: g * 0.4, attack: 0.0003, drive: 5 });
+  // 3. BOOM: driven low-mid body, holds ~0.25 s, gone by ~1 s
+  const hold = 0.12 + 0.13 * m, bl = 0.55 + 0.55 * m;
+  K.tone(out, t, { type: 'sawtooth', f: 150 - 50 * m, f1: 75 - 25 * m, fdur: 0.12 + 0.1 * m, dur: bl, hold, gain: g * (0.2 + 0.2 * m), attack: 0.004, shape: 6 });
+  K.noise(out, t, { buf: 'brown', type: 'lowpass', f: 260 - 60 * m, q: 0.9, dur: bl, hold, gain: g * (0.3 + 0.3 * m), attack: 0.004, drive: 6 });
+  K.tone(out, t, { f: 75 - 20 * m, f1: 42, fdur: 0.2, dur: bl * 0.9, hold: hold * 0.6, gain: g * (0.15 + 0.2 * m), attack: 0.004, shape: 2 });
+  // 4. two slaps and a short tail (≈ half the first version's rolling tail)
+  for (let i = 0; i < 2; i++) {
+    const at = t + 0.18 + 0.25 * i + 0.2 * m * i + 0.05 * K.R() + 0.25 * far, a = g * (0.18 + 0.08 * m) * Math.pow(0.55, i) * (1 + 0.6 * far);
+    K.noise(out, at, { type: 'bandpass', f: bf * (0.8 - 0.1 * i), q: 0.7, dur: 0.12, gain: a, attack: 0.002, drive: 3 });
+    K.tone(out, at, { f: 90 - 25 * m, f1: 55, dur: 0.25 + 0.2 * m, gain: a * 0.6, attack: 0.003 });
   }
-  K.thunder(out, t + 0.05, { len: 0.6 + 0.8 * m, f: 150 - 40 * m, gain: g * (0.02 + 0.04 * m) * (1 + 1.5 * far), echoes: 0 });   // almost no rolling tail
-  if (o.player) {
-    // gunner's seat: extra bark up close, recoil slam and breech clank, then the spent case
-    K.noise(out, t, { type: 'bandpass', f: bf * 1.3, q: 0.7, dur: bd, gain: g * 0.45, attack: 0.0003, drive: 6 });
-    K.tone(out, t + 0.01, { f: 90 - 20 * m, f1: 45, fdur: 0.12, dur: 0.35 + 0.25 * m, gain: g * 0.1, attack: 0.001, shape: 2.5 });
-    const tr = t + 0.045 + 0.04 * m;
-    K.noise(out, tr, { type: 'bandpass', f: 420 - 100 * m, q: 1.1, dur: 0.09, gain: g * 0.35, attack: 0.0005, drive: 5 });
-    K.metal(out, tr, { f: 170 - 50 * m, ratios: [1, 1.63, 2.41, 3.7], dur: 0.3, gain: g * 0.16, bright: 0.45 });
-    const tb = t + 0.25 + 0.18 * m;
-    K.punch(out, tb, { f: 180, f1: 80, gain: g * 0.22, nf: 1200 });
-    K.metal(out, tb, { f: 280 - 80 * m, ratios: [1, 2.1, 3.3], dur: 0.22, gain: g * 0.1, bright: 0.5 });
-    if (cal >= 37) { const tc = t + 0.7 + 0.4 * m; K.metal(out, tc, { f: 520 - 120 * m, ratios: [1, 2.7, 4.1], dur: 0.3, gain: g * 0.05, bright: 0.4 }); K.metal(out, tc + 0.14, { f: 540 - 120 * m, ratios: [1, 2.7], dur: 0.2, gain: g * 0.025, bright: 0.3 }); }
-  }
+  K.thunder(out, t + 0.05, { len: 1 + 0.5 * m, f: 150 - 40 * m, gain: g * (0.1 + 0.2 * m) * (1 + 0.8 * far), echoes: 0 });
+  if (o.player) gunnerSeat(K, out, t, cal, m, g, bf, bd);
+}
+
+// The gunner's seat: extra close bark, recoil slam and breech clank, then the spent case.
+function gunnerSeat(K, out, t, cal, m, g, bf, bd) {
+  K.noise(out, t, { type: 'bandpass', f: bf * 1.3, q: 0.7, dur: bd, gain: g * 0.4, attack: 0.0003, drive: 6 });
+  const tr = t + 0.045 + 0.04 * m;
+  K.noise(out, tr, { type: 'bandpass', f: 420 - 100 * m, q: 1.1, dur: 0.09, gain: g * 0.35, attack: 0.0005, drive: 5 });
+  K.metal(out, tr, { f: 170 - 50 * m, ratios: [1, 1.63, 2.41, 3.7], dur: 0.3, gain: g * 0.16, bright: 0.45 });
+  const tb = t + 0.25 + 0.18 * m;
+  K.punch(out, tb, { f: 180, f1: 80, gain: g * 0.22, nf: 1200 });
+  K.metal(out, tb, { f: 280 - 80 * m, ratios: [1, 2.1, 3.3], dur: 0.22, gain: g * 0.1, bright: 0.5 });
+  if (cal >= 37) { const tc = t + 0.7 + 0.4 * m; K.metal(out, tc, { f: 520 - 120 * m, ratios: [1, 2.7, 4.1], dur: 0.3, gain: g * 0.05, bright: 0.4 }); K.metal(out, tc + 0.14, { f: 540 - 120 * m, ratios: [1, 2.7], dur: 0.2, gain: g * 0.025, bright: 0.3 }); }
+}
+
+// Recorded cannon: the sample at a calibre-dependent rate (≈1.25 for 20–37 mm → ≈0.75 for 122–152 mm),
+// louder for bigger guns; the synth crack stays on top only for small calibres.
+function cannonSample(K, out, t, cal, o) {
+  const k = size(cal), m = Math.min(1, k), g = o.gain ?? 1, far = clamp(o.far ?? 0);
+  K.sample(out, t, K.samples.cannon, { rate: 1.3 - 0.55 * m, gain: g * (0.6 + 0.5 * m) });
+  if (cal < 45 && far < 0.5) K.nwave(out, t, 2 + 4 * m, g * 0.6 * (1 - far));
+  if (o.player) gunnerSeat(K, out, t, cal, m, g, 520 - 260 * m, 0.15 + 0.1 * m);
 }
 
 // Explosion: size ~0.5 (HE splash) .. 3 (ammo rack).
 export function explosion(K, out, t, s = 1, o = {}) {
   const g = o.gain ?? 1, z = clamp(s / 3);
+  if (K.samples?.explosion) { K.sample(out, t, K.samples.explosion, { rate: 1.3 - 0.5 * z, gain: g * (0.6 + 0.5 * z) }); return; }
   K.punch(out, t, { f: 150 - 60 * z, f1: 40, fdur: 0.04 + 0.03 * z, dur: 0.1 + 0.08 * z, gain: g * (0.6 + 0.3 * z), nf: 600 });
   K.boom(out, t, { f: 70 - 25 * z, f1: 24, fdur: 0.12 + 0.3 * z, dur: 0.5 + 1.2 * z, gain: g * (0.5 + 0.45 * z), shape: 2.8 });
   K.noise(out, t, { type: 'lowpass', f: 3200 - 1400 * z, f1: 170, fdur: 0.2 + 0.5 * z, q: 0.9, dur: 0.5 + 1.3 * z, gain: g * 0.75, drive: 3 });

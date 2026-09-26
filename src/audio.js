@@ -49,6 +49,7 @@ export class Audio {
       if (!this.offline && this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
     } catch (e) { console.warn('audio unavailable', e); this.ctx = null; return false; }
     this.crew.init();
+    this._loadSamples();
     return true;
   }
 
@@ -401,6 +402,25 @@ export class Audio {
       this.log.push({ t: +c.currentTime.toFixed(3), kind: 'levels', lo: db(lo), mid: db(mid), hi: db(hi), hiPeak: +pk.toFixed(1), hiPeakHz: Math.round(pf), loops });
       if (this.log.length > 5000) this.log.splice(0, 1000);
     }, 250);
+  }
+
+  // Optional recordings: assets/sfx/{cannon,explosion,engine}.{wav,ogg,mp3}, fetched and decoded once.
+  // Missing or undecodable files are ignored (the synth stays). See README "Custom sounds".
+  _loadSamples() {
+    if (this._samplesTried || !this.ctx || typeof fetch === 'undefined') return; this._samplesTried = true;
+    // Only files named in the folder listing are fetched (python http.server's listing in dev, the
+    // index.html tools/build.mjs writes in dist/), so absent sounds cause no 404s.
+    (async () => {
+      let list = ''; try { const r = await fetch('assets/sfx/'); if (r.ok) list = await r.text(); } catch (e) { /* no folder */ }
+      for (const name of ['cannon', 'explosion', 'engine']) for (const ext of ['wav', 'ogg', 'mp3']) {
+        if (!list.includes(`${name}.${ext}"`)) continue;
+        try {
+          const r = await fetch(`assets/sfx/${name}.${ext}`); if (!r.ok) continue;
+          const buf = await this.ctx.decodeAudioData(await r.arrayBuffer());
+          if (buf && buf.duration > 0.05) { this.kit.samples[name] = buf; if (this._dbg) this._log('sample', name, ext); break; }
+        } catch (e) { /* try the next format */ }
+      }
+    })();
   }
 
   // Radio click before a crew line.

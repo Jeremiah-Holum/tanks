@@ -163,6 +163,13 @@ class EngineVoice {
       this.thudT = now + 0.25 + (1.8 - 1.2 * sf) * K.R();
       if (K.R() < 0.6) K.punch(this.out, now + 0.02, { f: 90 + 40 * K.R(), f1: 35, fdur: 0.05, gain: 0.08 + 0.12 * sf * K.R(), nf: 250 });
     }
+    // recorded engine loop (assets/sfx/engine.*) replaces the synth exhaust + gravel: rate follows rpm
+    const smp = K.samples?.engine;
+    if (smp && !this.smp) { this.smp = K.src(smp, this.A.ctx.currentTime, null, 1); this.srcs.push(this.smp); this.smpG = this.A.ctx.createGain(); this.smpG.gain.value = 0; this.smp.connect(this.smpG); this.smpG.connect(this.out); }
+    if (this.smp) {
+      smooth(this.smp.playbackRate, 0.7 + 0.9 * r, now, 0.05); smooth(this.smpG.gain, on * (0.5 + 0.35 * load), now);
+      smooth(this.engG.gain, 0, now); smooth(this.gravG.gain, 0, now);
+    }
     // placement
     const P = this.A._pos(tank.pos, { ref: 6, roll: 1, range: 0.8 });
     this.d = isPlayer ? 0 : P.d;
